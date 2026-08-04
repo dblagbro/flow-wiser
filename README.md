@@ -1,5 +1,32 @@
 <!-- markdownlint-disable MD030 -->
 
+> # 🍴 Community Fork — Open Source Release Copy
+>
+> **This is an unofficial community continuation fork of [FlowiseAI/Flowise](https://github.com/FlowiseAI/Flowise).**
+> It is **not affiliated with, endorsed by, or sponsored by FlowiseAI, Inc. or Workday, Inc.**
+>
+> FlowiseAI [announced end of life](https://flowiseai.com/sunset) for Flowise on **2026-08-03**
+> (code freeze 2026-07-29, upstream repo archived 2026-08-10). They explicitly encouraged the
+> community to fork: *"the Apache 2.0 licensed code is yours to keep building on."*
+>
+> This repository preserves the **complete upstream history and all 307 release tags** at final
+> commit [`ba4c6509`](https://github.com/FlowiseAI/Flowise/commit/ba4c6509), so teams running
+> Flowise have a living copy that does not depend on an archived upstream.
+>
+> ### ⚖️ Licensing at a glance — Flowise is *open core*, not wholly open source
+>
+> | Scope | License | Redistributable? |
+> | --- | --- | --- |
+> | Everything else | **Apache License 2.0** | ✅ Yes |
+> | `packages/server/src/enterprise/` (126 files)<br>`packages/server/src/IdentityManager.ts` | **[FlowiseAI Commercial License](packages/server/src/enterprise/LICENSE.md)** | ❌ **No** — dev/testing only |
+>
+> The commercial portion is **inert at runtime** unless `FLOWISE_EE_LICENSE_KEY` is set, so running
+> this fork in open-source mode is fine — but those 127 files may **not** be republished to npm,
+> Docker Hub, or public mirrors. This fork preserves the upstream licensing split **exactly as
+> published and relicenses nothing.**
+>
+> 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
+
 <p align="center">
 <img src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_white.svg#gh-light-mode-only">
 <img src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_dark.svg#gh-dark-mode-only">
@@ -238,4 +265,11 @@ See [Contributing Guide](CONTRIBUTING.md). Reach out to us at [Discord](https://
 
 ## 📄 License
 
-Source code in this repository is made available under the [Apache License Version 2.0](LICENSE.md).
+Source code in this repository is made available under the [Apache License Version 2.0](LICENSE.md),
+**with the exception of** `packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts`,
+which are governed by the separate
+[FlowiseAI Inc Commercial License](packages/server/src/enterprise/LICENSE.md) and are **not**
+open source or freely redistributable.
+
+This fork preserves that upstream licensing split exactly as published and relicenses nothing.
+See **[FORK.md](FORK.md)** for the full breakdown and **[NOTICE](NOTICE)** for attribution.

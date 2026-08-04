@@ -1,0 +1,85 @@
+Flowise Community Fork
+Copyright (c) 2026-present the Flowise Community Fork contributors
+
+================================================================================
+ORIGINAL WORK
+================================================================================
+
+This product includes software developed by FlowiseAI, Inc.
+
+    Flowise — Build AI Agents, Visually
+    Copyright (c) 2023-present FlowiseAI, Inc.
+    https://github.com/FlowiseAI/Flowise
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+================================================================================
+NOTICE OF FORK (Apache License 2.0, Section 4)
+================================================================================
+
+This is an unofficial community continuation fork. It is NOT affiliated with,
+endorsed by, or sponsored by FlowiseAI, Inc. or Workday, Inc.
+
+The upstream Flowise project announced end of life on 2026-08-03, with the
+upstream repository scheduled for archival on 2026-08-10. This fork preserves
+the code so that existing users may continue to maintain and operate it.
+
+    Forked from : https://github.com/FlowiseAI/Flowise
+    Fork commit : ba4c6509  "feat(security): Sunset notice (#6692)"
+    Fork date   : 2026-08-04
+
+MODIFICATIONS MADE BY THIS FORK
+-------------------------------
+As required by Apache License 2.0 Section 4(b), modifications are recorded here.
+
+  2026-08-04  Initial fork at upstream commit ba4c6509.
+              Added FORK.md, NOTICE, and a fork banner in README.md.
+              No upstream source code was modified.
+
+================================================================================
+PORTIONS NOT LICENSED UNDER APACHE 2.0
+================================================================================
+
+IMPORTANT: This repository is open core, not wholly open source. The Apache
+License 2.0 does NOT apply to the following paths, which are governed by the
+separate FlowiseAI Inc Commercial License found at
+packages/server/src/enterprise/LICENSE.md:
+
+    packages/server/src/enterprise/      (126 files)
+    packages/server/src/IdentityManager.ts
+
+That Commercial License permits copying and modification for development and
+testing purposes only; production use requires a valid FlowiseAI Enterprise
+subscription, and it forbids copying, merging, publishing, distributing,
+sublicensing, and selling the covered software.
+
+This fork preserves that licensing structure exactly as published upstream and
+relicenses nothing. Your rights and obligations with respect to those files are
+identical to those you would have obtaining the code from upstream.
+
+See FORK.md for full details.
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+All third-party components incorporated into this software are licensed under
+the original licenses provided by the owners of the applicable components.
+
+================================================================================
+TRADEMARKS
+================================================================================
+
+Apache License 2.0 Section 6 does not grant permission to use the trade names,
+trademarks, service marks, or product names of the Licensor. "Flowise" and
+"FlowiseAI" are trademarks of FlowiseAI, Inc. / Workday, Inc., used here
+nominatively solely to identify the upstream origin of this code.
