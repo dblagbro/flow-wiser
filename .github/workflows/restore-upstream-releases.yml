@@ -3,8 +3,7 @@ name: Restore upstream release history
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - .github/workflows/restore-upstream-releases.yml
 
@@ -19,7 +18,7 @@ jobs:
   restore:
     runs-on: ubuntu-latest
     steps:
-      - name: Restore Flowise tags and releases
+      - name: Restore Flowise release pages
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
@@ -40,7 +39,6 @@ jobs:
           start = os.environ["START_DATE"]
           end = os.environ["END_DATE"]
           expected = int(os.environ["EXPECTED_RELEASE_COUNT"])
-
           headers = {
               "Authorization": f"Bearer {token}",
               "Accept": "application/vnd.github+json",
@@ -49,9 +47,13 @@ jobs:
           }
 
           def api(method, path, payload=None, allow_404=False):
-              url = "https://api.github.com" + path
               data = None if payload is None else json.dumps(payload).encode()
-              req = request.Request(url, data=data, method=method, headers=headers)
+              req = request.Request(
+                  "https://api.github.com" + path,
+                  data=data,
+                  method=method,
+                  headers=headers,
+              )
               try:
                   with request.urlopen(req) as response:
                       body = response.read()
@@ -78,34 +80,33 @@ jobs:
                   break
               page += 1
 
-          selected = [
-              item
-              for item in releases
-              if not item.get("draft")
-              and item.get("tag_name", "").startswith("flowise@")
-              and item.get("published_at")
-              and start <= item["published_at"] <= end
-          ]
-          selected.sort(key=lambda item: item["published_at"])
-
+          selected = sorted(
+              (
+                  item
+                  for item in releases
+                  if not item.get("draft")
+                  and item.get("tag_name", "").startswith("flowise@")
+                  and item.get("published_at")
+                  and start <= item["published_at"] <= end
+              ),
+              key=lambda item: item["published_at"],
+          )
           if len(selected) != expected:
               raise RuntimeError(
-                  f"Expected {expected} upstream releases, found {len(selected)}. "
-                  "Review the date window before importing."
+                  f"Expected {expected} releases, found {len(selected)}"
               )
 
-          def resolve_commit(tag):
+          def resolve_commit(repo, tag):
               encoded = parse.quote(tag, safe="")
-              ref = api("GET", f"/repos/{upstream}/git/ref/tags/{encoded}")
+              ref = api("GET", f"/repos/{repo}/git/ref/tags/{encoded}")
               obj = ref["object"]
               while obj["type"] == "tag":
                   obj = api(
-                      "GET",
-                      f"/repos/{upstream}/git/tags/{obj['sha']}",
+                      "GET", f"/repos/{repo}/git/tags/{obj['sha']}"
                   )["object"]
               if obj["type"] != "commit":
                   raise RuntimeError(
-                      f"{tag} resolves to unsupported object type {obj['type']}"
+                      f"{repo}:{tag} resolves to {obj['type']}, not a commit"
                   )
               return obj["sha"]
 
@@ -116,53 +117,54 @@ jobs:
           for item in selected:
               tag = item["tag_name"]
               encoded = parse.quote(tag, safe="")
-              commit_sha = resolve_commit(tag)
-
-              existing_ref = api(
+              upstream_sha = resolve_commit(upstream, tag)
+              target_ref = api(
                   "GET",
                   f"/repos/{target}/git/ref/tags/{encoded}",
                   allow_404=True,
               )
-              if existing_ref is None:
+              if target_ref is None:
                   api(
                       "POST",
                       f"/repos/{target}/git/refs",
-                      {"ref": f"refs/tags/{tag}", "sha": commit_sha},
+                      {"ref": f"refs/tags/{tag}", "sha": upstream_sha},
                   )
                   created_tags.append(tag)
-              elif existing_ref["object"]["sha"] != commit_sha:
-                  raise RuntimeError(
-                      f"Existing tag {tag} points to "
-                      f"{existing_ref['object']['sha']}, not upstream commit "
-                      f"{commit_sha}; refusing to overwrite."
-                  )
+              else:
+                  target_sha = resolve_commit(target, tag)
+                  if target_sha != upstream_sha:
+                      raise RuntimeError(
+                          f"Tag mismatch for {tag}: target {target_sha}, "
+                          f"upstream {upstream_sha}"
+                      )
 
-              existing_release = api(
+              existing = api(
                   "GET",
                   f"/repos/{target}/releases/tags/{encoded}",
                   allow_404=True,
               )
-              if existing_release is not None:
+              if existing is not None:
                   skipped.append(tag)
                   continue
 
-              source_body = item.get("body") or ""
               provenance = (
                   f"> Historical release imported from "
                   f"[{upstream}]({item['html_url']}).  \n"
                   f"> Original upstream publication date: "
                   f"`{item['published_at']}`.  \n"
-                  "> The GitHub creation date shown on this fork reflects "
-                  "the import date.\n\n"
+                  "> GitHub shows the import date as this fork's publication date.\n\n"
               )
+              # The tag already exists and has been SHA-verified above. Do not pass
+              # target_commitish here: GitHub requires workflow-write permission
+              # when historical commits differ under .github/workflows, and the
+              # Actions GITHUB_TOKEN cannot receive that permission.
               api(
                   "POST",
                   f"/repos/{target}/releases",
                   {
                       "tag_name": tag,
-                      "target_commitish": commit_sha,
                       "name": item.get("name") or tag,
-                      "body": provenance + source_body,
+                      "body": provenance + (item.get("body") or ""),
                       "draft": False,
                       "prerelease": bool(item.get("prerelease")),
                       "generate_release_notes": False,
@@ -170,25 +172,21 @@ jobs:
               )
               created_releases.append(tag)
 
-          summary = [
+          lines = [
               "# Upstream release history restoration",
               "",
-              f"- Date window: `{start}` through `{end}`",
               f"- Releases discovered: **{len(selected)}**",
               f"- Tags created: **{len(created_tags)}**",
               f"- Release pages created: **{len(created_releases)}**",
-              f"- Existing releases skipped: **{len(skipped)}**",
-              "",
-              "## Imported releases",
+              f"- Existing release pages skipped: **{len(skipped)}**",
               "",
           ]
-          summary.extend(
+          lines.extend(
               f"- `{item['tag_name']}` - {item['published_at']}"
               for item in selected
           )
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-          if summary_path:
-              with open(summary_path, "a", encoding="utf-8") as handle:
-                  handle.write("\n".join(summary) + "\n")
-          print("\n".join(summary))
+          summary = "\n".join(lines) + "\n"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write(summary)
+          print(summary)
           PY
