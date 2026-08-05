@@ -145,6 +145,7 @@
         ]
     },
     "dependencies": {
-        "basic-ftp": "5.2.1"
+        "basic-ftp": "5.2.1",
+        "convict": "6.2.5"
     }
 }
