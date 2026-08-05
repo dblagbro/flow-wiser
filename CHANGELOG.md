@@ -128,9 +128,23 @@ Both are tracked for a future release.
 
 ### Notes on distribution
 
-This build contains compiled code from `packages/server/src/enterprise/` and
-`IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0.
-Flow-Wiser therefore does **not** publish prebuilt images publicly. Build it yourself:
+Prebuilt images are published at **`dblagbro/flow-wiser`**:
+
+```bash
+docker pull dblagbro/flow-wiser:3.1.4-fw3     # or :latest
+```
+
+**Licensing note.** As with every Flowise container, this image includes compiled output
+from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under
+FlowiseAI's **Commercial License**, not Apache 2.0. Those terms govern your use of those
+components wherever you obtain the image. Flow-Wiser cannot relicense them — the
+copyright is FlowiseAI's — and an Apache-2.0-only build with them removed is the
+project's next major goal. See *Unreleased* below and [FORK.md](FORK.md).
+
+The image was scanned before publication: no `.env` files, no application database, and
+no credential-shaped strings are baked in.
+
+Or build it yourself:
 
 ```bash
 git clone https://github.com/dblagbro/flow-wiser

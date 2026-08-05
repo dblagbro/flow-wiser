@@ -63,13 +63,59 @@ RUN npm install -g "flowise@${FLOWISE_VERSION}" \
 # functioning official image actually shipped. Upstream PR #6706 fixes this in
 # the TypeScript source; this pin fixes it for npm-installed container builds.
 ARG CONNECT_SQLITE3_VERSION=0.9.16
+
+# Pin vm2 -- SIX CRITICAL SANDBOX ESCAPES in the shipped version.
+#
+# vm2 is the JavaScript sandbox used by flowise-components for custom-code
+# execution (flowise-components/dist/src/utils.js). The published images resolve
+# vm2 3.11.2, which is vulnerable to all of the following:
+#
+#   GHSA-248r-7h7q-cr24  sandbox breakout via async generator      (fixed 3.11.3)
+#   GHSA-6j2x-vhqr-qr7q  escape via JSPI-backed Promise .finally   (fixed 3.11.4)
+#   GHSA-76w7-j9cq-rx2j  breakout through proxy                    (fixed 3.11.4)
+#   GHSA-m4wx-m65x-ghrr  CVE-2023-37903 patch bypass               (fixed 3.11.4)
+#   GHSA-rp36-8xq3-r6c4  NodeVM builtin denylist bypass via process(fixed 3.11.4)
+#   GHSA-v6mx-mf47-r5wg  sandbox escape                            (fixed 3.11.4)
+#
+# A sandbox escape here is a remote code execution primitive: it is the first
+# link in the chain RCE -> read database.sqlite -> decrypt stored credentials ->
+# exfiltrate provider API keys. Patching Flowise itself does NOT close this,
+# because vm2 is a transitive dependency and its version is not pinned anywhere.
+#
+# 3.11.5 is the current published release and is not deprecated.
+#
+# Longer term vm2 should be replaced outright (isolated-vm), or custom-code
+# nodes disabled on internet-facing deployments. vm2 has produced a fresh escape
+# in essentially every release line, so pinning is mitigation, not a fix.
+ARG VM2_VERSION=3.11.5
+
+# Apply BOTH security pins in a SINGLE npm install, then assert at the very end.
+#
+# These must not be separate RUN steps. npm re-resolves the dependency tree on
+# every install, so a later `npm install vm2@x` silently reverts an earlier
+# connect-sqlite3 pin. That exact regression shipped in 3.1.4-fw2: the build
+# printed "connect-sqlite3 pinned to 0.9.16" and its assertion passed, but the
+# subsequent vm2 install pulled connect-sqlite3 back to 0.9.17 -- the version
+# that crashes on boot. Per-step assertions cannot catch this; only a final
+# verification after ALL mutations can.
 RUN npm --prefix "$(npm root -g)/flowise" install --no-save \
       "connect-sqlite3@${CONNECT_SQLITE3_VERSION}" \
-    && PINNED="$(node -p "require('/usr/local/lib/node_modules/flowise/node_modules/connect-sqlite3/package.json').version")" \
-    && echo "connect-sqlite3 pinned to ${PINNED}" \
-    && if [ "${PINNED}" != "${CONNECT_SQLITE3_VERSION}" ]; then \
-         echo "FATAL: connect-sqlite3 pin failed, got ${PINNED}" >&2; exit 1; \
-       fi
+      "vm2@${VM2_VERSION}"
+
+# Final gate. Runs after every package mutation is complete.
+RUN M=/usr/local/lib/node_modules/flowise \
+    && FV="$(node -p "require('$M/package.json').version")" \
+    && CS="$(node -p "require('$M/node_modules/connect-sqlite3/package.json').version")" \
+    && VM="$(node -p "require('$M/node_modules/vm2/package.json').version")" \
+    && echo "FINAL: flowise=${FV} connect-sqlite3=${CS} vm2=${VM}" \
+    && FAIL=0 \
+    && if [ "${FLOWISE_VERSION}" != "latest" ] && [ "${FV}" != "${FLOWISE_VERSION}" ]; then \
+         echo "FATAL: flowise ${FV} != requested ${FLOWISE_VERSION}" >&2; FAIL=1; fi \
+    && if [ "${CS}" != "${CONNECT_SQLITE3_VERSION}" ]; then \
+         echo "FATAL: connect-sqlite3 ${CS} != requested ${CONNECT_SQLITE3_VERSION}" >&2; FAIL=1; fi \
+    && if [ "${VM}" != "${VM2_VERSION}" ]; then \
+         echo "FATAL: vm2 ${VM} != requested ${VM2_VERSION}" >&2; FAIL=1; fi \
+    && [ "$FAIL" = "0" ]
 
 # Stage 2: Runtime stage
 FROM node:${NODE_VERSION}-alpine

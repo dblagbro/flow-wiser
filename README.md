@@ -68,9 +68,23 @@
 > resolves a version other than the one requested — the exact failure mode that caused the
 > mislabeled official images.
 >
-> Prebuilt images are **not** published: the build contains compiled code under FlowiseAI's
-> Commercial License, which forbids redistribution. See [CHANGELOG.md](CHANGELOG.md) and
-> [SECURITY.md](SECURITY.md).
+> ### Or pull the prebuilt image
+>
+> ```bash
+> docker pull dblagbro/flow-wiser:3.1.4-fw3      # or :latest
+> ```
+>
+> Contains `flowise@3.1.4` + `flowise-components@3.1.4` with `connect-sqlite3` pinned to
+> `0.9.16` and `vm2` pinned to `3.11.5`. Verified to boot, and scanned for secrets before
+> publication — no `.env`, no database, no credentials baked in.
+>
+> ⚠️ **Licensing note.** Like every Flowise container, this image includes compiled output
+> from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under
+> FlowiseAI's **Commercial License**, not Apache 2.0. Their terms govern your use of those
+> components regardless of where you obtain the image. See [FORK.md](FORK.md).
+>
+> An Apache-2.0-only build with those components removed is the project's next major goal —
+> see [CHANGELOG.md](CHANGELOG.md) *Unreleased*.
 
 <!-- flow-wiser-community-art -->
 <p align="center">

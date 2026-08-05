@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="289" height="122" viewBox="0 0 216.75 91.5" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Flow-Wiser — community brewed">
+  <title>Flow-Wiser</title>
+  <desc>Flow-Wiser community fork wordmark. A tongue-in-cheek lager-label parody. Not affiliated with FlowiseAI, Workday, or Anheuser-Busch.</desc>
+
+  <g fill="#ffffff">
+
+    <!-- top ribbon: KEEP THE FLOW ALIVE -->
+    <g>
+      <path d="M28 12 L188 12 L182 21 L188 30 L28 30 L34 21 Z" opacity="0.16"/>
+      <path d="M28 12 L188 12 L182 21 L188 30 L28 30 L34 21 Z" fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.85"/>
+      <text x="108.4" y="24.6" text-anchor="middle"
+            font-family="Georgia, 'Times New Roman', serif"
+            font-size="8.2" letter-spacing="2.6" opacity="0.95">KEEP THE FLOW ALIVE</text>
+    </g>
+
+    <!-- main wordmark -->
+    <text x="108.4" y="55.5" text-anchor="middle"
+          font-family="Georgia, 'Times New Roman', 'Playfair Display', serif"
+          font-size="27" font-weight="700" letter-spacing="-0.4">FLOW<tspan font-size="27" dy="0">-</tspan>WISER</text>
+
+    <!-- hairline rules flanking the script tagline (clear of the glyphs) -->
+    <rect x="26" y="63.2" width="34" height="0.8" opacity="0.7"/>
+    <circle cx="65" cy="63.6" r="1.1" opacity="0.7"/>
+    <circle cx="151.8" cy="63.6" r="1.1" opacity="0.7"/>
+    <rect x="156.8" y="63.2" width="34" height="0.8" opacity="0.7"/>
+
+    <!-- script tagline -->
+    <text x="108.4" y="67" text-anchor="middle"
+          font-family="'Snell Roundhand', 'Brush Script MT', 'Segoe Script', cursive, serif"
+          font-size="11.5" font-style="italic" opacity="0.97">Community Brewed</text>
+
+    <!-- bottom banner -->
+    <g>
+      <path d="M40 74 L176.8 74 L172 81 L176.8 88 L40 88 L44.8 81 Z" opacity="0.16"/>
+      <path d="M40 74 L176.8 74 L172 81 L176.8 88 L40 88 L44.8 81 Z" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.8"/>
+      <text x="108.4" y="83.9" text-anchor="middle"
+            font-family="Georgia, 'Times New Roman', serif"
+            font-size="6.6" letter-spacing="1.5" opacity="0.95">100% COMMUNITY · 0% GATEKEEPING</text>
+    </g>
+
+  </g>
+</svg>
