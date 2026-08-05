@@ -1,0 +1,129 @@
+import { MigrationInterface, QueryRunner } from 'typeorm'
+
+/**
+ * Apache-2.0 identity / RBAC core tables (docs/SPEC-AUTH-RBAC.md §D.1–D.6).
+ *
+ * Tables are `identity_`-prefixed so this schema is disjoint from the one the outgoing stack
+ * created; an existing deployment migrates forward instead of colliding on CREATE TABLE.
+ * Following house style, no FOREIGN KEY constraints are emitted — relations are declared on the
+ * entities (see Execution.ts for the same pattern).
+ */
+export class AddIdentityTables1780000000000 implements MigrationInterface {
+    public async up(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_user" (
+                "id" varchar PRIMARY KEY NOT NULL,
+                "name" text,
+                "email" varchar(255) NOT NULL,
+                "credential" varchar(255),
+                "isSSO" boolean NOT NULL DEFAULT 0,
+                "pendingEmail" varchar(255),
+                "emailVerifiedDate" datetime,
+                "credentialUpdatedDate" datetime,
+                "referral" text,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now'))
+            );
+        `)
+        await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_identity_user_email" ON "identity_user" ("email");`)
+
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_organization" (
+                "id" varchar PRIMARY KEY NOT NULL,
+                "name" varchar(255),
+                "subscriptionId" varchar(255),
+                "customerId" varchar(255),
+                "createdBy" varchar,
+                "updatedBy" varchar,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now'))
+            );
+        `)
+
+        // Composite PK: exactly one membership row per (organization, user).
+        // `status` / `lastLogin` live here, not on identity_user — spec §F-1 decision.
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_organization_user" (
+                "organizationId" varchar NOT NULL,
+                "userId" varchar NOT NULL,
+                "status" varchar(20) NOT NULL DEFAULT 'active',
+                "lastLogin" datetime,
+                "isOrgOwner" boolean NOT NULL DEFAULT 0,
+                "createdBy" varchar,
+                "updatedBy" varchar,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY ("organizationId", "userId")
+            );
+        `)
+        await queryRunner.query(
+            `CREATE INDEX IF NOT EXISTS "IDX_identity_organization_user_userId" ON "identity_organization_user" ("userId");`
+        )
+
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_workspace" (
+                "id" varchar PRIMARY KEY NOT NULL,
+                "name" varchar(255) NOT NULL,
+                "description" text,
+                "organizationId" varchar NOT NULL,
+                "isOrgDefault" boolean NOT NULL DEFAULT 0,
+                "createdBy" varchar,
+                "updatedBy" varchar,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now'))
+            );
+        `)
+        await queryRunner.query(
+            `CREATE INDEX IF NOT EXISTS "IDX_identity_workspace_organizationId" ON "identity_workspace" ("organizationId");`
+        )
+        await queryRunner.query(
+            `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_identity_workspace_org_name" ON "identity_workspace" ("organizationId", "name");`
+        )
+
+        // `permissions` is a JSON-encoded string[] because the client JSON.parses it — spec §D.5.
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_role" (
+                "id" varchar PRIMARY KEY NOT NULL,
+                "name" varchar(100) NOT NULL,
+                "description" text,
+                "permissions" text NOT NULL DEFAULT '[]',
+                "organizationId" varchar NOT NULL,
+                "isSystem" boolean NOT NULL DEFAULT 0,
+                "createdBy" varchar,
+                "updatedBy" varchar,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now'))
+            );
+        `)
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_identity_role_organizationId" ON "identity_role" ("organizationId");`)
+        await queryRunner.query(
+            `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_identity_role_org_name" ON "identity_role" ("organizationId", "name");`
+        )
+
+        // The authority-carrying join. Composite PK enforces "one role per user per workspace"
+        // structurally, so a second grant is a duplicate-key error — spec §D.6.
+        await queryRunner.query(`
+            CREATE TABLE IF NOT EXISTS "identity_workspace_user" (
+                "workspaceId" varchar NOT NULL,
+                "userId" varchar NOT NULL,
+                "roleId" varchar NOT NULL,
+                "createdBy" varchar,
+                "updatedBy" varchar,
+                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
+                "updatedDate" datetime NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY ("workspaceId", "userId")
+            );
+        `)
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_identity_workspace_user_userId" ON "identity_workspace_user" ("userId");`)
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_identity_workspace_user_roleId" ON "identity_workspace_user" ("roleId");`)
+    }
+
+    public async down(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_workspace_user"`)
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_role"`)
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_workspace"`)
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_organization_user"`)
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_organization"`)
+        await queryRunner.query(`DROP TABLE IF EXISTS "identity_user"`)
+    }
+}

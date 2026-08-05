@@ -46,6 +46,8 @@ import { AddWebhookSecretToChatFlow1776240000001 } from './1776240000001-AddWebh
 import { AddCustomMcpServer1766000000000 } from './1766000000000-AddCustomMcpServer'
 import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMcpServerConfigToChatFlow'
 import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
+import { AddIdentityTables1780000000000 } from './1780000000000-AddIdentityTables'
+import { AddIdentitySessionTables1780000000001 } from './1780000000001-AddIdentitySessionTables'
 
 import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/postgres/1720230151482-AddAuthTables'
 import { AddWorkspace1720230151484 } from '../../../enterprise/database/migrations/postgres/1720230151484-AddWorkspace'
@@ -118,5 +120,7 @@ export const postgresMigrations = [
     AddWebhookSecretToChatFlow1776240000001,
     AddCustomMcpServer1766000000000,
     AddMcpServerConfigToChatFlow1767000000000,
-    AddScheduleEntities1772000000000
+    AddScheduleEntities1772000000000,
+    AddIdentityTables1780000000000,
+    AddIdentitySessionTables1780000000001
 ]
