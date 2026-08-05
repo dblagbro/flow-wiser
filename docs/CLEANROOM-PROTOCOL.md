@@ -32,7 +32,7 @@ already have full rights to read, copy, and modify**:
 | --- | --- | --- |
 | `packages/ui/**` | Apache 2.0 (0 enterprise files) | The complete HTTP contract — every endpoint, payload and response the client uses |
 | `packages/ui/src/api/*.js` | Apache 2.0 | `auth.js`, `role.js`, `user.js`, `workspace.js`, `account.api.js`, `loginmethod.js`, `oauth2.js` |
-| `packages/server/src/routes/**` | Apache 2.0 | 142 `checkPermission` / `checkAnyPermission` call sites — the middleware contract and permission vocabulary |
+| `packages/server/src/routes/**` | Apache 2.0 | 120 `checkPermission` / `checkAnyPermission` call sites (70 + 50, across 22 files) — the middleware contract and permission vocabulary |
 | `packages/server/src/Interface.ts` | Apache 2.0 | Shared types |
 
 **We therefore do not reverse engineer anything.** That is deliberate and is the
