@@ -99,7 +99,9 @@
             "tmp": ">=0.2.4",
             "@elastic/transport": ">=8.9.3",
             "@modelcontextprotocol/sdk": ">=1.25.2",
-            "multer": "2.2.0"
+            "multer": "2.2.0",
+            "basic-ftp": "5.2.1",
+            "convict": "6.2.5"
         }
     },
     "engines": {
@@ -143,9 +145,5 @@
                 }
             ]
         ]
-    },
-    "dependencies": {
-        "basic-ftp": "5.2.1",
-        "convict": "6.2.5"
     }
 }
