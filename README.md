@@ -27,6 +27,15 @@
 >
 > 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
 
+<!-- flow-wiser-community-art -->
+<p align="center">
+  <a href="FLOW-WISER.md">
+    <img width="450" src="community-art/flow-wiser-open-source-meme.webp" alt="Flow-wiser community open-source meme">
+  </a>
+</p>
+<p align="center"><strong>Help keep the flow going - fork it, fix it, ship it.</strong></p>
+
+
 <p align="center">
 <img src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_white.svg#gh-light-mode-only">
 <img src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_dark.svg#gh-dark-mode-only">
