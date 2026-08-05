@@ -26,6 +26,51 @@
 > published and relicenses nothing.**
 >
 > 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
+>
+> ---
+>
+> ## 🚨 If you run Flowise in Docker, read this
+>
+> **Every official `flowiseai/flowise` image ships the `flowise@3.1.2` server — whatever its tag.**
+>
+> | Image tag | Server actually shipped |
+> | --- | --- |
+> | `flowiseai/flowise:3.1.2` | `flowise@3.1.2` |
+> | `flowiseai/flowise:3.1.3` | `flowise@3.1.2` ❌ |
+> | `flowiseai/flowise:3.1.4` | `flowise@3.1.2` ❌ |
+>
+> The **25 security advisories fixed in `flowise@3.1.3`** — several critical RCEs — were never
+> delivered by any published image. Check your own instance:
+>
+> ```bash
+> curl -s http://localhost:3000/api/v1/version
+> ```
+>
+> If that says `3.1.2` while you run a `3.1.3`/`3.1.4` image, **you are affected.**
+>
+> **And upstream issue [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) is not a 3.1.4 bug.**
+> `connect-sqlite3@0.9.17` broke its constructor, so **any** Flowise container built after that
+> release crashes at boot — including a freshly built 3.1.3. Rebuilding 3.1.3 to escape the 3.1.4
+> bug reproduces the identical crash.
+>
+> ### Build a working, fully patched Flowise
+>
+> ```bash
+> git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
+> docker build --no-cache --pull \
+>   --build-arg NODE_VERSION=20 \
+>   --build-arg FLOWISE_VERSION=3.1.4 \
+>   --build-arg CONNECT_SQLITE3_VERSION=0.9.16 \
+>   -f docker/Dockerfile -t flow-wiser/flowise:3.1.4-fw1 docker/
+> ```
+>
+> This closes **all 26 advisories published 2026-08-04**. The build **fails loudly** if npm
+> resolves a version other than the one requested — the exact failure mode that caused the
+> mislabeled official images.
+>
+> Prebuilt images are **not** published: the build contains compiled code under FlowiseAI's
+> Commercial License, which forbids redistribution. See [CHANGELOG.md](CHANGELOG.md) and
+> [SECURITY.md](SECURITY.md).
 
 <!-- flow-wiser-community-art -->
 <p align="center">
