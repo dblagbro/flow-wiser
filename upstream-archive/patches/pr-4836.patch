@@ -1,0 +1,226 @@
+From eea53ae96603dc44ade2ae5bb0433dbe0b00dc59 Mon Sep 17 00:00:00 2001
+From: Linga Prabu S <lingaprabu.s@spantechnologyservices.com>
+Date: Thu, 10 Jul 2025 23:17:25 +0530
+Subject: [PATCH] feat: add dynamic schema support for Postgres RecordManager
+ and VectorStore
+
+- Add schema input field to PostgresRecordManager with fallback to 'public'
+- Add schema support to Postgres VectorStore components
+- Update TypeORMDriver to handle schema-qualified table names
+- Implement proper SQL escaping for security
+- Maintain backward compatibility with existing configurations
+---
+ .../PostgresRecordManager.ts                  | 40 +++++++++++++------
+ .../nodes/vectorstores/Postgres/Postgres.ts   | 10 ++++-
+ .../vectorstores/Postgres/driver/Base.ts      |  4 +-
+ .../vectorstores/Postgres/driver/TypeORM.ts   |  7 ++--
+ 4 files changed, 43 insertions(+), 18 deletions(-)
+
+diff --git a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+index cf239522f5b..adc9d34618d 100644
+--- a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
++++ b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+@@ -23,7 +23,7 @@ class PostgresRecordManager_RecordManager implements INode {
+     constructor() {
+         this.label = 'Postgres Record Manager'
+         this.name = 'postgresRecordManager'
+-        this.version = 1.0
++        this.version = 1.1
+         this.type = 'Postgres RecordManager'
+         this.icon = 'postgres.svg'
+         this.category = 'Record Manager'
+@@ -82,6 +82,14 @@ class PostgresRecordManager_RecordManager implements INode {
+                 additionalParams: true,
+                 optional: true
+             },
++            {
++                label: 'Schema',
++                name: 'schema',
++                type: 'string',
++                description: 'Schema to use for the table, defaults to "public" if not specified',
++                additionalParams: true,
++                optional: true
++            },
+             {
+                 label: 'Cleanup',
+                 name: 'cleanup',
+@@ -136,6 +144,7 @@ class PostgresRecordManager_RecordManager implements INode {
+         const user = getCredentialParam('user', credentialData, nodeData, process.env.POSTGRES_RECORDMANAGER_USER)
+         const password = getCredentialParam('password', credentialData, nodeData, process.env.POSTGRES_RECORDMANAGER_PASSWORD)
+         const tableName = getTableName(nodeData)
++        const schema = (nodeData.inputs?.schema as string) || 'public'
+         const additionalConfig = nodeData.inputs?.additionalConfig as string
+         const _namespace = nodeData.inputs?.namespace as string
+         const namespace = _namespace ? _namespace : options.chatflowid
+@@ -165,7 +174,8 @@ class PostgresRecordManager_RecordManager implements INode {
+ 
+         const args = {
+             postgresConnectionOptions: postgresConnectionOptions,
+-            tableName: tableName
++            tableName: tableName,
++            schema: schema
+         }
+ 
+         const recordManager = new PostgresRecordManager(namespace, args)
+@@ -180,18 +190,21 @@ class PostgresRecordManager_RecordManager implements INode {
+ type PostgresRecordManagerOptions = {
+     postgresConnectionOptions: any
+     tableName: string
++    schema: string
+ }
+ 
+ class PostgresRecordManager implements RecordManagerInterface {
+     lc_namespace = ['langchain', 'recordmanagers', 'postgres']
+     config: PostgresRecordManagerOptions
+     tableName: string
++    schema: string
+     namespace: string
+ 
+     constructor(namespace: string, config: PostgresRecordManagerOptions) {
+-        const { tableName } = config
++        const { tableName, schema } = config
+         this.namespace = namespace
+         this.tableName = tableName
++        this.schema = schema
+         this.config = config
+     }
+ 
+@@ -226,9 +239,10 @@ class PostgresRecordManager implements RecordManagerInterface {
+             const dataSource = await this.getDataSource()
+             const queryRunner = dataSource.createQueryRunner()
+             const tableName = this.sanitizeTableName(this.tableName)
+-
++            const schema = this.schema
+             await queryRunner.manager.query(`
+-  CREATE TABLE IF NOT EXISTS "${tableName}" (
++  CREATE SCHEMA IF NOT EXISTS "${schema}";
++  CREATE TABLE IF NOT EXISTS "${schema}"."${tableName}" (
+     uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     key TEXT NOT NULL,
+     namespace TEXT NOT NULL,
+@@ -236,10 +250,10 @@ class PostgresRecordManager implements RecordManagerInterface {
+     group_id TEXT,
+     UNIQUE (key, namespace)
+   );
+-  CREATE INDEX IF NOT EXISTS updated_at_index ON "${tableName}" (updated_at);
+-  CREATE INDEX IF NOT EXISTS key_index ON "${tableName}" (key);
+-  CREATE INDEX IF NOT EXISTS namespace_index ON "${tableName}" (namespace);
+-  CREATE INDEX IF NOT EXISTS group_id_index ON "${tableName}" (group_id);`)
++  CREATE INDEX IF NOT EXISTS updated_at_index ON "${schema}"."${tableName}" (updated_at);
++  CREATE INDEX IF NOT EXISTS key_index ON "${schema}"."${tableName}" (key);
++  CREATE INDEX IF NOT EXISTS namespace_index ON "${schema}"."${tableName}" (namespace);
++  CREATE INDEX IF NOT EXISTS group_id_index ON "${schema}"."${tableName}" (group_id);`)
+ 
+             await queryRunner.release()
+         } catch (e: any) {
+@@ -310,7 +324,7 @@ class PostgresRecordManager implements RecordManagerInterface {
+ 
+         const valuesPlaceholders = recordsToUpsert.map((_, j) => this.generatePlaceholderForRowAt(j, recordsToUpsert[0].length)).join(', ')
+ 
+-        const query = `INSERT INTO "${tableName}" (key, namespace, updated_at, group_id) VALUES ${valuesPlaceholders} ON CONFLICT (key, namespace) DO UPDATE SET updated_at = EXCLUDED.updated_at;`
++        const query = `INSERT INTO "${this.schema}"."${tableName}" (key, namespace, updated_at, group_id) VALUES ${valuesPlaceholders} ON CONFLICT (key, namespace) DO UPDATE SET updated_at = EXCLUDED.updated_at;`
+         try {
+             await queryRunner.manager.query(query, recordsToUpsert.flat())
+             await queryRunner.release()
+@@ -335,7 +349,7 @@ class PostgresRecordManager implements RecordManagerInterface {
+         const arrayPlaceholders = keys.map((_, i) => `$${i + startIndex}`).join(', ')
+ 
+         const query = `
+-        SELECT k, (key is not null) ex from unnest(ARRAY[${arrayPlaceholders}]) k left join "${tableName}" on k=key and namespace = $1;
++        SELECT k, (key is not null) ex from unnest(ARRAY[${arrayPlaceholders}]) k left join "${this.schema}"."${tableName}" on k=key and namespace = $1;
+         `
+         try {
+             const res = await queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
+@@ -353,7 +367,7 @@ class PostgresRecordManager implements RecordManagerInterface {
+         const { before, after, limit, groupIds } = options ?? {}
+         const tableName = this.sanitizeTableName(this.tableName)
+ 
+-        let query = `SELECT key FROM "${tableName}" WHERE namespace = $1`
++        let query = `SELECT key FROM "${this.schema}"."${tableName}" WHERE namespace = $1`
+         const values: (string | number | (string | null)[])[] = [this.namespace]
+ 
+         let index = 2
+@@ -408,7 +422,7 @@ class PostgresRecordManager implements RecordManagerInterface {
+         const tableName = this.sanitizeTableName(this.tableName)
+ 
+         try {
+-            const query = `DELETE FROM "${tableName}" WHERE namespace = $1 AND key = ANY($2);`
++            const query = `DELETE FROM "${this.schema}"."${tableName}" WHERE namespace = $1 AND key = ANY($2);`
+             await queryRunner.manager.query(query, [this.namespace, keys])
+             await queryRunner.release()
+         } catch (error) {
+diff --git a/packages/components/nodes/vectorstores/Postgres/Postgres.ts b/packages/components/nodes/vectorstores/Postgres/Postgres.ts
+index ad0f82bb057..2623e63f5e0 100644
+--- a/packages/components/nodes/vectorstores/Postgres/Postgres.ts
++++ b/packages/components/nodes/vectorstores/Postgres/Postgres.ts
+@@ -49,7 +49,7 @@ class Postgres_VectorStores implements INode {
+     constructor() {
+         this.label = 'Postgres'
+         this.name = 'postgres'
+-        this.version = 7.0
++        this.version = 7.1
+         this.type = 'Postgres'
+         this.icon = 'postgres.svg'
+         this.category = 'Vector Stores'
+@@ -119,6 +119,14 @@ class Postgres_VectorStores implements INode {
+                 additionalParams: true,
+                 optional: true
+             },
++            {
++                label: 'Schema',
++                name: 'schema',
++                type: 'string',
++                description: 'Schema to use for the table, defaults to "public" if not specified',
++                additionalParams: true,
++                optional: true
++            },
+             /*{
+                 label: 'Driver',
+                 name: 'driver',
+diff --git a/packages/components/nodes/vectorstores/Postgres/driver/Base.ts b/packages/components/nodes/vectorstores/Postgres/driver/Base.ts
+index f117a065cd2..e7e9a12d585 100644
+--- a/packages/components/nodes/vectorstores/Postgres/driver/Base.ts
++++ b/packages/components/nodes/vectorstores/Postgres/driver/Base.ts
+@@ -50,7 +50,9 @@ export abstract class VectorStoreDriver {
+ 
+         return tableName
+     }
+-
++    getSchema(): string {
++        return (this.nodeData.inputs?.schema as string) || 'public'
++    }
+     async getCredentials() {
+         const credentialData = await getCredentialData(this.nodeData.credential ?? '', this.options)
+         const user = getCredentialParam('user', credentialData, this.nodeData, process.env.POSTGRES_VECTORSTORE_USER)
+diff --git a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+index 3a0c5ab005e..02f0aec0685 100644
+--- a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
++++ b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+@@ -33,7 +33,8 @@ export class TypeORMDriver extends VectorStoreDriver {
+                 username: user, // Required by TypeORMVectorStore
+                 user: user, // Required by Pool in similaritySearchVectorWithScore
+                 password: password,
+-                database: this.getDatabase()
++                database: this.getDatabase(),
++                schema: this.getSchema()
+             } as DataSourceOptions
+ 
+             // Prevent using default MySQL port, otherwise will throw uncaught error and crashing the app
+@@ -138,7 +139,7 @@ export class TypeORMDriver extends VectorStoreDriver {
+ 
+         const _filter = JSON.stringify(restFilters || {})
+         const parameters: any[] = [embeddingString, _filter, k]
+-
++        const schema = postgresConnectionOptions.schema || 'public'
+         // Match chatflow uploaded file and keep filtering on other files:
+         // https://github.com/FlowiseAI/Flowise/pull/3367#discussion_r1804229295
+         if (chatId) {
+@@ -148,7 +149,7 @@ export class TypeORMDriver extends VectorStoreDriver {
+ 
+         const queryString = `
+             SELECT *, embedding ${distanceOperator} $1 as "_distance"
+-            FROM ${tableName}
++            FROM "${schema}"."${tableName}"
+             WHERE ((metadata @> $2) AND NOT (metadata ? '${FLOWISE_CHATID}')) ${chatflowOr}
+             ORDER BY "_distance" ASC
+             LIMIT $3;`

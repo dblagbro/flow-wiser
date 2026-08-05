@@ -1,0 +1,183 @@
+From 303fe710e3bb0cbeaa158e768b78a070de64335c Mon Sep 17 00:00:00 2001
+From: Nikhil Shukla <nikhilshukla8652@gmail.com>
+Date: Tue, 26 May 2026 16:53:43 +0530
+Subject: [PATCH 1/2] fix: add stop sequence support to ChatOpenAI custom
+
+---
+ .../ChatOpenAICustom/ChatOpenAICustom.test.ts | 61 +++++++++++++++++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      | 16 ++++-
+ 2 files changed, 76 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+new file mode 100644
+index 00000000000..627b543c03b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+@@ -0,0 +1,61 @@
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ChatOpenAICustom } = require('./ChatOpenAICustom')
++
++describe('ChatOpenAICustom', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ openAIApiKey: 'test-api-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++    })
++
++    it('exposes stopSequence as an additional parameter', () => {
++        const node = new ChatOpenAICustom()
++
++        expect(node.inputs).toEqual(
++            expect.arrayContaining([
++                expect.objectContaining({
++                    label: 'Stop Sequence',
++                    name: 'stopSequence',
++                    additionalParams: true
++                })
++            ])
++        )
++    })
++
++    it('passes comma-separated stop sequences to ChatOpenAI', async () => {
++        const node = new ChatOpenAICustom()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'custom-model',
++                    temperature: '0.3',
++                    stopSequence: '<|im_end|>, END',
++                    streaming: false
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            modelName: 'custom-model',
++            openAIApiKey: 'test-api-key',
++            apiKey: 'test-api-key',
++            temperature: 0.3,
++            streaming: false,
++            stop: ['<|im_end|>', 'END']
++        })
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index faf2ebd8b37..0f677f8c4a0 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -18,7 +18,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+     constructor() {
+         this.label = 'OpenAI Custom Model'
+         this.name = 'chatOpenAICustom'
+-        this.version = 4.0
++        this.version = 4.1
+         this.type = 'ChatOpenAI-Custom'
+         this.icon = 'openai.svg'
+         this.category = 'Chat Models'
+@@ -92,6 +92,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 optional: true,
+                 additionalParams: true
+             },
++            {
++                label: 'Stop Sequence',
++                name: 'stopSequence',
++                type: 'string',
++                rows: 4,
++                optional: true,
++                description: 'List of stop words to use when generating. Use comma to separate multiple stop words.',
++                additionalParams: true
++            },
+             {
+                 label: 'Timeout',
+                 name: 'timeout',
+@@ -126,6 +135,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         const topP = nodeData.inputs?.topP as string
+         const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
+         const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const stopSequence = nodeData.inputs?.stopSequence as string
+         const timeout = nodeData.inputs?.timeout as string
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = nodeData.inputs?.basepath as string
+@@ -147,6 +157,10 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (topP) obj.topP = parseFloat(topP)
+         if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
+         if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (stopSequence) {
++            const stopSequenceArray = stopSequence.split(',').map((item) => item.trim())
++            obj.stop = stopSequenceArray
++        }
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
+ 
+
+From 0c594c8c416715e793504cad52704538bd8868d9 Mon Sep 17 00:00:00 2001
+From: Nikhil Shukla <nikhilshukla8652@gmail.com>
+Date: Tue, 26 May 2026 17:04:41 +0530
+Subject: [PATCH 2/2] fix: ignore empty custom stop sequences
+
+---
+ .../ChatOpenAICustom/ChatOpenAICustom.test.ts | 19 +++++++++++++++++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      |  7 +++++--
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+index 627b543c03b..d0bf5275299 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+@@ -58,4 +58,23 @@ describe('ChatOpenAICustom', () => {
+             stop: ['<|im_end|>', 'END']
+         })
+     })
++
++    it('ignores empty stop sequence entries', async () => {
++        const node = new ChatOpenAICustom()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'custom-model',
++                    temperature: '0.3',
++                    stopSequence: 'foo,, bar, ',
++                    streaming: false
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.stop).toEqual(['foo', 'bar'])
++    })
+ })
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index 0f677f8c4a0..21981bd9190 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -158,8 +158,11 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
+         if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
+         if (stopSequence) {
+-            const stopSequenceArray = stopSequence.split(',').map((item) => item.trim())
+-            obj.stop = stopSequenceArray
++            const stopSequenceArray = stopSequence
++                .split(',')
++                .map((item) => item.trim())
++                .filter((item) => item !== '')
++            if (stopSequenceArray.length > 0) obj.stop = stopSequenceArray
+         }
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache

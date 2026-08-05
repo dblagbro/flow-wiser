@@ -1,0 +1,30 @@
+From 7ee9da10a9136e5f9b13b7c54c7b65172424b967 Mon Sep 17 00:00:00 2001
+From: "Flocky (GitHub Agent)" <flocky@haroldfabla2-hue.dev>
+Date: Sat, 21 Mar 2026 21:05:41 +0000
+Subject: [PATCH] fix: handle empty/whitespace LOG_PATH in docker compose
+
+When LOG_PATH is set to an empty string in docker-compose (e.g.
+LOG_PATH=${LOG_PATH} with unset LOG_PATH), mkdirSync('') fails
+with ENOENT error.
+
+Fix: use optional chaining + trim + || instead of ??
+to properly handle empty strings and whitespace-only values.
+
+Fixes #6030
+---
+ packages/server/src/utils/config.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/utils/config.ts b/packages/server/src/utils/config.ts
+index b5f5884ebc2..b32a18b3048 100644
+--- a/packages/server/src/utils/config.ts
++++ b/packages/server/src/utils/config.ts
+@@ -7,7 +7,7 @@ dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), override: true }
+ 
+ // default config
+ const loggingConfig = {
+-    dir: process.env.LOG_PATH ?? path.join(__dirname, '..', '..', 'logs'),
++    dir: process.env.LOG_PATH?.trim() || path.join(__dirname, '..', '..', 'logs'),
+     server: {
+         level: process.env.LOG_LEVEL ?? 'info',
+         filename: 'server.log',

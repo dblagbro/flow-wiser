@@ -1,0 +1,30 @@
+From aa58e458469c43106c2119fa910f41a59c6e380c Mon Sep 17 00:00:00 2001
+From: hamza <supercomputer>
+Date: Wed, 22 Apr 2026 15:50:13 +0200
+Subject: [PATCH] fix(docker): streamline file ownership handling in Dockerfile
+
+---
+ Dockerfile | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index 70041f41d47..237e962eaaa 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -28,14 +28,12 @@ ENV NODE_OPTIONS=--max-old-space-size=8192
+ WORKDIR /usr/src/flowise
+ 
+ # Copy app source
+-COPY . .
+-
++COPY --chown=node:node . .
+ # Install dependencies and build
+ RUN pnpm install && \
+     pnpm build
+ 
+-# Give the node user ownership of the application files
+-RUN chown -R node:node .
++
+ 
+ # Switch to non-root user (node user already exists in node:20-alpine)
+ USER node

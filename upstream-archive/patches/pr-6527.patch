@@ -1,0 +1,287 @@
+From e33b4d38ef764ab65c29eb1c7dde11b1c5be7f56 Mon Sep 17 00:00:00 2001
+From: Anil Chandra Naidu Matcha <matcha72@gmail.com>
+Date: Wed, 17 Jun 2026 12:06:23 +0530
+Subject: [PATCH 1/4] feat: add MuAPI credential
+
+---
+ .../credentials/MuApiApi.credential.ts        | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+ create mode 100644 packages/components/credentials/MuApiApi.credential.ts
+
+diff --git a/packages/components/credentials/MuApiApi.credential.ts b/packages/components/credentials/MuApiApi.credential.ts
+new file mode 100644
+index 00000000000..0067163a70b
+--- /dev/null
++++ b/packages/components/credentials/MuApiApi.credential.ts
+@@ -0,0 +1,24 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class MuApiApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'MuAPI API'
++        this.name = 'muApiApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'MuAPI API Key',
++                name: 'muApiKey',
++                type: 'password',
++                description: 'Get your API key at https://muapi.ai/dashboard/api-keys'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: MuApiApi }
+
+From c589a064848bfa13a1483fd6d63ad63f53efa801 Mon Sep 17 00:00:00 2001
+From: Anil Chandra Naidu Matcha <matcha72@gmail.com>
+Date: Wed, 17 Jun 2026 12:06:38 +0530
+Subject: [PATCH 2/4] feat: add MuAPI image generation tool node
+
+---
+ .../nodes/tools/MuAPIImage/MuAPIImage.ts      | 151 ++++++++++++++++++
+ 1 file changed, 151 insertions(+)
+ create mode 100644 packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
+
+diff --git a/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts b/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
+new file mode 100644
+index 00000000000..c6cad157a2f
+--- /dev/null
++++ b/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
+@@ -0,0 +1,151 @@
++import { DynamicStructuredTool } from '@langchain/core/tools'
++import { z } from 'zod'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const BASE_URL = 'https://api.muapi.ai/api/v1'
++
++const IMAGE_MODELS = [
++    'flux-schnell',
++    'flux-dev',
++    'flux-kontext-dev',
++    'flux-kontext-pro',
++    'flux-kontext-max',
++    'hidream-fast',
++    'hidream-dev',
++    'hidream-full',
++    'midjourney',
++    'gpt4o',
++    'gpt-image-2',
++    'imagen4',
++    'imagen4-fast',
++    'seedream',
++    'reve',
++    'ideogram',
++    'hunyuan',
++    'wan2.1',
++    'qwen'
++] as const
++
++async function submitAndPoll(apiKey: string, endpoint: string, payload: object): Promise<string> {
++    const submitResp = await fetch(`${BASE_URL}/${endpoint}`, {
++        method: 'POST',
++        headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
++        body: JSON.stringify(payload)
++    })
++    if (!submitResp.ok) {
++        const err = await submitResp.text()
++        throw new Error(`MuAPI submit error (${submitResp.status}): ${err}`)
++    }
++    const { request_id } = await submitResp.json()
++
++    const deadline = Date.now() + 300_000
++    while (Date.now() < deadline) {
++        await new Promise((r) => setTimeout(r, 3000))
++        const pollResp = await fetch(`${BASE_URL}/predictions/${request_id}/result`, {
++            headers: { 'x-api-key': apiKey }
++        })
++        if (!pollResp.ok) throw new Error(`MuAPI poll error (${pollResp.status})`)
++        const data = await pollResp.json()
++        if (data.status === 'completed') {
++            const outputs: string[] = data.outputs ?? []
++            if (!outputs.length) throw new Error('Generation completed but returned no outputs')
++            return outputs[0]
++        }
++        if (data.status === 'failed' || data.status === 'cancelled') {
++            throw new Error(`Generation ${data.status}: ${data.error ?? ''}`)
++        }
++    }
++    throw new Error('MuAPI generation timed out after 5 minutes')
++}
++
++class MuAPIImage_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'MuAPI Image Generation'
++        this.name = 'muAPIImage'
++        this.version = 1.0
++        this.type = 'MuAPIImage'
++        this.icon = 'muapi.svg'
++        this.category = 'Tools'
++        this.description =
++            'Generate images from text prompts using muapi.ai — a unified API for 400+ models including Flux, Midjourney, GPT-4o Image, Imagen 4, Seedream, HiDream, and more.'
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['muApiApi']
++        }
++        this.inputs = [
++            {
++                label: 'Model',
++                name: 'model',
++                type: 'options',
++                options: IMAGE_MODELS.map((m) => ({ label: m, name: m })),
++                default: 'flux-schnell',
++                description: 'The image generation model to use'
++            },
++            {
++                label: 'Tool Name',
++                name: 'toolName',
++                type: 'string',
++                default: 'generate_image',
++                description: 'Name of the tool as exposed to the LLM agent'
++            },
++            {
++                label: 'Tool Description',
++                name: 'toolDescription',
++                type: 'string',
++                rows: 3,
++                default:
++                    'Generate an image from a text description using muapi.ai. Returns the URL of the generated image.',
++                description: 'Description shown to the LLM to guide tool use'
++            }
++        ]
++        this.baseClasses = [this.type, ...getBaseClasses(DynamicStructuredTool)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('muApiKey', credentialData, nodeData)
++
++        const model = (nodeData.inputs?.model as string) ?? 'flux-schnell'
++        const toolName = (nodeData.inputs?.toolName as string) ?? 'generate_image'
++        const toolDescription =
++            (nodeData.inputs?.toolDescription as string) ??
++            'Generate an image from a text description using muapi.ai. Returns the URL of the generated image.'
++
++        return new DynamicStructuredTool({
++            name: toolName,
++            description: toolDescription,
++            schema: z.object({
++                prompt: z.string().describe('Text description of the image to generate'),
++                width: z.number().optional().describe('Image width in pixels'),
++                height: z.number().optional().describe('Image height in pixels')
++            }),
++            func: async ({ prompt, width, height }) => {
++                const payload: Record<string, unknown> = { prompt }
++                if (width) payload.width = width
++                if (height) payload.height = height
++                try {
++                    const url = await submitAndPoll(apiKey, model, payload)
++                    return JSON.stringify({ image_url: url, model, prompt })
++                } catch (e: any) {
++                    return `Error: ${e.message}`
++                }
++            }
++        })
++    }
++}
++
++module.exports = { nodeClass: MuAPIImage_Tools }
+
+From 074d9985dfedaa9e3d2665810a068d05fe3e6f0f Mon Sep 17 00:00:00 2001
+From: Anil Chandra Naidu Matcha <matcha72@gmail.com>
+Date: Wed, 17 Jun 2026 12:06:44 +0530
+Subject: [PATCH 3/4] feat: add MuAPI icon
+
+---
+ packages/components/nodes/tools/MuAPIImage/muapi.svg | 4 ++++
+ 1 file changed, 4 insertions(+)
+ create mode 100644 packages/components/nodes/tools/MuAPIImage/muapi.svg
+
+diff --git a/packages/components/nodes/tools/MuAPIImage/muapi.svg b/packages/components/nodes/tools/MuAPIImage/muapi.svg
+new file mode 100644
+index 00000000000..90f2faafceb
+--- /dev/null
++++ b/packages/components/nodes/tools/MuAPIImage/muapi.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
++  <rect width="40" height="40" rx="8" fill="#6366F1"/>
++  <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" fill="white" text-anchor="middle">M</text>
++</svg>
+
+From 21d61f567a0b1a355b3b21a9cc3855fe2c669998 Mon Sep 17 00:00:00 2001
+From: Anil Chandra Naidu Matcha <matcha72@gmail.com>
+Date: Wed, 24 Jun 2026 13:56:20 +0530
+Subject: [PATCH 4/4] fix: validate api key, check request_id null, guard poll
+ response
+
+---
+ .../nodes/tools/MuAPIImage/MuAPIImage.ts          | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts b/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
+index c6cad157a2f..6fea354e0b4 100644
+--- a/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
++++ b/packages/components/nodes/tools/MuAPIImage/MuAPIImage.ts
+@@ -28,6 +28,10 @@ const IMAGE_MODELS = [
+ ] as const
+ 
+ async function submitAndPoll(apiKey: string, endpoint: string, payload: object): Promise<string> {
++    if (!apiKey) {
++        throw new Error('MuAPI API key is not configured. Please set it in the credential.')
++    }
++
+     const submitResp = await fetch(`${BASE_URL}/${endpoint}`, {
+         method: 'POST',
+         headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+@@ -37,7 +41,11 @@ async function submitAndPoll(apiKey: string, endpoint: string, payload: object):
+         const err = await submitResp.text()
+         throw new Error(`MuAPI submit error (${submitResp.status}): ${err}`)
+     }
+-    const { request_id } = await submitResp.json()
++    const submitData = await submitResp.json()
++    const request_id: string | undefined = submitData?.request_id
++    if (!request_id) {
++        throw new Error(`MuAPI did not return a request_id. Response: ${JSON.stringify(submitData)}`)
++    }
+ 
+     const deadline = Date.now() + 300_000
+     while (Date.now() < deadline) {
+@@ -47,6 +55,7 @@ async function submitAndPoll(apiKey: string, endpoint: string, payload: object):
+         })
+         if (!pollResp.ok) throw new Error(`MuAPI poll error (${pollResp.status})`)
+         const data = await pollResp.json()
++        if (!data) throw new Error('MuAPI poll returned an empty response')
+         if (data.status === 'completed') {
+             const outputs: string[] = data.outputs ?? []
+             if (!outputs.length) throw new Error('Generation completed but returned no outputs')
+@@ -119,6 +128,10 @@ class MuAPIImage_Tools implements INode {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('muApiKey', credentialData, nodeData)
+ 
++        if (!apiKey) {
++            throw new Error('MuAPI API key is missing. Please configure it in the credential settings.')
++        }
++
+         const model = (nodeData.inputs?.model as string) ?? 'flux-schnell'
+         const toolName = (nodeData.inputs?.toolName as string) ?? 'generate_image'
+         const toolDescription =

@@ -1,0 +1,478 @@
+From fad4ad8515f9383bf145f7fc0ba3872b2ebc77bd Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Wed, 29 Apr 2026 18:06:41 +0000
+Subject: [PATCH 1/5] feat: add PerplexitySearch tool node
+
+Adds a new PerplexitySearch tool node to the Tools category, mirroring
+the existing ExaSearch and TavilyAPI tool nodes. The node wraps
+Perplexity's Search API (POST https://api.perplexity.ai/search) and
+exposes query, max results, search domain filter, and search recency
+filter inputs to the LLM.
+
+Reuses the existing perplexityApi credential type already used by the
+ChatPerplexity chat model.
+
+Refs FlowiseAI/Flowise#1860
+---
+ .../PerplexitySearch/PerplexitySearch.ts      | 121 ++++++++++++++++++
+ .../nodes/tools/PerplexitySearch/core.ts      | 112 ++++++++++++++++
+ .../tools/PerplexitySearch/perplexity.svg     |   8 ++
+ 3 files changed, 241 insertions(+)
+ create mode 100644 packages/components/nodes/tools/PerplexitySearch/PerplexitySearch.ts
+ create mode 100644 packages/components/nodes/tools/PerplexitySearch/core.ts
+ create mode 100644 packages/components/nodes/tools/PerplexitySearch/perplexity.svg
+
+diff --git a/packages/components/nodes/tools/PerplexitySearch/PerplexitySearch.ts b/packages/components/nodes/tools/PerplexitySearch/PerplexitySearch.ts
+new file mode 100644
+index 00000000000..6d1460f4678
+--- /dev/null
++++ b/packages/components/nodes/tools/PerplexitySearch/PerplexitySearch.ts
+@@ -0,0 +1,121 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { desc, PerplexitySearchParameters, PerplexitySearchTool } from './core'
++
++class PerplexitySearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Perplexity Search'
++        this.name = 'perplexitySearch'
++        this.version = 1.0
++        this.type = 'PerplexitySearch'
++        this.icon = 'perplexity.svg'
++        this.category = 'Tools'
++        this.description = "Wrapper around Perplexity's Search API for ranked web results"
++        this.inputs = [
++            {
++                label: 'Tool Description',
++                name: 'description',
++                type: 'string',
++                rows: 4,
++                additionalParams: true,
++                optional: true,
++                default: desc,
++                description: 'Description of what the tool does. This is for the LLM to determine when to use this tool.'
++            },
++            {
++                label: 'Max Results',
++                name: 'maxResults',
++                type: 'number',
++                step: 1,
++                default: 5,
++                additionalParams: true,
++                optional: true,
++                description: 'Maximum number of search results to return. Default is 5.'
++            },
++            {
++                label: 'Search Domain Filter',
++                name: 'searchDomainFilter',
++                type: 'string',
++                rows: 2,
++                additionalParams: true,
++                optional: true,
++                description:
++                    'Comma-separated list of domains to restrict results to. Prefix a domain with - to exclude it (e.g. "nytimes.com,-pinterest.com"). Do not mix allow and deny entries.'
++            },
++            {
++                label: 'Search Recency Filter',
++                name: 'searchRecencyFilter',
++                type: 'options',
++                options: [
++                    { label: 'Hour', name: 'hour' },
++                    { label: 'Day', name: 'day' },
++                    { label: 'Week', name: 'week' },
++                    { label: 'Month', name: 'month' },
++                    { label: 'Year', name: 'year' }
++                ],
++                additionalParams: true,
++                optional: true,
++                description: 'Filter search results to a relative time window.'
++            }
++        ]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['perplexityApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(PerplexitySearchTool)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const description = nodeData.inputs?.description as string
++        const maxResults = nodeData.inputs?.maxResults as string | number | undefined
++        const searchDomainFilter = nodeData.inputs?.searchDomainFilter as string
++        const searchRecencyFilter = nodeData.inputs?.searchRecencyFilter as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const perplexityApiKey = getCredentialParam('perplexityApiKey', credentialData, nodeData)
++
++        if (!perplexityApiKey) {
++            throw new Error('Perplexity API Key missing from credential')
++        }
++
++        const params: PerplexitySearchParameters = {
++            apiKey: perplexityApiKey
++        }
++
++        if (description) params.description = description
++
++        if (maxResults !== undefined && maxResults !== '') {
++            const parsed = typeof maxResults === 'number' ? maxResults : parseInt(maxResults as string, 10)
++            if (!isNaN(parsed) && parsed > 0) params.maxResults = parsed
++        }
++
++        if (searchDomainFilter) {
++            const domains = searchDomainFilter
++                .split(',')
++                .map((d) => d.trim())
++                .filter((d) => d.length > 0)
++            if (domains.length > 0) params.searchDomainFilter = domains
++        }
++
++        if (searchRecencyFilter) {
++            params.searchRecencyFilter = searchRecencyFilter as PerplexitySearchParameters['searchRecencyFilter']
++        }
++
++        return new PerplexitySearchTool(params)
++    }
++}
++
++module.exports = { nodeClass: PerplexitySearch_Tools }
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.ts b/packages/components/nodes/tools/PerplexitySearch/core.ts
+new file mode 100644
+index 00000000000..69cdeaf50f2
+--- /dev/null
++++ b/packages/components/nodes/tools/PerplexitySearch/core.ts
+@@ -0,0 +1,112 @@
++import { z } from 'zod/v3'
++import fetch from 'node-fetch'
++import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
++
++export const desc = `A wrapper around Perplexity's Search API. Useful for retrieving up-to-date, ranked web results with title, URL, and snippet for a given query.`
++
++export interface PerplexitySearchParameters {
++    apiKey: string
++    maxResults?: number
++    searchDomainFilter?: string[]
++    searchRecencyFilter?: 'hour' | 'day' | 'week' | 'month' | 'year'
++    name?: string
++    description?: string
++}
++
++interface PerplexitySearchResult {
++    title?: string
++    url?: string
++    snippet?: string
++    date?: string
++}
++
++const createPerplexitySearchSchema = () => {
++    return z.object({
++        query: z.string().describe('The search query to send to the Perplexity Search API.')
++    })
++}
++
++export class PerplexitySearchTool extends DynamicStructuredTool {
++    apiKey: string
++    maxResults: number
++    searchDomainFilter?: string[]
++    searchRecencyFilter?: 'hour' | 'day' | 'week' | 'month' | 'year'
++
++    constructor(args: PerplexitySearchParameters) {
++        const schema = createPerplexitySearchSchema()
++
++        const toolInput = {
++            name: args.name || 'perplexity_search',
++            description: args.description || desc,
++            schema: schema,
++            baseUrl: '',
++            method: 'POST',
++            headers: {}
++        }
++        super(toolInput)
++        this.apiKey = args.apiKey
++        this.maxResults = args.maxResults ?? 5
++        this.searchDomainFilter = args.searchDomainFilter
++        this.searchRecencyFilter = args.searchRecencyFilter
++    }
++
++    private buildBody(query: string): Record<string, any> {
++        const body: Record<string, any> = {
++            query,
++            max_results: this.maxResults
++        }
++        if (this.searchDomainFilter && this.searchDomainFilter.length > 0) {
++            body.search_domain_filter = this.searchDomainFilter
++        }
++        if (this.searchRecencyFilter) {
++            body.search_recency_filter = this.searchRecencyFilter
++        }
++        return body
++    }
++
++    /** @ignore */
++    async _call(arg: any): Promise<string> {
++        const { query } = arg
++
++        if (!query) {
++            throw new Error('Query is required for Perplexity Search')
++        }
++
++        if (!this.apiKey) {
++            throw new Error('Perplexity API Key is required')
++        }
++
++        const response = await fetch('https://api.perplexity.ai/search', {
++            method: 'POST',
++            headers: {
++                Authorization: `Bearer ${this.apiKey}`,
++                'Content-Type': 'application/json'
++            },
++            body: JSON.stringify(this.buildBody(query))
++        })
++
++        if (!response.ok) {
++            const errorText = await response.text().catch(() => '')
++            throw new Error(`Perplexity Search API error: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`)
++        }
++
++        const data = (await response.json()) as { results?: PerplexitySearchResult[] }
++        const results = data.results || []
++
++        if (results.length === 0) {
++            return 'No Perplexity Search results were found.'
++        }
++
++        const formatted = results
++            .map((result, index) => {
++                const title = result.title || 'Untitled'
++                const url = result.url || ''
++                const snippet = result.snippet || ''
++                const date = result.date ? `\nDate: ${result.date}` : ''
++                return `${index + 1}. ${title}\nURL: ${url}${date}\nSnippet: ${snippet}`
++            })
++            .join('\n\n')
++
++        return formatted
++    }
++}
+diff --git a/packages/components/nodes/tools/PerplexitySearch/perplexity.svg b/packages/components/nodes/tools/PerplexitySearch/perplexity.svg
+new file mode 100644
+index 00000000000..2aa09bef53d
+--- /dev/null
++++ b/packages/components/nodes/tools/PerplexitySearch/perplexity.svg
+@@ -0,0 +1,8 @@
++<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
++	 viewBox="0 0 48 48" style="enable-background:new 0 0 48 48;" xml:space="preserve">
++<path style="fill-rule:evenodd;clip-rule:evenodd;fill:black;" d="M11.469,4l11.39,10.494v-0.002V4.024h2.217v10.517
++	L36.518,4v11.965h4.697v17.258h-4.683v10.654L25.077,33.813v10.18h-2.217V33.979L11.482,44V33.224H6.785V15.965h4.685V4z
++	 M21.188,18.155H9.002v12.878h2.477v-4.062L21.188,18.155z M13.699,27.943v11.17l9.16-8.068V19.623L13.699,27.943z M25.141,30.938
++	V19.612l9.163,8.321v5.291h0.012v5.775L25.141,30.938z M36.532,31.033h2.466V18.155H26.903l9.629,8.725V31.033z M34.301,15.965
++	V9.038l-7.519,6.927H34.301z M21.205,15.965h-7.519V9.038L21.205,15.965z"/>
++</svg>
+\ No newline at end of file
+
+From 9566a478162ec1decb919d83494b1e2758603a78 Mon Sep 17 00:00:00 2001
+From: James Liounis <james.liounis@perplexity.ai>
+Date: Tue, 5 May 2026 17:14:27 -0400
+Subject: [PATCH 2/5] Update
+ packages/components/nodes/tools/PerplexitySearch/core.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/nodes/tools/PerplexitySearch/core.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.ts b/packages/components/nodes/tools/PerplexitySearch/core.ts
+index 69cdeaf50f2..7b46849ecc9 100644
+--- a/packages/components/nodes/tools/PerplexitySearch/core.ts
++++ b/packages/components/nodes/tools/PerplexitySearch/core.ts
+@@ -1,6 +1,6 @@
+ import { z } from 'zod/v3'
+-import fetch from 'node-fetch'
+-import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
++import { secureFetch } from '../../../src/utils'
++import { StructuredTool } from '@langchain/core/tools'
+ 
+ export const desc = `A wrapper around Perplexity's Search API. Useful for retrieving up-to-date, ranked web results with title, URL, and snippet for a given query.`
+ 
+
+From b7ca7a2cb6311337413684cdfc94c7b99839b9f7 Mon Sep 17 00:00:00 2001
+From: James Liounis <james.liounis@perplexity.ai>
+Date: Tue, 5 May 2026 17:14:37 -0400
+Subject: [PATCH 3/5] Update
+ packages/components/nodes/tools/PerplexitySearch/core.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/nodes/tools/PerplexitySearch/core.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.ts b/packages/components/nodes/tools/PerplexitySearch/core.ts
+index 7b46849ecc9..b39f7e7ff6b 100644
+--- a/packages/components/nodes/tools/PerplexitySearch/core.ts
++++ b/packages/components/nodes/tools/PerplexitySearch/core.ts
+@@ -76,7 +76,7 @@ export class PerplexitySearchTool extends DynamicStructuredTool {
+             throw new Error('Perplexity API Key is required')
+         }
+ 
+-        const response = await fetch('https://api.perplexity.ai/search', {
++        const response = await secureFetch('https://api.perplexity.ai/search', {
+             method: 'POST',
+             headers: {
+                 Authorization: `Bearer ${this.apiKey}`,
+
+From f9fca914909e9f43cc3b7dac2c05bea398519ffc Mon Sep 17 00:00:00 2001
+From: James <james.liounis@perplexity.ai>
+Date: Sun, 17 May 2026 10:32:48 +0000
+Subject: [PATCH 4/5] fix: address Perplexity search tool review feedback
+
+---
+ .../nodes/tools/PerplexitySearch/core.ts      | 24 ++++++++-----------
+ 1 file changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.ts b/packages/components/nodes/tools/PerplexitySearch/core.ts
+index b39f7e7ff6b..1bad4e6aff2 100644
+--- a/packages/components/nodes/tools/PerplexitySearch/core.ts
++++ b/packages/components/nodes/tools/PerplexitySearch/core.ts
+@@ -1,5 +1,5 @@
+ import { z } from 'zod/v3'
+-import { secureFetch } from '../../../src/utils'
++import { secureFetch } from '../../../src/httpSecurity'
+ import { StructuredTool } from '@langchain/core/tools'
+ 
+ export const desc = `A wrapper around Perplexity's Search API. Useful for retrieving up-to-date, ranked web results with title, URL, and snippet for a given query.`
+@@ -26,24 +26,20 @@ const createPerplexitySearchSchema = () => {
+     })
+ }
+ 
+-export class PerplexitySearchTool extends DynamicStructuredTool {
++export class PerplexitySearchTool extends StructuredTool {
++    name = 'perplexity_search'
++    description = desc
++    schema = createPerplexitySearchSchema()
++
+     apiKey: string
+     maxResults: number
+     searchDomainFilter?: string[]
+     searchRecencyFilter?: 'hour' | 'day' | 'week' | 'month' | 'year'
+ 
+     constructor(args: PerplexitySearchParameters) {
+-        const schema = createPerplexitySearchSchema()
+-
+-        const toolInput = {
+-            name: args.name || 'perplexity_search',
+-            description: args.description || desc,
+-            schema: schema,
+-            baseUrl: '',
+-            method: 'POST',
+-            headers: {}
+-        }
+-        super(toolInput)
++        super()
++        this.name = args.name || this.name
++        this.description = args.description || this.description
+         this.apiKey = args.apiKey
+         this.maxResults = args.maxResults ?? 5
+         this.searchDomainFilter = args.searchDomainFilter
+@@ -65,7 +61,7 @@ export class PerplexitySearchTool extends DynamicStructuredTool {
+     }
+ 
+     /** @ignore */
+-    async _call(arg: any): Promise<string> {
++    async _call(arg: z.infer<typeof this.schema>): Promise<string> {
+         const { query } = arg
+ 
+         if (!query) {
+
+From 133b19f3636c414ec168a8eecfddd36868545506 Mon Sep 17 00:00:00 2001
+From: James <james.liounis@perplexity.ai>
+Date: Tue, 26 May 2026 22:30:12 +0000
+Subject: [PATCH 5/5] Add Perplexity integration attribution header
+
+---
+ .../nodes/tools/PerplexitySearch/core.test.ts | 38 +++++++++++++++++++
+ .../nodes/tools/PerplexitySearch/core.ts      |  5 ++-
+ 2 files changed, 42 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/nodes/tools/PerplexitySearch/core.test.ts
+
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.test.ts b/packages/components/nodes/tools/PerplexitySearch/core.test.ts
+new file mode 100644
+index 00000000000..f6e02263437
+--- /dev/null
++++ b/packages/components/nodes/tools/PerplexitySearch/core.test.ts
+@@ -0,0 +1,38 @@
++import { secureFetch } from '../../../src/httpSecurity'
++import packageJson from '../../../package.json'
++import { PerplexitySearchTool } from './core'
++
++jest.mock('../../../src/httpSecurity', () => ({
++    secureFetch: jest.fn()
++}))
++
++const mockedSecureFetch = secureFetch as jest.MockedFunction<typeof secureFetch>
++
++describe('PerplexitySearchTool', () => {
++    beforeEach(() => {
++        jest.resetAllMocks()
++    })
++
++    it('sends the Flowise integration attribution header', async () => {
++        mockedSecureFetch.mockResolvedValue({
++            ok: true,
++            json: jest.fn().mockResolvedValue({ results: [] })
++        } as unknown as Awaited<ReturnType<typeof secureFetch>>)
++
++        const tool = new PerplexitySearchTool({ apiKey: 'test-key' })
++
++        await tool._call({ query: 'latest ai news' })
++
++        expect(mockedSecureFetch).toHaveBeenCalledWith(
++            'https://api.perplexity.ai/search',
++            expect.objectContaining({
++                headers: expect.objectContaining({
++                    'X-Pplx-Integration': expect.stringMatching(/^flowise\//)
++                })
++            })
++        )
++
++        const headers = mockedSecureFetch.mock.calls[0]?.[1]?.headers as Record<string, string>
++        expect(headers['X-Pplx-Integration']).toBe(`flowise/${packageJson.version}`)
++    })
++})
+diff --git a/packages/components/nodes/tools/PerplexitySearch/core.ts b/packages/components/nodes/tools/PerplexitySearch/core.ts
+index 1bad4e6aff2..a54f2f169df 100644
+--- a/packages/components/nodes/tools/PerplexitySearch/core.ts
++++ b/packages/components/nodes/tools/PerplexitySearch/core.ts
+@@ -1,8 +1,10 @@
+ import { z } from 'zod/v3'
+ import { secureFetch } from '../../../src/httpSecurity'
+ import { StructuredTool } from '@langchain/core/tools'
++import packageJson from '../../../package.json'
+ 
+ export const desc = `A wrapper around Perplexity's Search API. Useful for retrieving up-to-date, ranked web results with title, URL, and snippet for a given query.`
++export const PERPLEXITY_INTEGRATION_HEADER = `flowise/${packageJson.version}`
+ 
+ export interface PerplexitySearchParameters {
+     apiKey: string
+@@ -76,7 +78,8 @@ export class PerplexitySearchTool extends StructuredTool {
+             method: 'POST',
+             headers: {
+                 Authorization: `Bearer ${this.apiKey}`,
+-                'Content-Type': 'application/json'
++                'Content-Type': 'application/json',
++                'X-Pplx-Integration': PERPLEXITY_INTEGRATION_HEADER
+             },
+             body: JSON.stringify(this.buildBody(query))
+         })

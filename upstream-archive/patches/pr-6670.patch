@@ -1,0 +1,35 @@
+From 465799a1fb1fe54bc9f8acdad6a1d8b2a2ce5bac Mon Sep 17 00:00:00 2001
+From: iruzen-dono <juleszhou01@gmail.com>
+Date: Sun, 26 Jul 2026 10:52:36 +0000
+Subject: [PATCH] fix(docker): pin flowise version in Docker image to match
+ release tag
+
+The docker/Dockerfile used 'npm install -g flowise' which installs
+whatever is latest on npm, causing version mismatch between the Docker
+image tag and the installed CLI version (e.g. image tagged 3.1.3
+containing CLI 3.1.2).
+
+This adds a FLOWISE_VERSION build arg (defaulting to current release)
+so the installed version always matches the release tag.
+
+Fixes #6623
+---
+ docker/Dockerfile | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+index c2a6b20ebe4..c83b6a1cf39 100644
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -12,8 +12,9 @@ RUN apk add --no-cache git python3 py3-pip make g++ build-base cairo-dev pango-d
+ # Skip downloading Chrome for Puppeteer (saves build time)
+ ENV PUPPETEER_SKIP_DOWNLOAD=true
+ 
+-# Install latest Flowise globally (specific version can be set: flowise@1.0.0)
+-RUN npm install -g flowise
++# Install specific Flowise version to match release tag (update FLOWISE_VERSION on each release)
++ARG FLOWISE_VERSION=3.1.3
++RUN npm install -g flowise@${FLOWISE_VERSION}
+ 
+ # Stage 2: Runtime stage
+ FROM node:${NODE_VERSION}-alpine

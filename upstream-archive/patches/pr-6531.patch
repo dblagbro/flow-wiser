@@ -1,0 +1,176 @@
+From b6a147ce8585f732bb1ea37003c47de445fe181b Mon Sep 17 00:00:00 2001
+From: CodeWithJames-AI <james.ngai@uno-tech.com.hk>
+Date: Thu, 18 Jun 2026 14:08:28 +0800
+Subject: [PATCH] Honor stop option for custom OpenAI models
+
+ChatOpenAI Custom accepted BaseOptions JSON but forwarded every key as defaultHeaders. That made issue #2499's stop parameter become an HTTP header instead of a ChatOpenAI model option, so the model never received the configured stop sequence.
+
+This keeps the change narrow: stop is promoted to ChatOpenAI fields, baseURL/defaultHeaders remain client configuration, and unknown BaseOptions keys continue to act as request headers for compatibility.
+
+Constraint: Flowise issue #2499 reports stop supplied through ChatOpenAI Custom BaseOptions.
+
+Rejected: Add a new Stop Sequence input | an existing open PR explores that UI path, but it does not directly preserve the reported BaseOptions workflow.
+
+Rejected: Promote every BaseOptions key to model fields | too broad for a bugfix and could break users relying on custom headers.
+
+Confidence: high
+
+Scope-risk: narrow
+
+Reversibility: clean
+
+Directive: Do not broaden BaseOptions model-option promotion without explicit compatibility tests for request headers.
+
+Tested: pnpm.cmd --filter flowise-components test -- ChatOpenAICustom.test.ts --runInBand
+
+Tested: pnpm.cmd --filter flowise-components exec tsc --noEmit --pretty false
+
+Tested: pnpm.cmd --filter flowise-components exec eslint nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts --ext ts --report-unused-disable-directives --max-warnings 0
+
+Tested: pnpm.cmd --filter flowise-components build
+
+Tested: pnpm.cmd build; PORT=3000 pnpm.cmd start; GET / returned 200; GET /api/v1/ping returned pong
+
+Not-tested: Authenticated UI node-edit flow and live OpenAI-compatible API request.
+
+Related: FlowiseAI/Flowise#2499
+---
+ .../ChatOpenAICustom/ChatOpenAICustom.test.ts | 75 +++++++++++++++++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      | 27 +++++--
+ 2 files changed, 97 insertions(+), 5 deletions(-)
+ create mode 100644 packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+new file mode 100644
+index 00000000000..aaaac137d3b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.test.ts
+@@ -0,0 +1,75 @@
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ChatOpenAICustom } = require('./ChatOpenAICustom')
++
++describe('ChatOpenAICustom', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            openAIApiKey: 'sk-test'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++    })
++
++    it('passes stop from BaseOptions as a model option instead of a default header', async () => {
++        const node = new ChatOpenAICustom()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'custom-model',
++                    temperature: '0.2',
++                    streaming: false,
++                    baseOptions: {
++                        stop: ['<|im_end|>']
++                    }
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.stop).toEqual(['<|im_end|>'])
++        expect(model.fields.configuration?.defaultHeaders).toBeUndefined()
++    })
++
++    it('keeps explicit client configuration in BaseOptions under configuration', async () => {
++        const node = new ChatOpenAICustom()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'custom-model',
++                    temperature: '0.2',
++                    baseOptions: {
++                        baseURL: 'https://example.test/v1',
++                        defaultHeaders: {
++                            'x-flowise-test': 'yes'
++                        },
++                        stop: ['DONE']
++                    }
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.stop).toEqual(['DONE'])
++        expect(model.fields.configuration).toEqual({
++            baseURL: 'https://example.test/v1',
++            defaultHeaders: {
++                'x-flowise-test': 'yes'
++            }
++        })
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index faf2ebd8b37..5d7cad86084 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -113,7 +113,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 name: 'baseOptions',
+                 type: 'json',
+                 optional: true,
+-                description: 'Default headers to include with every request to the API.',
++                description: 'JSON options for the OpenAI-compatible client. Use defaultHeaders for request headers.',
+                 additionalParams: true
+             }
+         ]
+@@ -150,7 +150,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
+ 
+-        let parsedBaseOptions: any | undefined = undefined
++        let parsedBaseOptions: ICommonObject | undefined = undefined
+ 
+         if (baseOptions) {
+             try {
+@@ -160,10 +160,27 @@ class ChatOpenAICustom_ChatModels implements INode {
+             }
+         }
+ 
+-        if (basePath || parsedBaseOptions) {
++        let baseOptionsBaseURL: string | undefined
++        let baseOptionsDefaultHeaders: ICommonObject | undefined
++
++        if (parsedBaseOptions) {
++            const { stop, baseURL, defaultHeaders, ...remainingBaseOptions } = parsedBaseOptions
++
++            if (stop) obj.stop = stop
++            if (baseURL) baseOptionsBaseURL = baseURL
++
++            const remainingDefaultHeaders = Object.keys(remainingBaseOptions).length ? remainingBaseOptions : undefined
++            if (defaultHeaders && remainingDefaultHeaders) {
++                baseOptionsDefaultHeaders = { ...remainingDefaultHeaders, ...defaultHeaders }
++            } else {
++                baseOptionsDefaultHeaders = defaultHeaders ?? remainingDefaultHeaders
++            }
++        }
++
++        if (basePath || baseOptionsBaseURL || baseOptionsDefaultHeaders) {
+             obj.configuration = {
+-                baseURL: basePath,
+-                defaultHeaders: parsedBaseOptions
++                baseURL: basePath || baseOptionsBaseURL,
++                defaultHeaders: baseOptionsDefaultHeaders
+             }
+         }
+ 

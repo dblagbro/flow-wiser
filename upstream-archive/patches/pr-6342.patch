@@ -1,0 +1,27 @@
+From 7ebbc6f0830fed425f11959ce22f157c6eb86e94 Mon Sep 17 00:00:00 2001
+From: "iLeaf Solutions Pvt. Ltd." <apps@ileafsolutions.com>
+Date: Thu, 25 Jul 2024 12:04:06 +0530
+Subject: [PATCH] Update package.json for memory Heap issue
+
+Fixing the memory heap issue for flowise docker
+---
+ package.json | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/package.json b/package.json
+index 5229140789c..ca478883e5a 100644
+--- a/package.json
++++ b/package.json
+@@ -12,10 +12,10 @@
+     "scripts": {
+         "build": "turbo run build",
+         "build-force": "pnpm clean && turbo run build --force",
+-        "dev": "turbo run dev --parallel",
++        "dev": "NODE_OPTIONS='--max-old-space-size=8192' turbo run dev --parallel",
+         "start": "run-script-os",
+         "start:windows": "cd packages/server/bin && run start",
+-        "start:default": "cd packages/server/bin && ./run start",
++        "start:default": "cd packages/server/bin && NODE_OPTIONS='--max-old-space-size=8192' ./run start",
+         "clean": "pnpm --filter \"./packages/**\" clean",
+         "nuke": "pnpm --filter \"./packages/**\" nuke && rimraf node_modules .turbo",
+         "format": "prettier --write \"**/*.{ts,tsx,md}\"",

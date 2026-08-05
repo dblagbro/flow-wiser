@@ -1,0 +1,247 @@
+From 09fe176f482eecb7120c87343141801102ec8335 Mon Sep 17 00:00:00 2001
+From: Alexander Kireev <ak.chatman.media@gmail.com>
+Date: Sat, 6 Jun 2026 08:18:11 +0700
+Subject: [PATCH 1/2] fix(ui): guard missing Axios error.response in error
+ handling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When a network request fails at the transport level (timeout, CORS block,
+cancelled request, offline) Axios sets error.response to undefined.
+Catch blocks in ToolDialog.jsx read error.response.data directly, so a
+secondary TypeError is thrown inside the error handler itself, masking
+the real failure and leaving users with no feedback.
+
+Changes:
+- Add getAxiosErrorMessage() to packages/ui/src/utils/errorHandler.js.
+  It safely extracts a message by checking response?.data?.message,
+  response?.data?.error, a plain string body, then error.message, and
+  finally a generic fallback — never assuming response is defined.
+- Replace all four bare error.response.data accesses in
+  packages/ui/src/views/tools/ToolDialog.jsx (exportTool, addNewTool,
+  saveTool, deleteTool) with getAxiosErrorMessage(error).
+- Add packages/ui/src/utils/errorHandler.test.js with 10 unit tests
+  covering the new helper (undefined response, null error, structured
+  data, plain string body, generic fallback).
+
+Closes #6466
+---
+ packages/ui/src/utils/errorHandler.js      | 27 +++++++++++
+ packages/ui/src/utils/errorHandler.test.js | 54 ++++++++++++++++++++++
+ packages/ui/src/views/tools/ToolDialog.jsx | 17 ++-----
+ 3 files changed, 86 insertions(+), 12 deletions(-)
+ create mode 100644 packages/ui/src/utils/errorHandler.test.js
+
+diff --git a/packages/ui/src/utils/errorHandler.js b/packages/ui/src/utils/errorHandler.js
+index 17aae836fd1..2718427a332 100644
+--- a/packages/ui/src/utils/errorHandler.js
++++ b/packages/ui/src/utils/errorHandler.js
+@@ -17,3 +17,30 @@ const toErrorWithMessage = (maybeError) => {
+ export const getErrorMessage = (error) => {
+     return toErrorWithMessage(error).message
+ }
++
++/**
++ * Safely extract a human-readable message from an Axios error.
++ *
++ * Axios errors may lack `error.response` when the request never received a
++ * response (network failure, timeout, CORS block, cancelled request, etc.).
++ * Reading `error.response.data` without a null-guard throws a secondary
++ * TypeError that masks the original failure.
++ *
++ * Priority order:
++ *   1. error.response.data.message  (structured API error)
++ *   2. error.response.data.error    (some APIs use this key)
++ *   3. error.response.data          (plain string body)
++ *   4. HTTP status code             (e.g. "Request failed with status 500")
++ *   5. error.message                (Axios / JS built-in message)
++ *   6. Generic fallback
++ */
++export const getAxiosErrorMessage = (error) => {
++    if (error?.response?.data) {
++        const data = error.response.data
++        if (typeof data === 'object') {
++            return data.message || data.error || getErrorMessage(error)
++        }
++        return String(data)
++    }
++    return error?.message || 'An unexpected error occurred'
++}
+diff --git a/packages/ui/src/utils/errorHandler.test.js b/packages/ui/src/utils/errorHandler.test.js
+new file mode 100644
+index 00000000000..6c4af6fb8a6
+--- /dev/null
++++ b/packages/ui/src/utils/errorHandler.test.js
+@@ -0,0 +1,54 @@
++import { getErrorMessage, getAxiosErrorMessage } from './errorHandler'
++
++describe('getErrorMessage', () => {
++    it('returns the message from an Error object', () => {
++        expect(getErrorMessage(new Error('boom'))).toBe('boom')
++    })
++
++    it('serialises a plain object when it has no message property', () => {
++        const result = getErrorMessage({ code: 42 })
++        expect(result).toContain('42')
++    })
++})
++
++describe('getAxiosErrorMessage', () => {
++    it('returns a safe fallback when error.response is undefined (network failure / timeout / CORS)', () => {
++        const axiosNetworkError = new Error('Network Error')
++        // Axios sets no .response on network-level failures
++        expect(axiosNetworkError.response).toBeUndefined()
++        expect(getAxiosErrorMessage(axiosNetworkError)).toBe('Network Error')
++    })
++
++    it('returns a safe fallback when the error itself is undefined', () => {
++        expect(getAxiosErrorMessage(undefined)).toBe('An unexpected error occurred')
++    })
++
++    it('returns a safe fallback when the error is null', () => {
++        expect(getAxiosErrorMessage(null)).toBe('An unexpected error occurred')
++    })
++
++    it('extracts response.data.message when the server returns a structured error', () => {
++        const error = { response: { data: { message: 'Validation failed', code: 400 } } }
++        expect(getAxiosErrorMessage(error)).toBe('Validation failed')
++    })
++
++    it('extracts response.data.error when only that key is present', () => {
++        const error = { response: { data: { error: 'Unauthorized' } } }
++        expect(getAxiosErrorMessage(error)).toBe('Unauthorized')
++    })
++
++    it('returns a plain string response body as-is', () => {
++        const error = { response: { data: 'Internal Server Error' } }
++        expect(getAxiosErrorMessage(error)).toBe('Internal Server Error')
++    })
++
++    it('falls back to error.message when response.data is falsy', () => {
++        const error = { response: { data: null }, message: 'Request failed with status 503' }
++        expect(getAxiosErrorMessage(error)).toBe('Request failed with status 503')
++    })
++
++    it('returns the generic fallback when there is no message at all', () => {
++        const error = {}
++        expect(getAxiosErrorMessage(error)).toBe('An unexpected error occurred')
++    })
++})
+diff --git a/packages/ui/src/views/tools/ToolDialog.jsx b/packages/ui/src/views/tools/ToolDialog.jsx
+index b73b15ec19a..07c920dde26 100644
+--- a/packages/ui/src/views/tools/ToolDialog.jsx
++++ b/packages/ui/src/views/tools/ToolDialog.jsx
+@@ -32,6 +32,7 @@ import useApi from '@/hooks/useApi'
+ // utils
+ import useNotifier from '@/utils/useNotifier'
+ import { generateRandomGradient, formatDataGridRows } from '@/utils/genericHelper'
++import { getAxiosErrorMessage } from '@/utils/errorHandler'
+ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ 
+ const exampleAPIFunc = `/*
+@@ -258,9 +259,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to export Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to export Tool: ${getAxiosErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -304,9 +303,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to add new Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to add new Tool: ${getAxiosErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -348,9 +345,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to save Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to save Tool: ${getAxiosErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -395,9 +390,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+                 }
+             } catch (error) {
+                 enqueueSnackbar({
+-                    message: `Failed to delete Tool: ${
+-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                    }`,
++                    message: `Failed to delete Tool: ${getAxiosErrorMessage(error)}`,
+                     options: {
+                         key: new Date().getTime() + Math.random(),
+                         variant: 'error',
+
+From d181d89ccfb3db51d7520b1a021b03ce1c2fd919 Mon Sep 17 00:00:00 2001
+From: Alexander Kireev <ak.chatman.media@gmail.com>
+Date: Sat, 6 Jun 2026 08:35:23 +0700
+Subject: [PATCH 2/2] fix(ui): resolve nested/array Axios error messages in
+ getAxiosErrorMessage
+
+Handle APIs that nest the message ({ error: { message } }) or return an array of
+messages (NestJS validation) so the UI never renders [object Object].
+
+Addresses gemini-code-assist review on #6466
+---
+ packages/ui/src/utils/errorHandler.js      | 13 +++++++++++--
+ packages/ui/src/utils/errorHandler.test.js | 10 ++++++++++
+ 2 files changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/src/utils/errorHandler.js b/packages/ui/src/utils/errorHandler.js
+index 2718427a332..fd6465a9dd0 100644
+--- a/packages/ui/src/utils/errorHandler.js
++++ b/packages/ui/src/utils/errorHandler.js
+@@ -37,8 +37,17 @@ export const getErrorMessage = (error) => {
+ export const getAxiosErrorMessage = (error) => {
+     if (error?.response?.data) {
+         const data = error.response.data
+-        if (typeof data === 'object') {
+-            return data.message || data.error || getErrorMessage(error)
++        if (typeof data === 'object' && data !== null) {
++            // Some APIs nest the message (e.g. { error: { message } }) and NestJS
++            // validation returns an array of messages — resolve both to a string
++            // so the UI never renders "[object Object]".
++            const raw =
++                data.message ||
++                (typeof data.error === 'object' && data.error !== null ? data.error.message || data.error.error : data.error)
++            if (!raw) return getErrorMessage(error)
++            if (Array.isArray(raw)) return raw.join(', ')
++            if (typeof raw === 'object') return JSON.stringify(raw)
++            return String(raw)
+         }
+         return String(data)
+     }
+diff --git a/packages/ui/src/utils/errorHandler.test.js b/packages/ui/src/utils/errorHandler.test.js
+index 6c4af6fb8a6..45a7e4a5044 100644
+--- a/packages/ui/src/utils/errorHandler.test.js
++++ b/packages/ui/src/utils/errorHandler.test.js
+@@ -37,6 +37,16 @@ describe('getAxiosErrorMessage', () => {
+         expect(getAxiosErrorMessage(error)).toBe('Unauthorized')
+     })
+ 
++    it('resolves a nested error object ({ error: { message } }) to its message', () => {
++        const error = { response: { data: { error: { message: 'Nested failure' } } } }
++        expect(getAxiosErrorMessage(error)).toBe('Nested failure')
++    })
++
++    it('joins an array of messages (NestJS validation) into a single string', () => {
++        const error = { response: { data: { message: ['name is required', 'email is invalid'] } } }
++        expect(getAxiosErrorMessage(error)).toBe('name is required, email is invalid')
++    })
++
+     it('returns a plain string response body as-is', () => {
+         const error = { response: { data: 'Internal Server Error' } }
+         expect(getAxiosErrorMessage(error)).toBe('Internal Server Error')

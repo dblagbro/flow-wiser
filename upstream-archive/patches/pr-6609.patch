@@ -1,0 +1,55 @@
+From 32ff305e889c61bf36333321565d88b5bcc4cc60 Mon Sep 17 00:00:00 2001
+From: Zhou jules <juleszhou01@gmail.com>
+Date: Sat, 11 Jul 2026 00:56:13 +0000
+Subject: [PATCH] fix(ui): sync sidebar active state when navigating via logo
+
+Clicking the Flowise logo navigates to /chatflows via react-router Link
+but does not dispatch MENU_OPEN to update the sidebar's active state.
+Result: the previously clicked sidebar item remains highlighted even
+though the current page is Chatflows.
+
+Fix by dispatching MENU_OPEN with id='chatflows' on logo click.
+
+Fixes #6510
+---
+ .../layout/MainLayout/LogoSection/index.jsx   | 20 ++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/packages/ui/src/layout/MainLayout/LogoSection/index.jsx b/packages/ui/src/layout/MainLayout/LogoSection/index.jsx
+index 2ad8cdb6ef6..22f276d74f6 100644
+--- a/packages/ui/src/layout/MainLayout/LogoSection/index.jsx
++++ b/packages/ui/src/layout/MainLayout/LogoSection/index.jsx
+@@ -1,4 +1,5 @@
+ import { Link } from 'react-router-dom'
++import { useDispatch } from 'react-redux'
+ 
+ // material-ui
+ import { ButtonBase } from '@mui/material'
+@@ -6,13 +7,22 @@ import { ButtonBase } from '@mui/material'
+ // project imports
+ import config from '@/config'
+ import Logo from '@/ui-component/extended/Logo'
++import { MENU_OPEN } from '@/store/actions'
+ 
+ // ==============================|| MAIN LOGO ||============================== //
+ 
+-const LogoSection = () => (
+-    <ButtonBase disableRipple component={Link} to={config.defaultPath}>
+-        <Logo />
+-    </ButtonBase>
+-)
++const LogoSection = () => {
++    const dispatch = useDispatch()
++
++    const handleLogoClick = (e) => {
++        dispatch({ type: MENU_OPEN, id: 'chatflows' })
++    }
++
++    return (
++        <ButtonBase disableRipple component={Link} to={config.defaultPath} onClick={handleLogoClick}>
++            <Logo />
++        </ButtonBase>
++    )
++}
+ 
+ export default LogoSection

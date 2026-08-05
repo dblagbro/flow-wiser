@@ -1,0 +1,218 @@
+From 3b2008160d9d5201f734311a1207d89d141c470b Mon Sep 17 00:00:00 2001
+From: Sahil Kamble <syk2448@gmail.com>
+Date: Sun, 14 Jun 2026 16:50:44 +0530
+Subject: [PATCH 1/2] fix(components): add bounded timeout for remote
+ model-list fetch and fallback to bundled models.json
+
+---
+ packages/components/src/modelLoader.test.ts | 56 +++++++++++++++++++++
+ packages/components/src/modelLoader.ts      |  9 +++-
+ 2 files changed, 64 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/src/modelLoader.test.ts
+
+diff --git a/packages/components/src/modelLoader.test.ts b/packages/components/src/modelLoader.test.ts
+new file mode 100644
+index 00000000000..9d02528a5e2
+--- /dev/null
++++ b/packages/components/src/modelLoader.test.ts
+@@ -0,0 +1,56 @@
++import axios from 'axios'
++
++import { getModelConfigByModelName, MODEL_TYPE } from './modelLoader'
++
++jest.mock('axios', () => ({
++    get: jest.fn()
++}))
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++const originalModelConfigJson = process.env.MODEL_LIST_CONFIG_JSON
++const originalRequestTimeout = process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
++
++beforeEach(() => {
++    jest.clearAllMocks()
++    delete process.env.MODEL_LIST_CONFIG_JSON
++    delete process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
++})
++
++afterEach(() => {
++    process.env.MODEL_LIST_CONFIG_JSON = originalModelConfigJson
++    process.env.MODEL_LIST_REQUEST_TIMEOUT_MS = originalRequestTimeout
++})
++
++describe('modelLoader', () => {
++    it('passes a bounded timeout to axios.get when loading remote model config', async () => {
++        process.env.MODEL_LIST_CONFIG_JSON = 'https://example.com/models.json'
++        process.env.MODEL_LIST_REQUEST_TIMEOUT_MS = '1000'
++
++        mockedAxios.get.mockResolvedValue({
++            status: 200,
++            data: {
++                chat: [{ name: 'awsChatBedrock', models: [] }],
++                llm: [],
++                embedding: []
++            }
++        })
++
++        await getModelConfigByModelName(MODEL_TYPE.CHAT, 'awsChatBedrock', 'awsChatBedrock')
++
++        expect(mockedAxios.get).toHaveBeenCalledWith('https://example.com/models.json', {
++            timeout: 1000
++        })
++    })
++
++    it('falls back to the bundled models.json when the remote fetch fails', async () => {
++        process.env.MODEL_LIST_CONFIG_JSON = 'https://example.com/models.json'
++
++        mockedAxios.get.mockRejectedValue(new Error('timeout'))
++
++        const modelConfig = await getModelConfigByModelName(MODEL_TYPE.CHAT, 'awsChatBedrock', 'ai21.jamba-1-5-large-v1:0')
++
++        expect(modelConfig).toBeDefined()
++        expect(modelConfig?.name).toBe('ai21.jamba-1-5-large-v1:0')
++    })
++})
+diff --git a/packages/components/src/modelLoader.ts b/packages/components/src/modelLoader.ts
+index dc728634b74..30288567eb3 100644
+--- a/packages/components/src/modelLoader.ts
++++ b/packages/components/src/modelLoader.ts
+@@ -29,6 +29,11 @@ const isValidUrl = (urlString: string) => {
+     return url.protocol === 'http:' || url.protocol === 'https:'
+ }
+ 
++const getModelListRequestTimeout = (): number => {
++    const timeout = Number(process.env.MODEL_LIST_REQUEST_TIMEOUT_MS)
++    return Number.isFinite(timeout) && timeout > 0 ? timeout : 3000
++}
++
+ /**
+  * Load the raw model file from either a URL or a local file
+  * If any of the loading fails, fallback to the default models.json file on disk
+@@ -38,7 +43,9 @@ const getRawModelFile = async () => {
+         process.env.MODEL_LIST_CONFIG_JSON ?? 'https://raw.githubusercontent.com/FlowiseAI/Flowise/main/packages/components/models.json'
+     try {
+         if (isValidUrl(modelFile)) {
+-            const resp = await axios.get(modelFile)
++            const resp = await axios.get(modelFile, {
++                timeout: getModelListRequestTimeout()
++            })
+             if (resp.status === 200 && resp.data) {
+                 return resp.data
+             } else {
+
+From e7c3d5f441fa5bddd426fe28dc893ebd3be61fd1 Mon Sep 17 00:00:00 2001
+From: Sahil Kamble <syk2448@gmail.com>
+Date: Sun, 14 Jun 2026 17:05:11 +0530
+Subject: [PATCH 2/2] Fix model list timeout parsing and add hermetic fallback
+ tests
+
+---
+ packages/components/src/modelLoader.test.ts | 47 ++++++++++++++++++++-
+ packages/components/src/modelLoader.ts      | 13 +++++-
+ 2 files changed, 56 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/src/modelLoader.test.ts b/packages/components/src/modelLoader.test.ts
+index 9d02528a5e2..4e1e561616f 100644
+--- a/packages/components/src/modelLoader.test.ts
++++ b/packages/components/src/modelLoader.test.ts
+@@ -1,4 +1,5 @@
+ import axios from 'axios'
++import * as fs from 'fs'
+ 
+ import { getModelConfigByModelName, MODEL_TYPE } from './modelLoader'
+ 
+@@ -6,7 +7,20 @@ jest.mock('axios', () => ({
+     get: jest.fn()
+ }))
+ 
++jest.mock('fs', () => ({
++    existsSync: jest.fn(),
++    promises: {
++        readFile: jest.fn()
++    }
++}))
++
+ const mockedAxios = axios as jest.Mocked<typeof axios>
++const mockedFs = fs as unknown as {
++    existsSync: jest.Mock
++    promises: {
++        readFile: jest.Mock
++    }
++}
+ 
+ const originalModelConfigJson = process.env.MODEL_LIST_CONFIG_JSON
+ const originalRequestTimeout = process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
+@@ -15,11 +29,22 @@ beforeEach(() => {
+     jest.clearAllMocks()
+     delete process.env.MODEL_LIST_CONFIG_JSON
+     delete process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
++    mockedFs.existsSync.mockReset()
++    mockedFs.promises.readFile.mockReset()
+ })
+ 
+ afterEach(() => {
+-    process.env.MODEL_LIST_CONFIG_JSON = originalModelConfigJson
+-    process.env.MODEL_LIST_REQUEST_TIMEOUT_MS = originalRequestTimeout
++    if (originalModelConfigJson == null) {
++        delete process.env.MODEL_LIST_CONFIG_JSON
++    } else {
++        process.env.MODEL_LIST_CONFIG_JSON = originalModelConfigJson
++    }
++
++    if (originalRequestTimeout == null) {
++        delete process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
++    } else {
++        process.env.MODEL_LIST_REQUEST_TIMEOUT_MS = originalRequestTimeout
++    }
+ })
+ 
+ describe('modelLoader', () => {
+@@ -47,6 +72,24 @@ describe('modelLoader', () => {
+         process.env.MODEL_LIST_CONFIG_JSON = 'https://example.com/models.json'
+ 
+         mockedAxios.get.mockRejectedValue(new Error('timeout'))
++        mockedFs.existsSync.mockReturnValue(true)
++        mockedFs.promises.readFile.mockResolvedValue(
++            JSON.stringify({
++                chat: [
++                    {
++                        name: 'awsChatBedrock',
++                        models: [
++                            {
++                                label: 'ai21.jamba-1-5-large-v1:0',
++                                name: 'ai21.jamba-1-5-large-v1:0'
++                            }
++                        ]
++                    }
++                ],
++                llm: [],
++                embedding: []
++            })
++        )
+ 
+         const modelConfig = await getModelConfigByModelName(MODEL_TYPE.CHAT, 'awsChatBedrock', 'ai21.jamba-1-5-large-v1:0')
+ 
+diff --git a/packages/components/src/modelLoader.ts b/packages/components/src/modelLoader.ts
+index 30288567eb3..73675fde9fd 100644
+--- a/packages/components/src/modelLoader.ts
++++ b/packages/components/src/modelLoader.ts
+@@ -30,8 +30,17 @@ const isValidUrl = (urlString: string) => {
+ }
+ 
+ const getModelListRequestTimeout = (): number => {
+-    const timeout = Number(process.env.MODEL_LIST_REQUEST_TIMEOUT_MS)
+-    return Number.isFinite(timeout) && timeout > 0 ? timeout : 3000
++    const timeoutStr = process.env.MODEL_LIST_REQUEST_TIMEOUT_MS
++    if (timeoutStr == null) {
++        return 3000
++    }
++
++    const timeout = parseInt(timeoutStr, 10)
++    if (!Number.isInteger(timeout) || timeout <= 0 || String(timeout) !== timeoutStr.trim()) {
++        throw new Error(`Invalid MODEL_LIST_REQUEST_TIMEOUT_MS value: ${timeoutStr}`)
++    }
++
++    return timeout
+ }
+ 
+ /**

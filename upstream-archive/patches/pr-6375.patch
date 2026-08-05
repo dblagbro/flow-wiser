@@ -1,0 +1,92 @@
+From 457c38437d42da183b7d2ef8c19b6847e1b76f35 Mon Sep 17 00:00:00 2001
+From: Hoang Doan <hoang.doan@paradox.ai>
+Date: Wed, 13 May 2026 15:18:03 +0700
+Subject: [PATCH] fix: add supported file loaders to detect the override file
+ from upsert API
+
+- Issue: https://github.com/FlowiseAI/Flowise/issues/6102
+---
+ packages/server/src/utils/constants.ts | 12 ++++++++++
+ packages/server/src/utils/index.ts     | 31 ++++++++++++++++++++++++--
+ 2 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/utils/constants.ts b/packages/server/src/utils/constants.ts
+index a20f55c4c43..1eeefcf9343 100644
+--- a/packages/server/src/utils/constants.ts
++++ b/packages/server/src/utils/constants.ts
+@@ -161,3 +161,15 @@ export const LICENSE_QUOTAS = {
+     STORAGE_LIMIT: 'quota:storage',
+     ADDITIONAL_SEATS_LIMIT: 'quota:additionalSeats'
+ } as const
++
++export const SUPPORTED_FILE_LOADERS = [
++    'csvFile',
++    'jsonFile',
++    'jsonlFile',
++    'pdfFile',
++    'txtFile',
++    'docFile',
++    'docxFile',
++    'pptxFile',
++    'xlsxFile'
++]
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 2eeeb5b0eb6..ff738d07cda 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -63,6 +63,7 @@ import {
+     SecretsManagerClient,
+     SecretsManagerClientConfig
+ } from '@aws-sdk/client-secrets-manager'
++import { SUPPORTED_FILE_LOADERS } from './constants'
+ 
+ export const QUESTION_VAR_PREFIX = 'question'
+ export const FILE_ATTACHMENT_PREFIX = 'file_attachment'
+@@ -406,11 +407,22 @@ export const saveUpsertFlowData = (nodeData: INodeData, upsertHistory: Record<st
+         }
+         // Get file name instead of the base64 string
+         if (nodeData.category === 'Document Loaders' && nodeData.inputParams.find((inp) => inp.name === input)?.type === 'file') {
++            let fileName = getFileName(nodeData.inputs[input])
++            // Check the overrideConfig to get latest file
++            const overrideInput = Object.keys(nodeData.inputs ?? {}).find((inputKey: string) => SUPPORTED_FILE_LOADERS.includes(inputKey))
++            if (
++                overrideInput &&
++                typeof nodeData.inputs[overrideInput] === 'string' &&
++                nodeData.inputs[overrideInput].includes('FILE-STORAGE::')
++            ) {
++                fileName = getFileName(nodeData.inputs[overrideInput])
++            }
++
+             paramValue = {
+                 label: inputParam?.label,
+                 name: inputParam?.name,
+                 type: inputParam?.type,
+-                value: getFileName(nodeData.inputs[input])
++                value: fileName
+             }
+             paramValues.push(paramValue)
+             continue
+@@ -1098,7 +1110,22 @@ export const replaceInputsWithConfig = (
+ 
+     const isParameterEnabled = (nodeType: string, paramName: string): boolean => {
+         if (!nodeOverrides[nodeType]) return false
+-        const parameter = nodeOverrides[nodeType].find((param: any) => param.name === paramName)
++        let paramConfigName = paramName
++        if (nodeType === 'File Loader') {
++            // Values example: { nodeType: paramName }
++            // { docxFile: "FILE-STORAGE::['file.docx']", pdfFile: "FILE-STORAGE::['file.pdf']" }
++            if (
++                typeof overrideConfig[paramName] === 'string' &&
++                overrideConfig[paramName].includes('FILE-STORAGE::') &&
++                SUPPORTED_FILE_LOADERS.includes(paramName)
++            ) {
++                // Convert all override config with "File" suffix to "files" for easier checking in nodeOverrides,
++                // because in nodeOverrides we only have "files" as parameter name for file storage override.
++                // Example: { label: "File", name: "files", type: "*", enabled: true }
++                paramConfigName = 'files'
++            }
++        }
++        const parameter = nodeOverrides[nodeType].find((param: any) => param.name === paramConfigName)
+         return parameter?.enabled ?? false
+     }
+ 

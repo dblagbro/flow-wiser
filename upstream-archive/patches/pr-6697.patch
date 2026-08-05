@@ -1,0 +1,54 @@
+From a9b70e0089f080d6728f0a3bfe8d72ccbca2d928 Mon Sep 17 00:00:00 2001
+From: AkhilTrivediX <118957648+AkhilTrivediX@users.noreply.github.com>
+Date: Sat, 1 Aug 2026 17:08:48 +0530
+Subject: [PATCH] fix(deepseek): update deprecated models to v4-flash and
+ v4-pro
+
+Resolves #6667 by replacing deprecated deepseek-chat and deepseek-reasoner models with deepseek-v4-flash and deepseek-v4-pro, and updating their pricing.
+---
+ packages/components/models.json                  | 16 ++++++++--------
+ .../nodes/chatmodels/Deepseek/Deepseek.ts        |  2 +-
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..2bb14b0f13f 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1745,16 +1745,16 @@
+             "name": "deepseek",
+             "models": [
+                 {
+-                    "label": "deepseek-chat",
+-                    "name": "deepseek-chat",
+-                    "input_cost": 0.00027,
+-                    "output_cost": 0.0011
++                    "label": "deepseek-v4-flash",
++                    "name": "deepseek-v4-flash",
++                    "input_cost": 0.00014,
++                    "output_cost": 0.00028
+                 },
+                 {
+-                    "label": "deepseek-reasoner",
+-                    "name": "deepseek-reasoner",
+-                    "input_cost": 0.00055,
+-                    "output_cost": 0.00219
++                    "label": "deepseek-v4-pro",
++                    "name": "deepseek-v4-pro",
++                    "input_cost": 0.000435,
++                    "output_cost": 0.00087
+                 }
+             ]
+         },
+diff --git a/packages/components/nodes/chatmodels/Deepseek/Deepseek.ts b/packages/components/nodes/chatmodels/Deepseek/Deepseek.ts
+index 16615576cb8..8deb9c23c8f 100644
+--- a/packages/components/nodes/chatmodels/Deepseek/Deepseek.ts
++++ b/packages/components/nodes/chatmodels/Deepseek/Deepseek.ts
+@@ -43,7 +43,7 @@ class Deepseek_ChatModels implements INode {
+                 name: 'modelName',
+                 type: 'asyncOptions',
+                 loadMethod: 'listModels',
+-                default: 'deepseek-chat'
++                default: 'deepseek-v4-flash'
+             },
+             {
+                 label: 'Temperature',

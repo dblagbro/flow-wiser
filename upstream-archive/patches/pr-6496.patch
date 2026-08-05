@@ -1,0 +1,278 @@
+From f6a81698bc4e3c112e77bd5b891884239aab4d4c Mon Sep 17 00:00:00 2001
+From: Udita <153092248+udita-0707@users.noreply.github.com>
+Date: Tue, 9 Jun 2026 00:30:13 +0530
+Subject: [PATCH 1/4] docs: clarify macOS onboarding and troubleshooting
+
+---
+ CONTRIBUTING.md | 44 +++++++++++++++++++++++++++++++++++-
+ README.md       | 59 +++++++++++++++++++++++++++++++++++++------------
+ 2 files changed, 88 insertions(+), 15 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 421732219fe..ca3e898bae8 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -44,7 +44,7 @@ Flowise has 3 different modules in a single mono repository.
+ 
+ #### Prerequisite
+ 
+--   Install [PNPM](https://pnpm.io/installation). The project is configured to use pnpm v10.
++-   Install [PNPM](https://pnpm.io/installation). The project is currently tested with pnpm `10.26.x`.
+     ```bash
+     npm i -g pnpm
+     ```
+@@ -74,6 +74,48 @@ Flowise has 3 different modules in a single mono repository.
+     pnpm install
+     ```
+ 
++#### Local environment troubleshooting (macOS)
++
++-   Verify installed versions and paths:
++
++    ```bash
++    node -v
++    pnpm -v
++    which pnpm
++    ```
++
++-   The repository is currently tested against pnpm `10.26.x`. Using pnpm `11.x` may result in engine mismatch errors.
++
++-   If `pnpm` is not found:
++
++    ```bash
++    corepack enable
++    corepack prepare pnpm@10.26.2 --activate
++    ```
++
++    Or install globally:
++
++    ```bash
++    npm install -g pnpm@10.26.2
++    ```
++
++-   If you recently switched pnpm versions or changed your PATH, refresh zsh’s command cache:
++
++    ```bash
++    hash -r
++    ```
++
++-   If `which pnpm` points to a Homebrew installation while using `nvm`, you may have conflicting pnpm binaries in your PATH.
++
++-   If you encounter `JavaScript heap out of memory` during build:
++
++    ```bash
++    export NODE_OPTIONS="--max-old-space-size=8192"
++    pnpm build
++    ```
++
++    Adjust the heap size depending on available system memory (for example: `4096` or `8192`).
++
+ 7. Build all the code:
+ 
+     ```bash
+diff --git a/README.md b/README.md
+index 72e4081c6b6..16900d0263c 100644
+--- a/README.md
++++ b/README.md
+@@ -90,12 +90,38 @@ Flowise has 3 different modules in a single mono repository.
+ -   `components`: Third-party nodes integrations
+ -   `api-documentation`: Auto-generated swagger-ui API docs from express
+ 
+-### Prerequisite
++### Prerequisites
+ 
+--   Install [PNPM](https://pnpm.io/installation)
+-    ```bash
+-    npm i -g pnpm
+-    ```
++#### macOS Setup
++
++-   Node: v24.x (recommended)
++
++    -   Using nvm:
++        ```bash
++        nvm install 24
++        nvm use 24
++        ```
++    -   Verify:
++        ```bash
++        node -v
++        # Expected output: v24.x.x
++        ```
++
++-   pnpm: v10.26.x (recommended)
++    -   Recommended via `corepack`:
++        ```bash
++        corepack enable
++        corepack prepare pnpm@10.26.2 --activate
++        ```
++    -   Or via npm:
++        ```bash
++        npm install -g pnpm@10.26.2
++        ```
++    -   Verify:
++        ```bash
++        pnpm -v
++        # Expected output: 10.26.x
++        ```
+ 
+ ### Setup
+ 
+@@ -117,6 +143,9 @@ Flowise has 3 different modules in a single mono repository.
+     pnpm install
+     ```
+ 
++    > [!NOTE]
++    > The repository is currently tested against pnpm `10.26.x`. Using pnpm `11.x` may result in engine mismatch errors.
++
+ 4.  Build all the code:
+ 
+     ```bash
+@@ -127,22 +156,24 @@ Flowise has 3 different modules in a single mono repository.
+     <summary>Exit code 134 (JavaScript heap out of memory)</summary>  
+     If you get this error when running the above `build` script, try increasing the Node.js heap size and run the script again:
+ 
+-    ```bash
+-    # macOS / Linux / Git Bash
+-    export NODE_OPTIONS="--max-old-space-size=4096"
++    ````bash
++        # macOS / Linux / Git Bash
++        export NODE_OPTIONS="--max-old-space-size=8192"
+ 
+-    # Windows PowerShell
+-    $env:NODE_OPTIONS="--max-old-space-size=4096"
++        # Windows PowerShell
++        $env:NODE_OPTIONS="--max-old-space-size=4096"
+ 
+-    # Windows CMD
+-    set NODE_OPTIONS=--max-old-space-size=4096
+-    ```
++        # Windows CMD
++        set NODE_OPTIONS=--max-old-space-size=4096
++        ```
++
++        Adjust the value depending on available system memory (for example: `4096` or `8192`).
+ 
+     Then run:
+ 
+     ```bash
+     pnpm build
+-    ```
++    ````
+ 
+     </details>
+ 
+
+From 3390e63bcd38a25555aa9db0fe3de3df049bc154 Mon Sep 17 00:00:00 2001
+From: Udita <153092248+udita-0707@users.noreply.github.com>
+Date: Tue, 9 Jun 2026 00:38:57 +0530
+Subject: [PATCH 2/4] docs: clarify macOS onboarding and troubleshooting
+
+---
+ .nvmrc          | 2 +-
+ CONTRIBUTING.md | 6 ++++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/.nvmrc b/.nvmrc
+index f3c88209af5..a45fd52cc58 100644
+--- a/.nvmrc
++++ b/.nvmrc
+@@ -1 +1 @@
+-v24.15.0
++24
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index ca3e898bae8..137d3137b15 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -48,6 +48,11 @@ Flowise has 3 different modules in a single mono repository.
+     ```bash
+     npm i -g pnpm
+     ```
++-   Use Node `24.x` for local development.
++    ```bash
++    nvm install 24
++    nvm use 24
++    ```
+ 
+ #### Step by step
+ 
+@@ -106,6 +111,7 @@ Flowise has 3 different modules in a single mono repository.
+     ```
+ 
+ -   If `which pnpm` points to a Homebrew installation while using `nvm`, you may have conflicting pnpm binaries in your PATH.
++    If you use both Homebrew and `nvm`, make sure the expected pnpm binary is first in your PATH.
+ 
+ -   If you encounter `JavaScript heap out of memory` during build:
+ 
+
+From 88eba9d566a8b71f7ebcd90770550c0ee56bb4e6 Mon Sep 17 00:00:00 2001
+From: Udita <153092248+udita-0707@users.noreply.github.com>
+Date: Tue, 9 Jun 2026 00:46:04 +0530
+Subject: [PATCH 3/4] docs: slight formatting changes
+
+---
+ README.md | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/README.md b/README.md
+index 16900d0263c..0d9a1d66860 100644
+--- a/README.md
++++ b/README.md
+@@ -156,24 +156,24 @@ Flowise has 3 different modules in a single mono repository.
+     <summary>Exit code 134 (JavaScript heap out of memory)</summary>  
+     If you get this error when running the above `build` script, try increasing the Node.js heap size and run the script again:
+ 
+-    ````bash
+-        # macOS / Linux / Git Bash
+-        export NODE_OPTIONS="--max-old-space-size=8192"
++    ```bash
++    # macOS / Linux / Git Bash
++    export NODE_OPTIONS="--max-old-space-size=8192"
+ 
+-        # Windows PowerShell
+-        $env:NODE_OPTIONS="--max-old-space-size=4096"
++    # Windows PowerShell
++    $env:NODE_OPTIONS="--max-old-space-size=4096"
+ 
+-        # Windows CMD
+-        set NODE_OPTIONS=--max-old-space-size=4096
+-        ```
++    # Windows CMD
++    set NODE_OPTIONS=--max-old-space-size=4096
++    ```
+ 
+-        Adjust the value depending on available system memory (for example: `4096` or `8192`).
++    Adjust the value depending on available system memory (for example: `4096` or `8192`).
+ 
+     Then run:
+ 
+     ```bash
+     pnpm build
+-    ````
++    ```
+ 
+     </details>
+ 
+
+From 0cd0b0dfd8a002af3d24f1f6cfa04caa9fc1e22c Mon Sep 17 00:00:00 2001
+From: Udita <153092248+udita-0707@users.noreply.github.com>
+Date: Tue, 9 Jun 2026 01:00:36 +0530
+Subject: [PATCH 4/4] docs: clarify pnpm v10 installation guidance
+
+---
+ CONTRIBUTING.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 137d3137b15..01b649921a8 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -46,7 +46,7 @@ Flowise has 3 different modules in a single mono repository.
+ 
+ -   Install [PNPM](https://pnpm.io/installation). The project is currently tested with pnpm `10.26.x`.
+     ```bash
+-    npm i -g pnpm
++    npm i -g pnpm@10
+     ```
+ -   Use Node `24.x` for local development.
+     ```bash

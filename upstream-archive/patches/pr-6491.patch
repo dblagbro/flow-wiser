@@ -1,0 +1,44 @@
+From 31a9d305ceee488402164b97a1f55e2d178ce9f9 Mon Sep 17 00:00:00 2001
+From: Josh Arnzen <jarnzen137@gmail.com>
+Date: Sun, 7 Jun 2026 20:45:06 -0500
+Subject: [PATCH] fix(vectorstores): add missing base classes to DocStoreVector
+ node
+
+DocStore_VectorStores was the only vector store node missing
+'VectorStoreRetriever' and 'BaseRetriever' in its baseClasses,
+preventing it from being connectable to nodes expecting those types.
+
+Also adds 'VectorStoreRetriever' to the retriever output baseClasses
+and bumps the node version to 1.1.
+---
+ .../nodes/vectorstores/DocumentStoreVS/DocStoreVector.ts    | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/vectorstores/DocumentStoreVS/DocStoreVector.ts b/packages/components/nodes/vectorstores/DocumentStoreVS/DocStoreVector.ts
+index 0f228d1fb79..801c4e347b9 100644
+--- a/packages/components/nodes/vectorstores/DocumentStoreVS/DocStoreVector.ts
++++ b/packages/components/nodes/vectorstores/DocumentStoreVS/DocStoreVector.ts
+@@ -16,12 +16,12 @@ class DocStore_VectorStores implements INode {
+     constructor() {
+         this.label = 'Document Store (Vector)'
+         this.name = 'documentStoreVS'
+-        this.version = 1.0
++        this.version = 1.1
+         this.type = 'DocumentStoreVS'
+         this.icon = 'dstore.svg'
+         this.category = 'Vector Stores'
+         this.description = `Search and retrieve documents from Document Store`
+-        this.baseClasses = [this.type]
++        this.baseClasses = [this.type, 'VectorStoreRetriever', 'BaseRetriever']
+         this.inputs = [
+             {
+                 label: 'Select Store',
+@@ -34,7 +34,7 @@ class DocStore_VectorStores implements INode {
+             {
+                 label: 'Retriever',
+                 name: 'retriever',
+-                baseClasses: ['BaseRetriever']
++                baseClasses: ['VectorStoreRetriever', 'BaseRetriever']
+             },
+             {
+                 label: 'Vector Store',

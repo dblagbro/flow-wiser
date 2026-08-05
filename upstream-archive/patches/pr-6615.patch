@@ -1,0 +1,190 @@
+From 40f060071056160a852e5a0b0162a6af4106cf56 Mon Sep 17 00:00:00 2001
+From: sanahkapoor <196195918+sanahkapoor@users.noreply.github.com>
+Date: Sun, 12 Jul 2026 18:54:30 +0000
+Subject: [PATCH] fix: target the correct HIL node when clearing pending chat
+ message actions
+
+When an agentflow contains more than one Human-In-The-Loop (Proceed/Reject)
+node, more than one chat message can have a pending action at the same time.
+
+Both the resume handler and the frontend button handler assumed there was
+only ever one pending action and located it positionally (the most
+recently created message with an action on the server, the last message
+in the list on the client) instead of by identity. Resolving one HIL node
+would therefore clear the wrong message's action, making it look like
+every other pending HIL block had also been actioned.
+
+- server: extract findChatMessageActionToClear() and match on
+  humanInput.startNodeId instead of taking the newest message with any
+  action.
+- ui: match the clicked action's id against message.action.id instead of
+  always clearing the last message in the array.
+
+Fixes #4787
+---
+ .../server/src/utils/buildAgentflow.test.ts   | 72 +++++++++++++++++++
+ packages/server/src/utils/buildAgentflow.ts   | 41 +++++++----
+ .../ui/src/views/chatmessage/ChatMessage.jsx  |  8 ++-
+ 3 files changed, 105 insertions(+), 16 deletions(-)
+ create mode 100644 packages/server/src/utils/buildAgentflow.test.ts
+
+diff --git a/packages/server/src/utils/buildAgentflow.test.ts b/packages/server/src/utils/buildAgentflow.test.ts
+new file mode 100644
+index 00000000000..3b4f94f9136
+--- /dev/null
++++ b/packages/server/src/utils/buildAgentflow.test.ts
+@@ -0,0 +1,72 @@
++import { findChatMessageActionToClear } from './buildAgentflow'
++import { ChatMessage } from '../database/entities/ChatMessage'
++
++const makeMessage = (id: string, action: object | null): ChatMessage => {
++    const message = new ChatMessage()
++    message.id = id
++    message.action = action ? JSON.stringify(action) : null
++    return message
++}
++
++describe('findChatMessageActionToClear', () => {
++    it('returns the message whose action.data.nodeId matches the resumed startNodeId', () => {
++        const messages = [
++            makeMessage('msg-3', { data: { nodeId: 'humanInput_2' } }),
++            makeMessage('msg-2', { data: { nodeId: 'humanInput_1' } }),
++            makeMessage('msg-1', null)
++        ]
++
++        const result = findChatMessageActionToClear(messages, 'humanInput_1')
++
++        expect(result?.id).toBe('msg-2')
++    })
++
++    it('does not clear a different pending Human-In-The-Loop node just because it is newer (#4787)', () => {
++        // Two HIL nodes are pending at the same time. Resuming humanInput_1 must not touch
++        // the chat message that belongs to humanInput_2, even though it was created more recently.
++        const newerUnrelatedAction = makeMessage('msg-newer', { data: { nodeId: 'humanInput_2' } })
++        const olderTargetAction = makeMessage('msg-older', { data: { nodeId: 'humanInput_1' } })
++        const messages = [newerUnrelatedAction, olderTargetAction]
++
++        const result = findChatMessageActionToClear(messages, 'humanInput_1')
++
++        expect(result?.id).toBe('msg-older')
++        expect(result?.id).not.toBe(newerUnrelatedAction.id)
++    })
++
++    it('returns undefined when no message matches the startNodeId', () => {
++        const messages = [makeMessage('msg-1', { data: { nodeId: 'humanInput_2' } })]
++
++        const result = findChatMessageActionToClear(messages, 'humanInput_1')
++
++        expect(result).toBeUndefined()
++    })
++
++    it('returns undefined when startNodeId is not provided', () => {
++        const messages = [makeMessage('msg-1', { data: { nodeId: 'humanInput_1' } })]
++
++        const result = findChatMessageActionToClear(messages, undefined)
++
++        expect(result).toBeUndefined()
++    })
++
++    it('skips messages with malformed action JSON instead of throwing', () => {
++        const malformed = new ChatMessage()
++        malformed.id = 'msg-malformed'
++        malformed.action = '{not valid json'
++
++        const valid = makeMessage('msg-valid', { data: { nodeId: 'humanInput_1' } })
++
++        const result = findChatMessageActionToClear([malformed, valid], 'humanInput_1')
++
++        expect(result?.id).toBe('msg-valid')
++    })
++
++    it('skips messages with no action set', () => {
++        const messages = [makeMessage('msg-1', null), makeMessage('msg-2', { data: { nodeId: 'humanInput_1' } })]
++
++        const result = findChatMessageActionToClear(messages, 'humanInput_1')
++
++        expect(result?.id).toBe('msg-2')
++    })
++})
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..af25efd0f5c 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -2313,7 +2313,8 @@ export const executeAgentFlow = async ({
+         }
+     }
+ 
+-    // Find the previous chat message with the same session/chat id and remove the action
++    // Clear the action on the specific message tied to the resumed node (not just the newest
++    // pending action) - a flow can have multiple HIL nodes pending at once. See #4787.
+     if (humanInput && Object.keys(humanInput).length) {
+         let query = await appDataSource
+             .getRepository(ChatMessage)
+@@ -2323,19 +2324,13 @@ export const executeAgentFlow = async ({
+             .orderBy('chat_message.createdDate', 'DESC')
+             .getMany()
+ 
+-        for (const result of query) {
+-            if (result.action) {
+-                try {
+-                    const newChatMessage = new ChatMessage()
+-                    Object.assign(newChatMessage, result)
+-                    newChatMessage.action = null
+-                    const cm = await appDataSource.getRepository(ChatMessage).create(newChatMessage)
+-                    await appDataSource.getRepository(ChatMessage).save(cm)
+-                    break
+-                } catch (e) {
+-                    // error converting action to JSON
+-                }
+-            }
++        const messageToClear = findChatMessageActionToClear(query, humanInput.startNodeId)
++        if (messageToClear) {
++            const newChatMessage = new ChatMessage()
++            Object.assign(newChatMessage, messageToClear)
++            newChatMessage.action = null
++            const cm = await appDataSource.getRepository(ChatMessage).create(newChatMessage)
++            await appDataSource.getRepository(ChatMessage).save(cm)
+         }
+     }
+ 
+@@ -2469,3 +2464,21 @@ export const executeAgentFlow = async ({
+ export const isObjectNotEmpty = (obj: any): boolean => {
+     return obj && Object.keys(obj).length > 0 && obj.constructor === Object
+ }
++
++/**
++ * Finds the chat message whose pending action belongs to the given (resumed) HIL node.
++ * Matches by nodeId instead of recency, since multiple HIL nodes can be pending at once. See #4787.
++ */
++export const findChatMessageActionToClear = (messages: ChatMessage[], startNodeId?: string): ChatMessage | undefined => {
++    if (!startNodeId) return undefined
++    for (const message of messages) {
++        if (!message.action) continue
++        try {
++            const parsedAction = JSON.parse(message.action)
++            if (parsedAction?.data?.nodeId === startNodeId) return message
++        } catch (e) {
++            // error converting action to JSON, skip this message
++        }
++    }
++    return undefined
++}
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index bf55a262022..c2303fc16e8 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -889,8 +889,12 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+         setUserInput(elem.label)
+         setMessages((prevMessages) => {
+             let allMessages = [...cloneDeep(prevMessages)]
+-            if (allMessages[allMessages.length - 1].type === 'userMessage') return allMessages
+-            allMessages[allMessages.length - 1].action = null
++            // Clear the action on the message this button belongs to, not just the last message - a flow
++            // can have multiple pending HIL nodes at once. See #4787.
++            const targetIndex = allMessages.findIndex((msg) => msg.action && action && msg.action.id === action.id)
++            const indexToClear = targetIndex !== -1 ? targetIndex : allMessages.length - 1
++            if (allMessages[indexToClear].type === 'userMessage') return allMessages
++            allMessages[indexToClear].action = null
+             return allMessages
+         })
+         if (elem.type.includes('agentflowv2')) {

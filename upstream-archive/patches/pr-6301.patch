@@ -1,0 +1,94 @@
+From 6e60ddeadd9593c154eaa792b058efd78c71a54c Mon Sep 17 00:00:00 2001
+From: AnwarRezk <shadow200830@hotmail.com>
+Date: Tue, 28 Apr 2026 01:31:31 +0300
+Subject: [PATCH] fix chatmessage pagination for standard queries
+
+Apply page and limit to the default chat message query path so paginated requests no longer return the full dataset. Add regression coverage for paginated and unpaginated retrieval.
+---
+ .../server/src/utils/getChatMessage.test.ts   | 63 +++++++++++++++++++
+ packages/server/src/utils/getChatMessage.ts   |  2 +
+ 2 files changed, 65 insertions(+)
+ create mode 100644 packages/server/src/utils/getChatMessage.test.ts
+
+diff --git a/packages/server/src/utils/getChatMessage.test.ts b/packages/server/src/utils/getChatMessage.test.ts
+new file mode 100644
+index 00000000000..648b6d487b1
+--- /dev/null
++++ b/packages/server/src/utils/getChatMessage.test.ts
+@@ -0,0 +1,63 @@
++import { beforeEach, describe, expect, it, jest } from '@jest/globals'
++
++jest.mock('./getRunningExpressApp', () => ({
++    getRunningExpressApp: jest.fn()
++}))
++
++import { utilGetChatMessage } from './getChatMessage'
++import { getRunningExpressApp } from './getRunningExpressApp'
++import { ChatFlow } from '../database/entities/ChatFlow'
++
++const mockFindOneBy = jest.fn() as jest.Mock
++const mockFind = jest.fn() as jest.Mock
++
++describe('utilGetChatMessage', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getRunningExpressApp as jest.Mock).mockReturnValue({
++            AppDataSource: {
++                getRepository: jest.fn((entity: unknown) => {
++                    if (entity === ChatFlow) {
++                        return { findOneBy: mockFindOneBy }
++                    }
++
++                    return { find: mockFind }
++                })
++            }
++        })
++
++        mockFindOneBy.mockImplementation(() => Promise.resolve({ id: 'flow-1', workspaceId: 'ws-1' }))
++        mockFind.mockImplementation(() => Promise.resolve([]))
++    })
++
++    it('applies skip and take for standard paginated queries', async () => {
++        await utilGetChatMessage({
++            chatflowid: 'flow-1',
++            activeWorkspaceId: 'ws-1',
++            page: 2,
++            pageSize: 25
++        })
++
++        expect(mockFind).toHaveBeenCalledWith(
++            expect.objectContaining({
++                skip: 25,
++                take: 25,
++                order: { createdDate: 'ASC' }
++            })
++        )
++    })
++
++    it('does not apply pagination when page and pageSize are not provided', async () => {
++        await utilGetChatMessage({
++            chatflowid: 'flow-1',
++            activeWorkspaceId: 'ws-1'
++        })
++
++        expect(mockFind).toHaveBeenCalledWith(
++            expect.objectContaining({
++                skip: undefined,
++                take: undefined
++            })
++        )
++    })
++})
+diff --git a/packages/server/src/utils/getChatMessage.ts b/packages/server/src/utils/getChatMessage.ts
+index 57b835f9e4f..3e365abe843 100644
+--- a/packages/server/src/utils/getChatMessage.ts
++++ b/packages/server/src/utils/getChatMessage.ts
+@@ -113,6 +113,8 @@ export const utilGetChatMessage = async ({
+         relations: {
+             execution: true
+         },
++        skip: page > 0 && pageSize > 0 ? pageSize * (page - 1) : undefined,
++        take: page > 0 && pageSize > 0 ? pageSize : undefined,
+         order: {
+             createdDate: sortOrder === 'DESC' ? 'DESC' : 'ASC'
+         }

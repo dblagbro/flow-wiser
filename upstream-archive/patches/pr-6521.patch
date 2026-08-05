@@ -1,0 +1,200 @@
+From 90d3eb2b729f6a5e254ab3ff72574f7338d36aac Mon Sep 17 00:00:00 2001
+From: Harshita Patidar <harshitapatidar257@gmail.com>
+Date: Mon, 15 Jun 2026 16:16:23 +0530
+Subject: [PATCH 1/2] fix: add timeouts to external prompt and nim requests
+
+---
+ .../src/controllers/nvidia-nim/index.test.ts  | 75 +++++++++++++++++++
+ .../src/controllers/nvidia-nim/index.ts       |  4 +-
+ .../src/services/prompts-lists/index.test.ts  | 35 +++++++++
+ .../src/services/prompts-lists/index.ts       |  4 +-
+ 4 files changed, 116 insertions(+), 2 deletions(-)
+ create mode 100644 packages/server/src/controllers/nvidia-nim/index.test.ts
+ create mode 100644 packages/server/src/services/prompts-lists/index.test.ts
+
+diff --git a/packages/server/src/controllers/nvidia-nim/index.test.ts b/packages/server/src/controllers/nvidia-nim/index.test.ts
+new file mode 100644
+index 00000000000..f67d004721d
+--- /dev/null
++++ b/packages/server/src/controllers/nvidia-nim/index.test.ts
+@@ -0,0 +1,75 @@
++import { NextFunction, Request, Response } from 'express'
++import axios from 'axios'
++
++jest.mock('axios')
++jest.mock('flowise-nim-container-manager', () => ({
++    NimContainerManager: {
++        preload: jest.fn(),
++        downloadInstaller: jest.fn(),
++        pullImage: jest.fn(),
++        startContainer: jest.fn(),
++        userImageLibrary: jest.fn(),
++        listRunningContainers: jest.fn(),
++        stopContainer: jest.fn()
++    }
++}))
++
++import nvidiaNimController from '.'
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++function mockReq(): Request {
++    return { body: {} } as Request
++}
++
++function mockRes(): Response {
++    return {
++        json: jest.fn().mockReturnThis()
++    } as unknown as Response
++}
++
++describe('nvidiaNimController.getToken', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('requests an NVIDIA NIM token with a bounded timeout', async () => {
++        const tokenResponse = { token: 'token-123' }
++        mockedAxios.post.mockResolvedValue({ data: tokenResponse })
++        const res = mockRes()
++        const next = jest.fn() as NextFunction
++
++        await nvidiaNimController.getToken(mockReq(), res, next)
++
++        expect(mockedAxios.post).toHaveBeenCalledWith(
++            'https://nts.ngc.nvidia.com/v1/token',
++            {
++                client_id: 'Flowise',
++                pdi: '0x1234567890abcdeg',
++                access_policy_name: 'nim-dev'
++            },
++            {
++                headers: {
++                    'Content-Type': 'application/json',
++                    Accept: 'application/json'
++                },
++                timeout: 10000
++            }
++        )
++        expect(res.json).toHaveBeenCalledWith(tokenResponse)
++        expect(next).not.toHaveBeenCalled()
++    })
++
++    it('passes timeout errors to the Express error handler', async () => {
++        const error = new Error('timeout')
++        mockedAxios.post.mockRejectedValue(error)
++        const res = mockRes()
++        const next = jest.fn() as NextFunction
++
++        await nvidiaNimController.getToken(mockReq(), res, next)
++
++        expect(mockedAxios.post).toHaveBeenCalledWith(expect.any(String), expect.any(Object), expect.objectContaining({ timeout: 10000 }))
++        expect(res.json).not.toHaveBeenCalled()
++        expect(next).toHaveBeenCalledWith(error)
++    })
++})
+diff --git a/packages/server/src/controllers/nvidia-nim/index.ts b/packages/server/src/controllers/nvidia-nim/index.ts
+index efd9be8e508..42152baafcc 100644
+--- a/packages/server/src/controllers/nvidia-nim/index.ts
++++ b/packages/server/src/controllers/nvidia-nim/index.ts
+@@ -3,6 +3,8 @@ import { NextFunction, Request, Response } from 'express'
+ 
+ const { NimContainerManager } = require('flowise-nim-container-manager')
+ 
++const NVIDIA_NIM_TOKEN_TIMEOUT_MS = 10000
++
+ const getToken = async (req: Request, res: Response, next: NextFunction) => {
+     try {
+         const headers = {
+@@ -14,7 +16,7 @@ const getToken = async (req: Request, res: Response, next: NextFunction) => {
+             pdi: '0x1234567890abcdeg',
+             access_policy_name: 'nim-dev'
+         }
+-        const response = await axios.post('https://nts.ngc.nvidia.com/v1/token', data, { headers })
++        const response = await axios.post('https://nts.ngc.nvidia.com/v1/token', data, { headers, timeout: NVIDIA_NIM_TOKEN_TIMEOUT_MS })
+         const responseJson = response.data
+         return res.json(responseJson)
+     } catch (error) {
+diff --git a/packages/server/src/services/prompts-lists/index.test.ts b/packages/server/src/services/prompts-lists/index.test.ts
+new file mode 100644
+index 00000000000..581d509b063
+--- /dev/null
++++ b/packages/server/src/services/prompts-lists/index.test.ts
+@@ -0,0 +1,35 @@
++import axios from 'axios'
++
++jest.mock('axios')
++
++import promptsListService from '.'
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++describe('promptsListService.createPromptsList', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('fetches LangChain Hub prompts with a bounded timeout', async () => {
++        const repos = [{ id: 'repo-1' }]
++        mockedAxios.get.mockResolvedValue({ data: { repos } })
++
++        const result = await promptsListService.createPromptsList({ tags: 'chat' })
++
++        expect(mockedAxios.get).toHaveBeenCalledWith(
++            'https://api.hub.langchain.com/repos/?limit=100&tags=chathas_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false',
++            { timeout: 10000 }
++        )
++        expect(result).toEqual({ status: 'OK', repos })
++    })
++
++    it('returns an empty error response when LangChain Hub times out', async () => {
++        mockedAxios.get.mockRejectedValue(new Error('timeout'))
++
++        const result = await promptsListService.createPromptsList({})
++
++        expect(mockedAxios.get).toHaveBeenCalledWith(expect.any(String), { timeout: 10000 })
++        expect(result).toEqual({ status: 'ERROR', repos: [] })
++    })
++})
+diff --git a/packages/server/src/services/prompts-lists/index.ts b/packages/server/src/services/prompts-lists/index.ts
+index 62a97c8b4c6..5e8aafe56a1 100644
+--- a/packages/server/src/services/prompts-lists/index.ts
++++ b/packages/server/src/services/prompts-lists/index.ts
+@@ -1,11 +1,13 @@
+ import axios from 'axios'
+ 
++const LANGCHAIN_HUB_TIMEOUT_MS = 10000
++
+ const createPromptsList = async (requestBody: any) => {
+     try {
+         const tags = requestBody.tags ? `tags=${requestBody.tags}` : ''
+         // Default to 100, TODO: add pagination and use offset & limit
+         const url = `https://api.hub.langchain.com/repos/?limit=100&${tags}has_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false`
+-        const resp = await axios.get(url)
++        const resp = await axios.get(url, { timeout: LANGCHAIN_HUB_TIMEOUT_MS })
+         if (resp.data.repos) {
+             return {
+                 status: 'OK',
+
+From bfa7e6077f356ad096163a032029dd2dc15529ca Mon Sep 17 00:00:00 2001
+From: Harshita Patidar <harshitapatidar257@gmail.com>
+Date: Mon, 15 Jun 2026 17:02:26 +0530
+Subject: [PATCH 2/2] Update index.test.ts
+
+---
+ packages/server/src/services/prompts-lists/index.test.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/services/prompts-lists/index.test.ts b/packages/server/src/services/prompts-lists/index.test.ts
+index 581d509b063..f030a2199eb 100644
+--- a/packages/server/src/services/prompts-lists/index.test.ts
++++ b/packages/server/src/services/prompts-lists/index.test.ts
+@@ -18,7 +18,7 @@ describe('promptsListService.createPromptsList', () => {
+         const result = await promptsListService.createPromptsList({ tags: 'chat' })
+ 
+         expect(mockedAxios.get).toHaveBeenCalledWith(
+-            'https://api.hub.langchain.com/repos/?limit=100&tags=chathas_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false',
++            'https://api.hub.langchain.com/repos/?limit=100&tags=chat&has_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false',
+             { timeout: 10000 }
+         )
+         expect(result).toEqual({ status: 'OK', repos })

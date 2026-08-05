@@ -1,0 +1,321 @@
+From 5964a3d339e8c27935ccba21941ed0912040051e Mon Sep 17 00:00:00 2001
+From: yanismiraoui <yanis.miraoui19@imperial.ac.uk>
+Date: Fri, 12 Jun 2026 11:06:43 -0700
+Subject: [PATCH 1/2] feat: add ChatInception chat model node
+
+Add an Inception Labs chat model integration wrapping the Mercury
+diffusion LLMs via their OpenAI-compatible API.
+
+- New ChatInception node (chatmodels) wrapping ChatOpenAI against
+  https://api.inceptionlabs.ai/v1, with a Reasoning Effort option
+  (instant/low/medium/high) passed through modelKwargs.
+- New inceptionApi credential for the API key.
+- Register mercury-2 in models.json with per-1K-token pricing.
+- Inception node icon.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ .../credentials/InceptionApi.credential.ts    |  26 +++
+ packages/components/models.json               |  12 ++
+ .../chatmodels/ChatInception/ChatInception.ts | 173 ++++++++++++++++++
+ .../chatmodels/ChatInception/inception.svg    |   9 +
+ 4 files changed, 220 insertions(+)
+ create mode 100644 packages/components/credentials/InceptionApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatInception/inception.svg
+
+diff --git a/packages/components/credentials/InceptionApi.credential.ts b/packages/components/credentials/InceptionApi.credential.ts
+new file mode 100644
+index 00000000000..346a74d1dbd
+--- /dev/null
++++ b/packages/components/credentials/InceptionApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class InceptionApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Inception API'
++        this.name = 'inceptionApi'
++        this.version = 1.0
++        this.description = 'Get your API key from the Inception Platform dashboard'
++        this.inputs = [
++            {
++                label: 'Inception API Key',
++                name: 'inceptionApiKey',
++                type: 'password',
++                description: 'Get your API key from https://platform.inceptionlabs.ai/'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: InceptionApi }
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..bc21662890e 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1,5 +1,17 @@
+ {
+     "chat": [
++        {
++            "name": "chatInception",
++            "models": [
++                {
++                    "label": "mercury-2",
++                    "name": "mercury-2",
++                    "description": "Fastest reasoning LLM and Inception's most powerful model. Supports tool calling and structured outputs.",
++                    "input_cost": 0.00025,
++                    "output_cost": 0.00075
++                }
++            ]
++        },
+         {
+             "name": "awsChatBedrock",
+             "models": [
+diff --git a/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts b/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
+new file mode 100644
+index 00000000000..fac5619da4b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
+@@ -0,0 +1,173 @@
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { BaseCache } from '@langchain/core/caches'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
++
++const DEFAULT_BASE_URL = 'https://api.inceptionlabs.ai/v1'
++
++class ChatInception_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatInception'
++        this.name = 'chatInception'
++        this.version = 1.0
++        this.type = 'ChatInception'
++        this.icon = 'inception.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around Inception Mercury diffusion LLMs (OpenAI-compatible API)'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['inceptionApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'mercury-2'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.75,
++                optional: true
++            },
++            {
++                label: 'Reasoning Effort',
++                name: 'reasoningEffort',
++                type: 'options',
++                description: 'Controls how much the model thinks before answering. Only applicable to reasoning models such as mercury-2.',
++                options: [
++                    { label: 'Instant', name: 'instant' },
++                    { label: 'Low', name: 'low' },
++                    { label: 'Medium', name: 'medium' },
++                    { label: 'High', name: 'high' }
++                ],
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Path',
++                name: 'basepath',
++                type: 'string',
++                optional: true,
++                default: DEFAULT_BASE_URL,
++                description: 'Override the default base URL for the API, e.g., "https://api.inceptionlabs.ai/v1"',
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                description: 'Default headers to include with every request to the API.',
++                additionalParams: true
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(_: INodeData, __?: ICommonObject): Promise<INodeOptionsValue[]> {
++            return await getModels(MODEL_TYPE.CHAT, 'chatInception')
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const reasoningEffort = nodeData.inputs?.reasoningEffort as string
++        const basePath = nodeData.inputs?.basepath as string
++        const baseOptions = nodeData.inputs?.baseOptions
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const inceptionApiKey = getCredentialParam('inceptionApiKey', credentialData, nodeData)
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            model: modelName,
++            apiKey: inceptionApiKey,
++            openAIApiKey: inceptionApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++        // Inception accepts "instant" in addition to the standard OpenAI reasoning efforts,
++        // so pass it through modelKwargs to bypass the stricter ChatOpenAI typing.
++        if (reasoningEffort) obj.modelKwargs = { reasoning_effort: reasoningEffort }
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatInception's BaseOptions: " + exception)
++            }
++        }
++
++        obj.configuration = {
++            baseURL: basePath || DEFAULT_BASE_URL,
++            defaultHeaders: {
++                ...(parsedBaseOptions || {})
++            }
++        }
++
++        const model = new ChatOpenAI(obj)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatInception_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatInception/inception.svg b/packages/components/nodes/chatmodels/ChatInception/inception.svg
+new file mode 100644
+index 00000000000..98b236d8cc8
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatInception/inception.svg
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 149.64 150.39">
++  <g id="Layer_1-2" data-name="Layer 1">
++    <g>
++      <polygon points="94.7 0 47.35 0 0 47.35 0 94.7 47.35 94.7 47.35 47.35 94.7 47.35 94.7 0"/>
++      <polygon points="102.29 55.69 102.29 103.04 54.94 103.04 54.94 150.39 102.29 150.39 149.64 103.04 149.64 55.69 102.29 55.69"/>
++    </g>
++  </g>
++</svg>
+
+From 9ecff78beec380bed91dc712d9f49346a5d91f6d Mon Sep 17 00:00:00 2001
+From: yanismiraoui <yanis.miraoui19@imperial.ac.uk>
+Date: Fri, 12 Jun 2026 11:28:00 -0700
+Subject: [PATCH 2/2] address gemini comments
+
+---
+ .../nodes/chatmodels/ChatInception/ChatInception.ts         | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts b/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
+index fac5619da4b..4fc4806919b 100644
+--- a/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
++++ b/packages/components/nodes/chatmodels/ChatInception/ChatInception.ts
+@@ -1,7 +1,7 @@
+ import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
+ import { BaseCache } from '@langchain/core/caches'
+ import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { getBaseClasses, getCredentialData, getCredentialParam, parseJsonBody } from '../../../src/utils'
+ import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
+ 
+ const DEFAULT_BASE_URL = 'https://api.inceptionlabs.ai/v1'
+@@ -134,13 +134,13 @@ class ChatInception_ChatModels implements INode {
+         const inceptionApiKey = getCredentialParam('inceptionApiKey', credentialData, nodeData)
+ 
+         const obj: ChatOpenAIFields = {
+-            temperature: parseFloat(temperature),
+             model: modelName,
+             apiKey: inceptionApiKey,
+             openAIApiKey: inceptionApiKey,
+             streaming: streaming ?? true
+         }
+ 
++        if (temperature != null && temperature !== '') obj.temperature = parseFloat(temperature)
+         if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
+@@ -152,7 +152,7 @@ class ChatInception_ChatModels implements INode {
+ 
+         if (baseOptions) {
+             try {
+-                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : parseJsonBody(baseOptions)
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatInception's BaseOptions: " + exception)
+             }

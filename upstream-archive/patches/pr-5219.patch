@@ -1,0 +1,384 @@
+From 53d12766dd8a0aa2f0f26e7baa6f853fc6835d2a Mon Sep 17 00:00:00 2001
+From: Utsav <utsav.preet@bx.tech>
+Date: Mon, 15 Sep 2025 20:41:34 +0100
+Subject: [PATCH 1/4] fix: add Redis connection resilience settings to prevent
+ infinite hangs
+
+- Add Redis timeout and retry configuration via environment variables
+- Fix waitUntilFinished() hanging indefinitely on Redis connection drops
+- Add connectTimeout, commandTimeout, maxRetriesPerRequest settings
+- Maintain backward compatibility with existing Redis env vars
+- Resolves issue #5126
+
+Breaking change: None
+---
+ package.json                              |  3 ++-
+ packages/server/.env.example              |  8 ++++++++
+ packages/server/src/queue/QueueManager.ts | 21 +++++++++++++++++++--
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/package.json b/package.json
+index 9ee93d127b5..c461615d7e9 100644
+--- a/package.json
++++ b/package.json
+@@ -127,5 +127,6 @@
+                 }
+             ]
+         ]
+-    }
++    },
++    "packageManager": "pnpm@10.15.0+sha512.486ebc259d3e999a4e8691ce03b5cac4a71cbeca39372a9b762cb500cfdf0873e2cb16abe3d951b1ee2cf012503f027b98b6584e4df22524e0c7450d9ec7aa7b"
+ }
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 282e4cd33fc..d852c0d5ada 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -167,6 +167,14 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # REDIS_KEY=
+ # REDIS_CA=
+ # REDIS_KEEP_ALIVE=
++
++# Redis Connection Resilience Settings (fixes infinite hangs on connection drops)
++# REDIS_CONNECT_TIMEOUT=10000 # Connection timeout in milliseconds
++# REDIS_COMMAND_TIMEOUT=30000 # Command timeout in milliseconds (prevents waitUntilFinished hanging)
++# REDIS_MAX_RETRIES_PER_REQUEST=3 # Maximum retries per Redis command
++# REDIS_LAZY_CONNECT=true # Connect only when needed
++# REDIS_KEEPALIVE_INTERVAL=30000 # Keep-alive interval in milliseconds
++
+ # ENABLE_BULLMQ_DASHBOARD=
+ 
+ 
+diff --git a/packages/server/src/queue/QueueManager.ts b/packages/server/src/queue/QueueManager.ts
+index eef90b33b94..dc29f985745 100644
+--- a/packages/server/src/queue/QueueManager.ts
++++ b/packages/server/src/queue/QueueManager.ts
+@@ -15,6 +15,13 @@ import { ExpressAdapter } from '@bull-board/express'
+ 
+ const QUEUE_NAME = process.env.QUEUE_NAME || 'flowise-queue'
+ 
++// Redis resilience configuration with environment variable support
++const REDIS_CONNECT_TIMEOUT = process.env.REDIS_CONNECT_TIMEOUT ? parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10) : 10000
++const REDIS_COMMAND_TIMEOUT = process.env.REDIS_COMMAND_TIMEOUT ? parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) : 30000
++const REDIS_MAX_RETRIES_PER_REQUEST = process.env.REDIS_MAX_RETRIES_PER_REQUEST ? parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10) : 3
++const REDIS_LAZY_CONNECT = process.env.REDIS_LAZY_CONNECT === 'false' ? false : true
++const REDIS_KEEPALIVE_INTERVAL = process.env.REDIS_KEEPALIVE_INTERVAL ? parseInt(process.env.REDIS_KEEPALIVE_INTERVAL, 10) : 30000
++
+ type QUEUE_TYPE = 'prediction' | 'upsert'
+ 
+ export class QueueManager {
+@@ -45,7 +52,12 @@ export class QueueManager {
+                 keepAlive:
+                     process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                         ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+-                        : undefined
++                        : REDIS_KEEPALIVE_INTERVAL,
++                // Enhanced resilience settings
++                connectTimeout: REDIS_CONNECT_TIMEOUT,
++                commandTimeout: REDIS_COMMAND_TIMEOUT,
++                maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
++                lazyConnect: REDIS_LAZY_CONNECT
+             }
+         } else {
+             let tlsOpts = undefined
+@@ -66,7 +78,12 @@ export class QueueManager {
+                 keepAlive:
+                     process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                         ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+-                        : undefined
++                        : REDIS_KEEPALIVE_INTERVAL,
++                // Enhanced resilience settings
++                connectTimeout: REDIS_CONNECT_TIMEOUT,
++                commandTimeout: REDIS_COMMAND_TIMEOUT,
++                maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
++                lazyConnect: REDIS_LAZY_CONNECT
+             }
+         }
+     }
+
+From d3086385b2243f800530be52921bb40000e40c6a Mon Sep 17 00:00:00 2001
+From: Utsav <utsav.preet@bx.tech>
+Date: Tue, 30 Sep 2025 22:45:29 +0100
+Subject: [PATCH 2/4] removed packageManager pinning from package.json
+
+---
+ package.json | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/package.json b/package.json
+index c461615d7e9..9ee93d127b5 100644
+--- a/package.json
++++ b/package.json
+@@ -127,6 +127,5 @@
+                 }
+             ]
+         ]
+-    },
+-    "packageManager": "pnpm@10.15.0+sha512.486ebc259d3e999a4e8691ce03b5cac4a71cbeca39372a9b762cb500cfdf0873e2cb16abe3d951b1ee2cf012503f027b98b6584e4df22524e0c7450d9ec7aa7b"
++    }
+ }
+
+From 25b63930272e2ea7c4546f8bcff8b953422f6b8f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 15 Nov 2025 11:49:52 +0000
+Subject: [PATCH 3/4] feat: Add Redis resilience configuration without
+ hardcoded defaults
+
+Addresses PR #5219 feedback to add Redis connection resilience settings:
+- connectTimeout: Configurable via REDIS_CONNECT_TIMEOUT
+- commandTimeout: Configurable via REDIS_COMMAND_TIMEOUT
+- maxRetriesPerRequest: Configurable via REDIS_MAX_RETRIES_PER_REQUEST
+- lazyConnect: Configurable via REDIS_LAZY_CONNECT
+
+Settings are only included when explicitly set via environment variables,
+allowing Redis to use its own internal defaults when not configured.
+Also refactored keepAlive to use the same conditional spreading pattern.
+---
+ packages/server/src/queue/QueueManager.ts | 55 ++++++++++++-----------
+ 1 file changed, 30 insertions(+), 25 deletions(-)
+
+diff --git a/packages/server/src/queue/QueueManager.ts b/packages/server/src/queue/QueueManager.ts
+index dc29f985745..eaf6f5547d8 100644
+--- a/packages/server/src/queue/QueueManager.ts
++++ b/packages/server/src/queue/QueueManager.ts
+@@ -15,13 +15,6 @@ import { ExpressAdapter } from '@bull-board/express'
+ 
+ const QUEUE_NAME = process.env.QUEUE_NAME || 'flowise-queue'
+ 
+-// Redis resilience configuration with environment variable support
+-const REDIS_CONNECT_TIMEOUT = process.env.REDIS_CONNECT_TIMEOUT ? parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10) : 10000
+-const REDIS_COMMAND_TIMEOUT = process.env.REDIS_COMMAND_TIMEOUT ? parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) : 30000
+-const REDIS_MAX_RETRIES_PER_REQUEST = process.env.REDIS_MAX_RETRIES_PER_REQUEST ? parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10) : 3
+-const REDIS_LAZY_CONNECT = process.env.REDIS_LAZY_CONNECT === 'false' ? false : true
+-const REDIS_KEEPALIVE_INTERVAL = process.env.REDIS_KEEPALIVE_INTERVAL ? parseInt(process.env.REDIS_KEEPALIVE_INTERVAL, 10) : 30000
+-
+ type QUEUE_TYPE = 'prediction' | 'upsert'
+ 
+ export class QueueManager {
+@@ -49,15 +42,21 @@ export class QueueManager {
+                 url: process.env.REDIS_URL,
+                 tls: tlsOpts,
+                 enableReadyCheck: true,
+-                keepAlive:
+-                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+-                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+-                        : REDIS_KEEPALIVE_INTERVAL,
+-                // Enhanced resilience settings
+-                connectTimeout: REDIS_CONNECT_TIMEOUT,
+-                commandTimeout: REDIS_COMMAND_TIMEOUT,
+-                maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+-                lazyConnect: REDIS_LAZY_CONNECT
++                ...(process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10)) && {
++                    keepAlive: parseInt(process.env.REDIS_KEEP_ALIVE, 10)
++                }),
++                ...(process.env.REDIS_CONNECT_TIMEOUT && !isNaN(parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10)) && {
++                    connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10)
++                }),
++                ...(process.env.REDIS_COMMAND_TIMEOUT && !isNaN(parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10)) && {
++                    commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10)
++                }),
++                ...(process.env.REDIS_MAX_RETRIES_PER_REQUEST && !isNaN(parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10)) && {
++                    maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10)
++                }),
++                ...(process.env.REDIS_LAZY_CONNECT !== undefined && {
++                    lazyConnect: process.env.REDIS_LAZY_CONNECT === 'true'
++                })
+             }
+         } else {
+             let tlsOpts = undefined
+@@ -75,15 +74,21 @@ export class QueueManager {
+                 password: process.env.REDIS_PASSWORD || undefined,
+                 tls: tlsOpts,
+                 enableReadyCheck: true,
+-                keepAlive:
+-                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+-                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+-                        : REDIS_KEEPALIVE_INTERVAL,
+-                // Enhanced resilience settings
+-                connectTimeout: REDIS_CONNECT_TIMEOUT,
+-                commandTimeout: REDIS_COMMAND_TIMEOUT,
+-                maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+-                lazyConnect: REDIS_LAZY_CONNECT
++                ...(process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10)) && {
++                    keepAlive: parseInt(process.env.REDIS_KEEP_ALIVE, 10)
++                }),
++                ...(process.env.REDIS_CONNECT_TIMEOUT && !isNaN(parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10)) && {
++                    connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT, 10)
++                }),
++                ...(process.env.REDIS_COMMAND_TIMEOUT && !isNaN(parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10)) && {
++                    commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10)
++                }),
++                ...(process.env.REDIS_MAX_RETRIES_PER_REQUEST && !isNaN(parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10)) && {
++                    maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST, 10)
++                }),
++                ...(process.env.REDIS_LAZY_CONNECT !== undefined && {
++                    lazyConnect: process.env.REDIS_LAZY_CONNECT === 'true'
++                })
+             }
+         }
+     }
+
+From 761a13ac21e37912add5f075e7cec856dee202f8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 15 Nov 2025 12:02:39 +0000
+Subject: [PATCH 4/4] feat: Add explicit timeouts to all job.waitUntilFinished
+ calls
+
+Completes fix for issue #5126 by adding explicit timeout parameters
+to all waitUntilFinished() calls across the codebase.
+
+Changes:
+- Added JOB_TIMEOUT environment variable (default: 300000ms / 5 minutes)
+- Applied timeout to waitUntilFinished in:
+  - buildChatflow.ts (prediction queue)
+  - agentflowv2-generator/index.ts (prediction queue)
+  - upsertVector.ts (upsert queue)
+  - nodes/index.ts (prediction queue - custom functions)
+  - documentstore/index.ts (5 locations - upsert queue)
+- Updated .env.example with documentation for JOB_TIMEOUT and Redis resilience settings
+
+This prevents indefinite blocking when Redis fails or jobs hang,
+addressing the root cause where requests would return 504 timeouts
+with no automatic recovery.
+---
+ packages/server/.env.example                      | 13 +++++--------
+ .../src/services/agentflowv2-generator/index.ts   |  3 ++-
+ .../server/src/services/documentstore/index.ts    | 15 ++++++++++-----
+ packages/server/src/services/nodes/index.ts       |  3 ++-
+ packages/server/src/utils/buildChatflow.ts        |  3 ++-
+ packages/server/src/utils/upsertVector.ts         |  3 ++-
+ 6 files changed, 23 insertions(+), 17 deletions(-)
+
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index d852c0d5ada..cac16a2b781 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -167,14 +167,11 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # REDIS_KEY=
+ # REDIS_CA=
+ # REDIS_KEEP_ALIVE=
+-
+-# Redis Connection Resilience Settings (fixes infinite hangs on connection drops)
+-# REDIS_CONNECT_TIMEOUT=10000 # Connection timeout in milliseconds
+-# REDIS_COMMAND_TIMEOUT=30000 # Command timeout in milliseconds (prevents waitUntilFinished hanging)
+-# REDIS_MAX_RETRIES_PER_REQUEST=3 # Maximum retries per Redis command
+-# REDIS_LAZY_CONNECT=true # Connect only when needed
+-# REDIS_KEEPALIVE_INTERVAL=30000 # Keep-alive interval in milliseconds
+-
++# REDIS_CONNECT_TIMEOUT= # Connection timeout in milliseconds
++# REDIS_COMMAND_TIMEOUT= # Command timeout in milliseconds
++# REDIS_MAX_RETRIES_PER_REQUEST= # Maximum number of retries per request
++# REDIS_LAZY_CONNECT= # Enable lazy connection (true/false)
++# JOB_TIMEOUT=300000 # Job execution timeout in milliseconds (default: 5 minutes)
+ # ENABLE_BULLMQ_DASHBOARD=
+ 
+ 
+diff --git a/packages/server/src/services/agentflowv2-generator/index.ts b/packages/server/src/services/agentflowv2-generator/index.ts
+index c41a2018477..0576f626481 100644
+--- a/packages/server/src/services/agentflowv2-generator/index.ts
++++ b/packages/server/src/services/agentflowv2-generator/index.ts
+@@ -210,7 +210,8 @@ const generateAgentflowv2 = async (question: string, selectedChatModel: Record<s
+             })
+             logger.debug(`[server]: Generated Agentflowv2 Job added to queue: ${job.id}`)
+             const queueEvents = predictionQueue.getQueueEvents()
+-            response = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            response = await job.waitUntilFinished(queueEvents, jobTimeout)
+         } else {
+             response = await generateAgentflowv2_json(
+                 { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index 0ee1cad2015..39c39a271b9 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -683,7 +683,8 @@ const previewChunksMiddleware = async (
+             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')
+@@ -891,7 +892,8 @@ const processLoaderMiddleware = async (
+             }
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')
+@@ -1286,7 +1288,8 @@ const insertIntoVectorStoreMiddleware = async (
+             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')
+@@ -2002,7 +2005,8 @@ const upsertDocStoreMiddleware = async (
+             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')
+@@ -2077,7 +2081,8 @@ const refreshDocStoreMiddleware = async (
+             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')
+diff --git a/packages/server/src/services/nodes/index.ts b/packages/server/src/services/nodes/index.ts
+index fbe08368a13..07a84dd0df3 100644
+--- a/packages/server/src/services/nodes/index.ts
++++ b/packages/server/src/services/nodes/index.ts
+@@ -141,7 +141,8 @@ const executeCustomFunction = async (requestBody: any, workspaceId?: string, org
+         logger.debug(`[server]: Execute Custom Function Job added to queue by ${orgId}: ${job.id}`)
+ 
+         const queueEvents = predictionQueue.getQueueEvents()
+-        const result = await job.waitUntilFinished(queueEvents)
++        const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++        const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+         if (!result) {
+             throw new Error('Failed to execute custom function')
+         }
+diff --git a/packages/server/src/utils/buildChatflow.ts b/packages/server/src/utils/buildChatflow.ts
+index c191876aa17..2903dc3a7cc 100644
+--- a/packages/server/src/utils/buildChatflow.ts
++++ b/packages/server/src/utils/buildChatflow.ts
+@@ -1068,7 +1068,8 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
+             logger.debug(`[server]: [${orgId}/${chatflow.id}/${chatId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = predictionQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+             appServer.abortControllerPool.remove(abortControllerId)
+             if (!result) {
+                 throw new Error('Job execution failed')
+diff --git a/packages/server/src/utils/upsertVector.ts b/packages/server/src/utils/upsertVector.ts
+index 7e705cf5b38..035fa4bc736 100644
+--- a/packages/server/src/utils/upsertVector.ts
++++ b/packages/server/src/utils/upsertVector.ts
+@@ -305,7 +305,8 @@ export const upsertVector = async (req: Request, isInternal: boolean = false) =>
+             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
+ 
+             const queueEvents = upsertQueue.getQueueEvents()
+-            const result = await job.waitUntilFinished(queueEvents)
++            const jobTimeout = process.env.JOB_TIMEOUT ? parseInt(process.env.JOB_TIMEOUT, 10) : 300000 // 5 minutes default
++            const result = await job.waitUntilFinished(queueEvents, jobTimeout)
+ 
+             if (!result) {
+                 throw new Error('Job execution failed')

@@ -1,0 +1,1134 @@
+From 89e781251bd99ce369175c519bdf198d0c692493 Mon Sep 17 00:00:00 2001
+From: Nerius Rutkauskas <33282043+Kontuzijus@users.noreply.github.com>
+Date: Sat, 18 Jul 2026 14:46:33 +0300
+Subject: [PATCH 1/3] feat: add ScrapeUnblocker document loader
+
+Load pages behind anti-bot protection, or Google search results,
+via the ScrapeUnblocker API.
+---
+ .../ScrapeUnblockerApi.credential.ts          |  32 ++
+ .../ScrapeUnblocker/ScrapeUnblocker.ts        | 365 ++++++++++++++++++
+ .../ScrapeUnblocker/scrapeunblocker.png       | Bin 0 -> 24585 bytes
+ 3 files changed, 397 insertions(+)
+ create mode 100644 packages/components/credentials/ScrapeUnblockerApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
+ create mode 100644 packages/components/nodes/documentloaders/ScrapeUnblocker/scrapeunblocker.png
+
+diff --git a/packages/components/credentials/ScrapeUnblockerApi.credential.ts b/packages/components/credentials/ScrapeUnblockerApi.credential.ts
+new file mode 100644
+index 00000000000..5816196c1c7
+--- /dev/null
++++ b/packages/components/credentials/ScrapeUnblockerApi.credential.ts
+@@ -0,0 +1,32 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class ScrapeUnblockerApiCredential implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ScrapeUnblocker API'
++        this.name = 'scrapeUnblockerApi'
++        this.version = 1.0
++        this.description =
++            'Get your API key from the <a target="_blank" href="https://www.scrapeunblocker.com">ScrapeUnblocker</a> dashboard.'
++        this.inputs = [
++            {
++                label: 'ScrapeUnblocker API Key',
++                name: 'scrapeUnblockerApiKey',
++                type: 'password'
++            },
++            {
++                label: 'ScrapeUnblocker API URL',
++                name: 'scrapeUnblockerApiUrl',
++                type: 'string',
++                default: 'https://api.scrapeunblocker.com'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: ScrapeUnblockerApiCredential }
+diff --git a/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts b/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
+new file mode 100644
+index 00000000000..baf6b58a88c
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
+@@ -0,0 +1,365 @@
++import { omit } from 'lodash'
++import { TextSplitter } from '@langchain/classic/text_splitter'
++import { Document, DocumentInterface } from '@langchain/core/documents'
++import { BaseDocumentLoader } from '@langchain/classic/document_loaders/base'
++import { INode, INodeData, INodeParams, ICommonObject, INodeOutputsValue } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
++import { AxiosRequestConfig } from 'axios'
++import { secureAxiosRequest } from '../../../src/httpSecurity'
++
++interface ScrapeUnblockerLoaderParameters {
++    apiKey?: string
++    apiUrl: string
++    mode: 'scrape' | 'search'
++    url?: string
++    keyword?: string
++    parsedData?: boolean
++    proxyCountry?: string
++    pagesToCheck?: number
++    additionalMetadata?: Record<string, unknown>
++}
++
++class ScrapeUnblockerLoader extends BaseDocumentLoader {
++    private apiKey: string
++    private apiUrl: string
++    private mode: 'scrape' | 'search'
++    private url?: string
++    private keyword?: string
++    private parsedData: boolean
++    private proxyCountry?: string
++    private pagesToCheck?: number
++    private additionalMetadata?: Record<string, unknown>
++
++    constructor(loaderParams: ScrapeUnblockerLoaderParameters) {
++        super()
++        const { apiKey, apiUrl, mode, url, keyword, parsedData, proxyCountry, pagesToCheck, additionalMetadata } = loaderParams
++        if (!apiKey) {
++            throw new Error('ScrapeUnblocker API key not set. Please set it in the credential.')
++        }
++
++        this.apiKey = apiKey
++        this.apiUrl = apiUrl.replace(/\/$/, '')
++        this.mode = mode
++        this.url = url
++        this.keyword = keyword
++        this.parsedData = parsedData ?? false
++        this.proxyCountry = proxyCountry
++        this.pagesToCheck = pagesToCheck
++        this.additionalMetadata = additionalMetadata
++    }
++
++    private async request(path: string, params: Record<string, unknown>): Promise<any> {
++        // Empty values are dropped so the API applies its own defaults.
++        const query: Record<string, unknown> = {}
++        for (const [key, value] of Object.entries(params)) {
++            if (value !== undefined && value !== null && value !== '' && value !== false) {
++                query[key] = value
++            }
++        }
++
++        const config: AxiosRequestConfig = {
++            method: 'POST',
++            url: `${this.apiUrl}${path}`,
++            params: query,
++            headers: { 'X-ScrapeUnblocker-Key': this.apiKey }
++        }
++
++        const response = await secureAxiosRequest(config)
++        return response.data
++    }
++
++    private async loadPage(): Promise<DocumentInterface[]> {
++        if (!this.url) {
++            throw new Error('ScrapeUnblocker: URL is required in Scrape mode.')
++        }
++
++        const data = await this.request('/getPageSource', {
++            url: this.url,
++            parsed_data: this.parsedData,
++            proxy_country: this.proxyCountry
++        })
++
++        const pageContent = typeof data === 'string' ? data : JSON.stringify(data)
++
++        return [
++            new Document({
++                pageContent,
++                metadata: {
++                    ...(this.additionalMetadata || {}),
++                    source: this.url,
++                    type: this.parsedData ? 'parsed_data' : 'html'
++                }
++            })
++        ]
++    }
++
++    private async loadSearch(): Promise<DocumentInterface[]> {
++        if (!this.keyword) {
++            throw new Error('ScrapeUnblocker: Keyword is required in Search mode.')
++        }
++
++        const data = await this.request('/serpApi', {
++            keyword: this.keyword,
++            proxy_country: this.proxyCountry,
++            pages_to_check: this.pagesToCheck
++        })
++
++        const organic = Array.isArray(data?.organic) ? data.organic : []
++        if (!organic.length) {
++            return [
++                new Document({
++                    pageContent: JSON.stringify(data ?? {}),
++                    metadata: { ...(this.additionalMetadata || {}), source: this.keyword, type: 'serp' }
++                })
++            ]
++        }
++
++        return organic.map(
++            (result: any) =>
++                new Document({
++                    pageContent: result.description || result.title || '',
++                    metadata: {
++                        ...(this.additionalMetadata || {}),
++                        title: result.title,
++                        source: result.url,
++                        type: 'serp'
++                    }
++                })
++        )
++    }
++
++    public async load(): Promise<DocumentInterface[]> {
++        if (this.mode === 'scrape') {
++            return this.loadPage()
++        } else if (this.mode === 'search') {
++            return this.loadSearch()
++        }
++        throw new Error(`Unrecognized mode '${this.mode}'. Expected one of 'scrape', 'search'.`)
++    }
++}
++
++class ScrapeUnblocker_DocumentLoaders implements INode {
++    label: string
++    name: string
++    description: string
++    type: string
++    icon: string
++    version: number
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'ScrapeUnblocker'
++        this.name = 'scrapeUnblocker'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'scrapeunblocker.png'
++        this.category = 'Document Loaders'
++        this.description = 'Load data from pages protected by anti-bot systems using ScrapeUnblocker'
++        this.baseClasses = [this.type]
++        this.inputs = [
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Mode',
++                name: 'mode',
++                type: 'options',
++                options: [
++                    {
++                        label: 'Scrape',
++                        name: 'scrape',
++                        description: 'Fetch a single page, bypassing anti-bot protection'
++                    },
++                    {
++                        label: 'Search',
++                        name: 'search',
++                        description: 'Search Google and load the organic results'
++                    }
++                ],
++                default: 'scrape'
++            },
++            {
++                label: 'Web Page URL',
++                name: 'url',
++                type: 'string',
++                placeholder: 'https://www.scrapeunblocker.com',
++                show: {
++                    mode: ['scrape']
++                }
++            },
++            {
++                label: 'Keyword',
++                name: 'keyword',
++                type: 'string',
++                placeholder: 'best web scraping api',
++                show: {
++                    mode: ['search']
++                }
++            },
++            {
++                label: 'Parsed Data',
++                name: 'parsedData',
++                type: 'boolean',
++                description: 'Return AI-parsed structured JSON instead of raw HTML',
++                default: false,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['scrape']
++                }
++            },
++            {
++                label: 'Pages To Check',
++                name: 'pagesToCheck',
++                type: 'number',
++                description: 'How many search result pages to load',
++                default: 1,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['search']
++                }
++            },
++            {
++                label: 'Proxy Country',
++                name: 'proxyCountry',
++                type: 'string',
++                description: 'Two-letter country code for the exit IP, for geo-restricted content',
++                placeholder: 'us',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Additional Metadata',
++                name: 'additional_metadata',
++                type: 'json',
++                description: 'Additional metadata to be added to the extracted documents',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Omit Metadata Keys',
++                name: 'omitMetadataKeys',
++                type: 'string',
++                rows: 4,
++                description:
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                placeholder: 'key1, key2, key3.nestedKey1',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.credential = {
++            label: 'Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['scrapeUnblockerApi']
++        }
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const mode = nodeData.inputs?.mode as 'scrape' | 'search'
++        const url = nodeData.inputs?.url as string
++        const keyword = nodeData.inputs?.keyword as string
++        const parsedData = nodeData.inputs?.parsedData as boolean
++        const proxyCountry = nodeData.inputs?.proxyCountry as string
++        const pagesToCheck = nodeData.inputs?.pagesToCheck as number
++        let additionalMetadata = nodeData.inputs?.additional_metadata
++        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
++        const output = nodeData.outputs?.output as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('scrapeUnblockerApiKey', credentialData, nodeData)
++        const apiUrl = getCredentialParam('scrapeUnblockerApiUrl', credentialData, nodeData, 'https://api.scrapeunblocker.com')
++
++        let omitMetadataKeys: string[] = []
++        if (_omitMetadataKeys) {
++            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
++        }
++
++        if (additionalMetadata) {
++            if (typeof additionalMetadata === 'string') {
++                try {
++                    additionalMetadata = JSON.parse(additionalMetadata)
++                } catch (e) {
++                    console.error('Invalid JSON string provided for additional metadata')
++                }
++            } else if (typeof additionalMetadata !== 'object') {
++                console.error('Additional metadata must be a valid JSON object')
++            }
++        } else {
++            additionalMetadata = {}
++        }
++
++        const input: ScrapeUnblockerLoaderParameters = {
++            apiKey,
++            apiUrl,
++            mode,
++            url,
++            keyword,
++            parsedData,
++            proxyCountry,
++            pagesToCheck,
++            additionalMetadata: additionalMetadata as Record<string, unknown>
++        }
++
++        const loader = new ScrapeUnblockerLoader(input)
++
++        let docs = []
++
++        if (textSplitter) {
++            docs = await loader.load()
++            docs = await textSplitter.splitDocuments(docs)
++        } else {
++            docs = await loader.load()
++        }
++
++        docs = docs.map((doc: DocumentInterface) => ({
++            ...doc,
++            metadata:
++                _omitMetadataKeys === '*'
++                    ? additionalMetadata
++                    : omit(
++                          {
++                              ...doc.metadata,
++                              ...additionalMetadata
++                          },
++                          omitMetadataKeys
++                      )
++        }))
++
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++}
++
++module.exports = { nodeClass: ScrapeUnblocker_DocumentLoaders }
+diff --git a/packages/components/nodes/documentloaders/ScrapeUnblocker/scrapeunblocker.png b/packages/components/nodes/documentloaders/ScrapeUnblocker/scrapeunblocker.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc893884ece0fae3613234405007a38941348dd1
+GIT binary patch
+literal 24585
+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
+z%`s=#LpI0G#xY!%?&OB5qv@;oE%0DUYGQ1L;aiQHWh{~ljsxtNs%SZ<V)dw`M!YLy
+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
+Nq@tiHUn^??{vTm_3BCXT
+
+literal 0
+HcmV?d00001
+
+
+From cd201dd3d66fd5c6bd1f43e1f3c17b3775762e3c Mon Sep 17 00:00:00 2001
+From: Nerius Rutkauskas <33282043+Kontuzijus@users.noreply.github.com>
+Date: Sat, 18 Jul 2026 15:44:02 +0300
+Subject: [PATCH 2/3] Use shared document loader utils in ScrapeUnblocker node
+
+Address automated review feedback:
+- Use handleDocumentLoaderDocuments / handleDocumentLoaderMetadata /
+  handleDocumentLoaderOutput instead of duplicating split, metadata
+  merge and output formatting logic.
+- Drop the now unused lodash `omit` and `handleEscapeCharacters` imports.
+- Filter nullish entries out of the SERP `organic` array before mapping.
+- Move additional metadata handling out of the loader class, since the
+  shared metadata helper already merges and parses it.
+---
+ .../ScrapeUnblocker/ScrapeUnblocker.ts        | 86 ++++---------------
+ 1 file changed, 19 insertions(+), 67 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts b/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
+index baf6b58a88c..34e757549eb 100644
+--- a/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
++++ b/packages/components/nodes/documentloaders/ScrapeUnblocker/ScrapeUnblocker.ts
+@@ -1,9 +1,14 @@
+-import { omit } from 'lodash'
+ import { TextSplitter } from '@langchain/classic/text_splitter'
+-import { Document, DocumentInterface } from '@langchain/core/documents'
++import { Document } from '@langchain/core/documents'
+ import { BaseDocumentLoader } from '@langchain/classic/document_loaders/base'
+ import { INode, INodeData, INodeParams, ICommonObject, INodeOutputsValue } from '../../../src/Interface'
+-import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
++import {
++    getCredentialData,
++    getCredentialParam,
++    handleDocumentLoaderDocuments,
++    handleDocumentLoaderMetadata,
++    handleDocumentLoaderOutput
++} from '../../../src/utils'
+ import { AxiosRequestConfig } from 'axios'
+ import { secureAxiosRequest } from '../../../src/httpSecurity'
+ 
+@@ -16,7 +21,6 @@ interface ScrapeUnblockerLoaderParameters {
+     parsedData?: boolean
+     proxyCountry?: string
+     pagesToCheck?: number
+-    additionalMetadata?: Record<string, unknown>
+ }
+ 
+ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+@@ -28,11 +32,10 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+     private parsedData: boolean
+     private proxyCountry?: string
+     private pagesToCheck?: number
+-    private additionalMetadata?: Record<string, unknown>
+ 
+     constructor(loaderParams: ScrapeUnblockerLoaderParameters) {
+         super()
+-        const { apiKey, apiUrl, mode, url, keyword, parsedData, proxyCountry, pagesToCheck, additionalMetadata } = loaderParams
++        const { apiKey, apiUrl, mode, url, keyword, parsedData, proxyCountry, pagesToCheck } = loaderParams
+         if (!apiKey) {
+             throw new Error('ScrapeUnblocker API key not set. Please set it in the credential.')
+         }
+@@ -45,7 +48,6 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+         this.parsedData = parsedData ?? false
+         this.proxyCountry = proxyCountry
+         this.pagesToCheck = pagesToCheck
+-        this.additionalMetadata = additionalMetadata
+     }
+ 
+     private async request(path: string, params: Record<string, unknown>): Promise<any> {
+@@ -68,7 +70,7 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+         return response.data
+     }
+ 
+-    private async loadPage(): Promise<DocumentInterface[]> {
++    private async loadPage(): Promise<Document[]> {
+         if (!this.url) {
+             throw new Error('ScrapeUnblocker: URL is required in Scrape mode.')
+         }
+@@ -85,7 +87,6 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+             new Document({
+                 pageContent,
+                 metadata: {
+-                    ...(this.additionalMetadata || {}),
+                     source: this.url,
+                     type: this.parsedData ? 'parsed_data' : 'html'
+                 }
+@@ -93,7 +94,7 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+         ]
+     }
+ 
+-    private async loadSearch(): Promise<DocumentInterface[]> {
++    private async loadSearch(): Promise<Document[]> {
+         if (!this.keyword) {
+             throw new Error('ScrapeUnblocker: Keyword is required in Search mode.')
+         }
+@@ -104,12 +105,12 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+             pages_to_check: this.pagesToCheck
+         })
+ 
+-        const organic = Array.isArray(data?.organic) ? data.organic : []
++        const organic = Array.isArray(data?.organic) ? data.organic.filter((result: any) => result) : []
+         if (!organic.length) {
+             return [
+                 new Document({
+                     pageContent: JSON.stringify(data ?? {}),
+-                    metadata: { ...(this.additionalMetadata || {}), source: this.keyword, type: 'serp' }
++                    metadata: { source: this.keyword, type: 'serp' }
+                 })
+             ]
+         }
+@@ -119,7 +120,6 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+                 new Document({
+                     pageContent: result.description || result.title || '',
+                     metadata: {
+-                        ...(this.additionalMetadata || {}),
+                         title: result.title,
+                         source: result.url,
+                         type: 'serp'
+@@ -128,7 +128,7 @@ class ScrapeUnblockerLoader extends BaseDocumentLoader {
+         )
+     }
+ 
+-    public async load(): Promise<DocumentInterface[]> {
++    public async load(): Promise<Document[]> {
+         if (this.mode === 'scrape') {
+             return this.loadPage()
+         } else if (this.mode === 'search') {
+@@ -286,7 +286,7 @@ class ScrapeUnblocker_DocumentLoaders implements INode {
+         const parsedData = nodeData.inputs?.parsedData as boolean
+         const proxyCountry = nodeData.inputs?.proxyCountry as string
+         const pagesToCheck = nodeData.inputs?.pagesToCheck as number
+-        let additionalMetadata = nodeData.inputs?.additional_metadata
++        const additionalMetadata = nodeData.inputs?.additional_metadata
+         const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
+         const output = nodeData.outputs?.output as string
+ 
+@@ -294,25 +294,6 @@ class ScrapeUnblocker_DocumentLoaders implements INode {
+         const apiKey = getCredentialParam('scrapeUnblockerApiKey', credentialData, nodeData)
+         const apiUrl = getCredentialParam('scrapeUnblockerApiUrl', credentialData, nodeData, 'https://api.scrapeunblocker.com')
+ 
+-        let omitMetadataKeys: string[] = []
+-        if (_omitMetadataKeys) {
+-            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
+-        }
+-
+-        if (additionalMetadata) {
+-            if (typeof additionalMetadata === 'string') {
+-                try {
+-                    additionalMetadata = JSON.parse(additionalMetadata)
+-                } catch (e) {
+-                    console.error('Invalid JSON string provided for additional metadata')
+-                }
+-            } else if (typeof additionalMetadata !== 'object') {
+-                console.error('Additional metadata must be a valid JSON object')
+-            }
+-        } else {
+-            additionalMetadata = {}
+-        }
+-
+         const input: ScrapeUnblockerLoaderParameters = {
+             apiKey,
+             apiUrl,
+@@ -321,44 +302,15 @@ class ScrapeUnblocker_DocumentLoaders implements INode {
+             keyword,
+             parsedData,
+             proxyCountry,
+-            pagesToCheck,
+-            additionalMetadata: additionalMetadata as Record<string, unknown>
++            pagesToCheck
+         }
+ 
+         const loader = new ScrapeUnblockerLoader(input)
+ 
+-        let docs = []
++        let docs = await handleDocumentLoaderDocuments(loader, textSplitter)
++        docs = handleDocumentLoaderMetadata(docs, _omitMetadataKeys, additionalMetadata)
+ 
+-        if (textSplitter) {
+-            docs = await loader.load()
+-            docs = await textSplitter.splitDocuments(docs)
+-        } else {
+-            docs = await loader.load()
+-        }
+-
+-        docs = docs.map((doc: DocumentInterface) => ({
+-            ...doc,
+-            metadata:
+-                _omitMetadataKeys === '*'
+-                    ? additionalMetadata
+-                    : omit(
+-                          {
+-                              ...doc.metadata,
+-                              ...additionalMetadata
+-                          },
+-                          omitMetadataKeys
+-                      )
+-        }))
+-
+-        if (output === 'document') {
+-            return docs
+-        } else {
+-            let finaltext = ''
+-            for (const doc of docs) {
+-                finaltext += `${doc.pageContent}\n`
+-            }
+-            return handleEscapeCharacters(finaltext, false)
+-        }
++        return handleDocumentLoaderOutput(docs, output)
+     }
+ }
+ 
+
+From 87173f7e88e151ade17e4a2dbe870ab3e5adeb49 Mon Sep 17 00:00:00 2001
+From: Nerius Rutkauskas <33282043+Kontuzijus@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 16:08:36 +0300
+Subject: [PATCH 3/3] Add UTM parameters to website links
+
+---
+ .../components/credentials/ScrapeUnblockerApi.credential.ts     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/credentials/ScrapeUnblockerApi.credential.ts b/packages/components/credentials/ScrapeUnblockerApi.credential.ts
+index 5816196c1c7..10a4bd3c7aa 100644
+--- a/packages/components/credentials/ScrapeUnblockerApi.credential.ts
++++ b/packages/components/credentials/ScrapeUnblockerApi.credential.ts
+@@ -12,7 +12,7 @@ class ScrapeUnblockerApiCredential implements INodeCredential {
+         this.name = 'scrapeUnblockerApi'
+         this.version = 1.0
+         this.description =
+-            'Get your API key from the <a target="_blank" href="https://www.scrapeunblocker.com">ScrapeUnblocker</a> dashboard.'
++            'Get your API key from the <a target="_blank" href="https://www.scrapeunblocker.com?utm_source=flowise&utm_medium=integration&utm_campaign=flowise-loader">ScrapeUnblocker</a> dashboard.'
+         this.inputs = [
+             {
+                 label: 'ScrapeUnblocker API Key',

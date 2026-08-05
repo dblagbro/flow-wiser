@@ -1,0 +1,56 @@
+From 4cfd5d4e864c1d713d1b9dd75a17efe4777e7485 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Wed, 24 Jun 2026 19:33:17 +0530
+Subject: [PATCH] fix(document-store): sync top-level credential with
+ loaderConfig on update
+
+---
+ .../src/services/documentstore/index.ts       | 21 +++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index a7dc444f1d6..7d887ffe828 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -785,8 +785,12 @@ const saveProcessingLoader = async (
+             if (!data.splitterId) data.splitterId = found.splitterId
+             if (!data.splitterName) data.splitterName = found.splitterName
+             if (!data.splitterConfig) data.splitterConfig = found.splitterConfig
+-            if (found.credential) {
+-                data.credential = found.credential
++            // Only fall back to the existing credential if no new credential was provided
++            // either directly or inside loaderConfig
++            if (!data.credential && !data.loaderConfig?.credential && !data.loaderConfig?.FLOWISE_CREDENTIAL_ID) {
++                if (found.credential) {
++                    data.credential = found.credential
++                }
+             }
+ 
+             let loader: IDocumentStoreLoader = {
+@@ -801,7 +805,12 @@ const saveProcessingLoader = async (
+                 totalChars: 0,
+                 status: DocumentStoreStatus.SYNCING
+             }
+-            if (data.credential) {
++            // Sync top-level credential from loaderConfig if present,
++            // ensuring it stays in sync when the user updates credentials via the UI
++            const credentialFromConfig = data.loaderConfig?.credential || data.loaderConfig?.FLOWISE_CREDENTIAL_ID
++            if (credentialFromConfig) {
++                loader.credential = credentialFromConfig
++            } else if (data.credential) {
+                 loader.credential = data.credential
+             }
+ 
+@@ -820,7 +829,11 @@ const saveProcessingLoader = async (
+                 totalChars: 0,
+                 status: DocumentStoreStatus.SYNCING
+             }
+-            if (data.credential) {
++            // Sync top-level credential from loaderConfig if present
++            const newCredentialFromConfig = data.loaderConfig?.credential || data.loaderConfig?.FLOWISE_CREDENTIAL_ID
++            if (newCredentialFromConfig) {
++                loader.credential = newCredentialFromConfig
++            } else if (data.credential) {
+                 loader.credential = data.credential
+             }
+             existingLoaders.push(loader)

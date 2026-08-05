@@ -1,0 +1,174 @@
+From 8c7e03af7e0c8386c524ebd1de11783c6f16f141 Mon Sep 17 00:00:00 2001
+From: Priya Sharma <priyanautiyal978@gmail.com>
+Date: Sun, 2 Aug 2026 22:13:29 +0530
+Subject: [PATCH] fix(feedback): scope getAllChatMessageFeedback to the caller
+ workspace
+
+/api/v1/feedback is in WHITELIST_URLS, so getAllChatMessageFeedback was
+reachable without authentication and performed no ownership check, letting
+anyone read feedback for any chatflow by id.
+
+Mirror the getAllLeadsForChatflow pattern: resolve req.user.activeWorkspaceId
+and verify the chatflow belongs to that workspace before reading feedback.
+This fails closed for anonymous callers without changing WHITELIST_URLS, so
+the public POST path used by embedded chatbots is unaffected.
+
+Adds tests covering the anonymous caller, a chatflow outside the caller's
+workspace, and the authorized path.
+
+Fixes #6694
+---
+ .../src/controllers/feedback/index.test.ts    | 111 ++++++++++++++++++
+ .../server/src/controllers/feedback/index.ts  |  15 +++
+ 2 files changed, 126 insertions(+)
+ create mode 100644 packages/server/src/controllers/feedback/index.test.ts
+
+diff --git a/packages/server/src/controllers/feedback/index.test.ts b/packages/server/src/controllers/feedback/index.test.ts
+new file mode 100644
+index 00000000000..f22fa718d45
+--- /dev/null
++++ b/packages/server/src/controllers/feedback/index.test.ts
+@@ -0,0 +1,111 @@
++import { StatusCodes } from 'http-status-codes'
++import { Request, Response, NextFunction } from 'express'
++
++const mockGetChatflowByIdForWorkspace = jest.fn()
++const mockGetAllChatMessageFeedback = jest.fn()
++
++jest.mock('../../services/chatflows', () => ({
++    __esModule: true,
++    default: { getChatflowByIdForWorkspace: mockGetChatflowByIdForWorkspace }
++}))
++jest.mock('../../services/feedback', () => ({
++    __esModule: true,
++    default: { getAllChatMessageFeedback: mockGetAllChatMessageFeedback }
++}))
++jest.mock('../../services/feedback/validation', () => ({
++    validateFeedbackForCreation: jest.fn(),
++    validateFeedbackForUpdate: jest.fn()
++}))
++
++import feedbackController from './index'
++
++const CHATFLOW_ID = 'chatflow-1'
++const WORKSPACE_ID = 'workspace-1'
++
++const mockReq = (overrides: Partial<Request> = {}): Request =>
++    ({
++        params: { id: CHATFLOW_ID },
++        query: {},
++        user: { activeWorkspaceId: WORKSPACE_ID },
++        ...overrides
++    } as unknown as Request)
++
++const mockRes = (): Response => {
++    const res = {} as Response
++    res.json = jest.fn().mockReturnValue(res)
++    res.status = jest.fn().mockReturnValue(res)
++    return res
++}
++
++const mockNext = (): NextFunction => jest.fn()
++
++describe('getAllChatMessageFeedback', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        mockGetChatflowByIdForWorkspace.mockResolvedValue({ id: CHATFLOW_ID })
++        mockGetAllChatMessageFeedback.mockResolvedValue([])
++    })
++
++    it('calls next with PRECONDITION_FAILED when id is missing', async () => {
++        const req = mockReq({ params: {} as any })
++        const res = mockRes()
++        const next = mockNext()
++
++        await feedbackController.getAllChatMessageFeedback(req, res, next)
++
++        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: StatusCodes.PRECONDITION_FAILED }))
++        expect(mockGetAllChatMessageFeedback).not.toHaveBeenCalled()
++    })
++
++    // Regression test for the unauthenticated IDOR: /api/v1/feedback is in WHITELIST_URLS,
++    // so an anonymous caller reaches this handler with no req.user. It must fail closed.
++    it('calls next with NOT_FOUND and does not read feedback when the caller is anonymous', async () => {
++        const req = mockReq({ user: undefined })
++        const res = mockRes()
++        const next = mockNext()
++
++        await feedbackController.getAllChatMessageFeedback(req, res, next)
++
++        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: StatusCodes.NOT_FOUND }))
++        expect(mockGetChatflowByIdForWorkspace).not.toHaveBeenCalled()
++        expect(mockGetAllChatMessageFeedback).not.toHaveBeenCalled()
++    })
++
++    it('calls next with NOT_FOUND when the chatflow is not in the caller workspace', async () => {
++        mockGetChatflowByIdForWorkspace.mockResolvedValue(null)
++
++        const req = mockReq()
++        const res = mockRes()
++        const next = mockNext()
++
++        await feedbackController.getAllChatMessageFeedback(req, res, next)
++
++        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: StatusCodes.NOT_FOUND }))
++        expect(mockGetAllChatMessageFeedback).not.toHaveBeenCalled()
++    })
++
++    it('scopes the ownership check to the caller active workspace', async () => {
++        const req = mockReq()
++        const res = mockRes()
++        const next = mockNext()
++
++        await feedbackController.getAllChatMessageFeedback(req, res, next)
++
++        expect(mockGetChatflowByIdForWorkspace).toHaveBeenCalledWith(CHATFLOW_ID, WORKSPACE_ID)
++    })
++
++    it('returns feedback when the chatflow belongs to the caller workspace', async () => {
++        const feedback = [{ id: 'feedback-1' }]
++        mockGetAllChatMessageFeedback.mockResolvedValue(feedback)
++
++        const req = mockReq({ query: { chatId: 'chat-1', order: 'ASC' } as any })
++        const res = mockRes()
++        const next = mockNext()
++
++        await feedbackController.getAllChatMessageFeedback(req, res, next)
++
++        expect(mockGetAllChatMessageFeedback).toHaveBeenCalledWith(CHATFLOW_ID, 'chat-1', 'ASC', undefined, undefined)
++        expect(res.json).toHaveBeenCalledWith(feedback)
++        expect(next).not.toHaveBeenCalled()
++    })
++})
+diff --git a/packages/server/src/controllers/feedback/index.ts b/packages/server/src/controllers/feedback/index.ts
+index a7286cf152b..70dbc58067b 100644
+--- a/packages/server/src/controllers/feedback/index.ts
++++ b/packages/server/src/controllers/feedback/index.ts
+@@ -1,4 +1,5 @@
+ import { Request, Response, NextFunction } from 'express'
++import chatflowsService from '../../services/chatflows'
+ import feedbackService from '../../services/feedback'
+ import { validateFeedbackForCreation, validateFeedbackForUpdate } from '../../services/feedback/validation'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+@@ -12,7 +13,21 @@ const getAllChatMessageFeedback = async (req: Request, res: Response, next: Next
+                 `Error: feedbackController.getAllChatMessageFeedback - id not provided!`
+             )
+         }
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: feedbackController.getAllChatMessageFeedback - workspace ${workspaceId} not found!`
++            )
++        }
+         const chatflowid = req.params.id
++        const chatflow = await chatflowsService.getChatflowByIdForWorkspace(chatflowid, workspaceId)
++        if (!chatflow) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: feedbackController.getAllChatMessageFeedback - chatflow ${chatflowid} not found in workspace ${workspaceId}`
++            )
++        }
+         const chatId = req.query?.chatId as string | undefined
+         const sortOrder = req.query?.order as string | undefined
+         const startDate = req.query?.startDate as string | undefined

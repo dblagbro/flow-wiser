@@ -1,0 +1,73 @@
+From df82f7ad3f2bd5b0a01b87974679840125acd126 Mon Sep 17 00:00:00 2001
+From: wanxiankai <xiankai.wan@gmail.com>
+Date: Sun, 19 Jul 2026 23:06:55 +0800
+Subject: [PATCH] fix: add timeout to prompt list fetch
+
+---
+ .../src/services/prompts-lists/index.test.ts  | 37 +++++++++++++++++++
+ .../src/services/prompts-lists/index.ts       |  4 +-
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+ create mode 100644 packages/server/src/services/prompts-lists/index.test.ts
+
+diff --git a/packages/server/src/services/prompts-lists/index.test.ts b/packages/server/src/services/prompts-lists/index.test.ts
+new file mode 100644
+index 00000000000..02c12ebc353
+--- /dev/null
++++ b/packages/server/src/services/prompts-lists/index.test.ts
+@@ -0,0 +1,37 @@
++import axios from 'axios'
++import promptsListsService from '.'
++
++jest.mock('axios')
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++describe('promptsListsService.createPromptsList', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('fetches LangChain Hub prompts with a bounded timeout', async () => {
++        const repos = [{ id: 'owner/prompt', num_likes: 42 }]
++        mockedAxios.get.mockResolvedValue({ data: { repos } })
++
++        const result = await promptsListsService.createPromptsList({})
++
++        expect(mockedAxios.get).toHaveBeenCalledWith(
++            'https://api.hub.langchain.com/repos/?limit=100&has_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false',
++            { timeout: 10000 }
++        )
++        expect(result).toEqual({
++            status: 'OK',
++            repos
++        })
++    })
++
++    it('returns the existing fallback when LangChain Hub request fails', async () => {
++        mockedAxios.get.mockRejectedValue(new Error('timeout'))
++
++        await expect(promptsListsService.createPromptsList({})).resolves.toEqual({
++            status: 'ERROR',
++            repos: []
++        })
++    })
++})
+diff --git a/packages/server/src/services/prompts-lists/index.ts b/packages/server/src/services/prompts-lists/index.ts
+index 62a97c8b4c6..0e4c9484059 100644
+--- a/packages/server/src/services/prompts-lists/index.ts
++++ b/packages/server/src/services/prompts-lists/index.ts
+@@ -1,11 +1,13 @@
+ import axios from 'axios'
+ 
++const LANGCHAIN_HUB_PROMPTS_TIMEOUT_MS = 10000
++
+ const createPromptsList = async (requestBody: any) => {
+     try {
+         const tags = requestBody.tags ? `tags=${requestBody.tags}` : ''
+         // Default to 100, TODO: add pagination and use offset & limit
+         const url = `https://api.hub.langchain.com/repos/?limit=100&${tags}has_commits=true&sort_field=num_likes&sort_direction=desc&is_archived=false`
+-        const resp = await axios.get(url)
++        const resp = await axios.get(url, { timeout: LANGCHAIN_HUB_PROMPTS_TIMEOUT_MS })
+         if (resp.data.repos) {
+             return {
+                 status: 'OK',

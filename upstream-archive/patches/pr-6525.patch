@@ -1,0 +1,310 @@
+From 1bc79abfab3136d795af691f5215ec56b4533061 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Tue, 16 Jun 2026 15:47:35 -0400
+Subject: [PATCH 1/5] fix(agentflow): preserve usage_metadata when LLM node
+ uses structured output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The AgentFlow LLM node already surfaces token usage/cost from `response.usage_metadata`.
+But when JSON structured output is enabled, `configureStructuredOutput()` calls
+`withStructuredOutput(schema, { method: 'functionCalling' })`, so `.invoke()` returns only
+the parsed object — the underlying AIMessage (which carries `usage_metadata`) is discarded.
+As a result, any AgentFlow LLM node using structured output reports no token usage or cost.
+
+Fix: add `includeRaw: true` so `withStructuredOutput` returns `{ raw, parsed }`, and in the
+LLM node re-attach `raw.usage_metadata` to the parsed response after `invoke()`. Existing
+behavior (content extraction, structured fields) is unchanged.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/components/nodes/agentflow/LLM/LLM.ts | 17 +++++++++++++++++
+ packages/components/src/utils.ts               |  6 +++++-
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index ccb5d88f594..24c5689d581 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -493,6 +493,23 @@ class LLM_Agentflow implements INode {
+             } else {
+                 response = await llmNodeInstance.invoke(messages, { signal: abortController?.signal })
+ 
++                // With structured output, withStructuredOutput({ includeRaw: true }) returns { raw, parsed }.
++                // Normalize back to the parsed value (preserving existing behavior) and re-attach the
++                // underlying AIMessage's usage_metadata so token usage / cost is still surfaced downstream.
++                if (
++                    isStructuredOutput &&
++                    response &&
++                    typeof response === 'object' &&
++                    'parsed' in response &&
++                    'raw' in response
++                ) {
++                    const rawMessage = (response as any).raw
++                    response = (response as any).parsed ?? rawMessage
++                    if (rawMessage?.usage_metadata && response && typeof response === 'object') {
++                        ;(response as any).usage_metadata = rawMessage.usage_metadata
++                    }
++                }
++
+                 // Stream whole response back to UI if this is the last node
+                 if (isLastNode && options.sseStreamer) {
+                     const sseStreamer: IServerSideEventStreamer = options.sseStreamer as IServerSideEventStreamer
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index b8b39cbc2d3..ed9dcbbe508 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -2163,8 +2163,12 @@ export const configureStructuredOutput = (llmNodeInstance: BaseChatModel, struct
+         const structuredOutputSchema = z.object(zodObj)
+ 
+         // @ts-ignore
++        // includeRaw returns { raw, parsed } so callers can recover the underlying AIMessage's
++        // usage_metadata (token usage / cost). Without it, structured output discards the AIMessage and
++        // usage/cost can never be reported. The LLM Agentflow node re-attaches it after invoke().
+         return llmNodeInstance.withStructuredOutput(structuredOutputSchema, {
+-            method: 'functionCalling'
++            method: 'functionCalling',
++            includeRaw: true
+         })
+     } catch (exception) {
+         console.error(exception)
+
+From 01837e141d88f214c6c87e12e1019d0632d96f53 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Tue, 16 Jun 2026 16:08:52 -0400
+Subject: [PATCH 2/5] address review: re-attach response_metadata; avoid
+ raw-fallback output pollution
+
+Per review feedback:
+- Re-attach response_metadata (not just usage_metadata) from the raw AIMessage, so downstream
+  metadata-dependent features keep working with structured output.
+- Drop the `?? rawMessage` fallback. On parse failure that raw message would flow into the
+  structured-field copy in prepareOutputObject and pollute the output with internal LangChain
+  properties. Instead, surface the parsing error (consistent with the prior throw-on-parse-failure
+  behavior of withStructuredOutput).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/components/nodes/agentflow/LLM/LLM.ts | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index 24c5689d581..b536bf5512d 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -494,8 +494,10 @@ class LLM_Agentflow implements INode {
+                 response = await llmNodeInstance.invoke(messages, { signal: abortController?.signal })
+ 
+                 // With structured output, withStructuredOutput({ includeRaw: true }) returns { raw, parsed }.
+-                // Normalize back to the parsed value (preserving existing behavior) and re-attach the
+-                // underlying AIMessage's usage_metadata so token usage / cost is still surfaced downstream.
++                // Continue with the parsed structured object (as before), but re-attach the raw AIMessage's
++                // usage_metadata and response_metadata so token usage/cost tracking and downstream metadata
++                // features keep working. Do NOT fall back to the raw message as the response value — the
++                // structured-field copy below would then pollute the output with internal LangChain props.
+                 if (
+                     isStructuredOutput &&
+                     response &&
+@@ -504,10 +506,17 @@ class LLM_Agentflow implements INode {
+                     'raw' in response
+                 ) {
+                     const rawMessage = (response as any).raw
+-                    response = (response as any).parsed ?? rawMessage
+-                    if (rawMessage?.usage_metadata && response && typeof response === 'object') {
++                    if ((response as any).parsed == null) {
++                        // structured parsing failed — surface the error (matches prior throw-on-parse-failure)
++                        throw (response as any).parsing_error ?? new Error('Structured output parsing failed')
++                    }
++                    response = (response as any).parsed
++                    if (rawMessage?.usage_metadata) {
+                         ;(response as any).usage_metadata = rawMessage.usage_metadata
+                     }
++                    if (rawMessage?.response_metadata) {
++                        ;(response as any).response_metadata = rawMessage.response_metadata
++                    }
+                 }
+ 
+                 // Stream whole response back to UI if this is the last node
+
+From d4229feb780a0defcbb5d77063f21e6f4add1e98 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Tue, 16 Jun 2026 16:17:47 -0400
+Subject: [PATCH 3/5] address review: attach usage_metadata/response_metadata
+ as non-enumerable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per review feedback: assigning these directly made them enumerable, so the downstream
+structured-field copy in prepareOutputObject (and content serialization) could pick them up
+and pollute the output. Use Object.defineProperty with enumerable:false — prepareOutputObject
+still reads them via property access, but for..in / JSON.stringify ignore them.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/components/nodes/agentflow/LLM/LLM.ts | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index b536bf5512d..9e7e671fe7d 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -511,11 +511,23 @@ class LLM_Agentflow implements INode {
+                         throw (response as any).parsing_error ?? new Error('Structured output parsing failed')
+                     }
+                     response = (response as any).parsed
++                    // Attach as NON-enumerable so the structured-field copy / content serialization below isn't
++                    // polluted, while prepareOutputObject can still read response.usage_metadata / .response_metadata.
+                     if (rawMessage?.usage_metadata) {
+-                        ;(response as any).usage_metadata = rawMessage.usage_metadata
++                        Object.defineProperty(response, 'usage_metadata', {
++                            value: rawMessage.usage_metadata,
++                            enumerable: false,
++                            writable: true,
++                            configurable: true
++                        })
+                     }
+                     if (rawMessage?.response_metadata) {
+-                        ;(response as any).response_metadata = rawMessage.response_metadata
++                        Object.defineProperty(response, 'response_metadata', {
++                            value: rawMessage.response_metadata,
++                            enumerable: false,
++                            writable: true,
++                            configurable: true
++                        })
+                     }
+                 }
+ 
+
+From 9f3f27193eb692fd3a741139939836f088804410 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Tue, 16 Jun 2026 16:26:28 -0400
+Subject: [PATCH 4/5] address review: guard Object.defineProperty against
+ non-object parsed value
+
+Per review feedback: if a structured schema ever resolves to a primitive, calling
+Object.defineProperty on it would throw a TypeError. Wrap the metadata attachment in a
+`response && typeof response === 'object'` check.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ .../components/nodes/agentflow/LLM/LLM.ts     | 38 ++++++++++---------
+ 1 file changed, 21 insertions(+), 17 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index 9e7e671fe7d..985c6029e4d 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -511,23 +511,27 @@ class LLM_Agentflow implements INode {
+                         throw (response as any).parsing_error ?? new Error('Structured output parsing failed')
+                     }
+                     response = (response as any).parsed
+-                    // Attach as NON-enumerable so the structured-field copy / content serialization below isn't
+-                    // polluted, while prepareOutputObject can still read response.usage_metadata / .response_metadata.
+-                    if (rawMessage?.usage_metadata) {
+-                        Object.defineProperty(response, 'usage_metadata', {
+-                            value: rawMessage.usage_metadata,
+-                            enumerable: false,
+-                            writable: true,
+-                            configurable: true
+-                        })
+-                    }
+-                    if (rawMessage?.response_metadata) {
+-                        Object.defineProperty(response, 'response_metadata', {
+-                            value: rawMessage.response_metadata,
+-                            enumerable: false,
+-                            writable: true,
+-                            configurable: true
+-                        })
++                    // Guard: a structured schema could resolve to a primitive — Object.defineProperty would
++                    // throw on a non-object. Attach as NON-enumerable so the structured-field copy / content
++                    // serialization below isn't polluted, while prepareOutputObject can still read
++                    // response.usage_metadata / .response_metadata.
++                    if (response && typeof response === 'object') {
++                        if (rawMessage?.usage_metadata) {
++                            Object.defineProperty(response, 'usage_metadata', {
++                                value: rawMessage.usage_metadata,
++                                enumerable: false,
++                                writable: true,
++                                configurable: true
++                            })
++                        }
++                        if (rawMessage?.response_metadata) {
++                            Object.defineProperty(response, 'response_metadata', {
++                                value: rawMessage.response_metadata,
++                                enumerable: false,
++                                writable: true,
++                                configurable: true
++                            })
++                        }
+                     }
+                 }
+ 
+
+From 9d47012de0c102caa03fc91b40370e7cdf487707 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Tue, 16 Jun 2026 16:34:54 -0400
+Subject: [PATCH 5/5] address review: make includeRaw opt-in (backward compat)
+ + guard non-extensible objects
+
+- configureStructuredOutput gains an optional includeRaw?: boolean (defaults false). The other
+  caller (Agent.ts) keeps its 2-arg call -> still receives the parsed object, so it's unaffected;
+  only the LLM Agentflow node opts in with true. Fixes the shared-utility regression risk.
+- Guard the metadata attachment with Object.isExtensible(response) - a frozen/sealed parsed value
+  would otherwise throw a TypeError in Object.defineProperty.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/components/nodes/agentflow/LLM/LLM.ts | 4 ++--
+ packages/components/src/utils.ts               | 8 ++++++--
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index 985c6029e4d..deeed1ae38c 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -454,7 +454,7 @@ class LLM_Agentflow implements INode {
+             // Configure structured output if specified
+             const isStructuredOutput = _llmStructuredOutput && Array.isArray(_llmStructuredOutput) && _llmStructuredOutput.length > 0
+             if (isStructuredOutput) {
+-                llmNodeInstance = configureStructuredOutput(llmNodeInstance, _llmStructuredOutput)
++                llmNodeInstance = configureStructuredOutput(llmNodeInstance, _llmStructuredOutput, true)
+             }
+ 
+             // Initialize response and determine if streaming is possible
+@@ -515,7 +515,7 @@ class LLM_Agentflow implements INode {
+                     // throw on a non-object. Attach as NON-enumerable so the structured-field copy / content
+                     // serialization below isn't polluted, while prepareOutputObject can still read
+                     // response.usage_metadata / .response_metadata.
+-                    if (response && typeof response === 'object') {
++                    if (response && typeof response === 'object' && Object.isExtensible(response)) {
+                         if (rawMessage?.usage_metadata) {
+                             Object.defineProperty(response, 'usage_metadata', {
+                                 value: rawMessage.usage_metadata,
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index ed9dcbbe508..59d16b8d678 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -2120,7 +2120,11 @@ export async function parseWithTypeConversion<T extends z.ZodTypeAny>(schema: T,
+  * @param {any[]} structuredOutput - Array of structured output schema definitions
+  * @returns {BaseChatModel} - The configured LLM instance
+  */
+-export const configureStructuredOutput = (llmNodeInstance: BaseChatModel, structuredOutput: any[]): BaseChatModel => {
++export const configureStructuredOutput = (
++    llmNodeInstance: BaseChatModel,
++    structuredOutput: any[],
++    includeRaw?: boolean
++): BaseChatModel => {
+     try {
+         const zodObj: ICommonObject = {}
+         for (const sch of structuredOutput) {
+@@ -2168,7 +2172,7 @@ export const configureStructuredOutput = (llmNodeInstance: BaseChatModel, struct
+         // usage/cost can never be reported. The LLM Agentflow node re-attaches it after invoke().
+         return llmNodeInstance.withStructuredOutput(structuredOutputSchema, {
+             method: 'functionCalling',
+-            includeRaw: true
++            includeRaw: includeRaw ?? false
+         })
+     } catch (exception) {
+         console.error(exception)

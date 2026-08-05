@@ -1,0 +1,18 @@
+From 222cfe5c6b356c074bc3d04ebe364bf9ef61ccbd Mon Sep 17 00:00:00 2001
+From: Saranya Vadrevu <84268700+SaranyaVad@users.noreply.github.com>
+Date: Fri, 24 Oct 2025 20:51:24 +0100
+Subject: [PATCH] Create render.yaml
+
+---
+ render.yaml | 2 ++
+ 1 file changed, 2 insertions(+)
+ create mode 100644 render.yaml
+
+diff --git a/render.yaml b/render.yaml
+new file mode 100644
+index 00000000000..fa3864cd2de
+--- /dev/null
++++ b/render.yaml
+@@ -0,0 +1,2 @@
++export NODE_OPTIONS="--max-old-space-size=450"
++npm start

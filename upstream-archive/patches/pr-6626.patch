@@ -1,0 +1,341 @@
+From 6426c13a660b6bfa269c049512bac3e457b8be76 Mon Sep 17 00:00:00 2001
+From: mattbarrio <mbarrio@gmail.com>
+Date: Tue, 14 Jul 2026 13:02:37 -0700
+Subject: [PATCH 1/2] feat(unstructured-mcp): adding unstructured.io transform
+ mcp
+
+---
+ .../UnstructuredTransformApi.credential.ts    |  26 ++++
+ .../MCP/UnstructuredMCP/UnstructuredMCP.ts    | 115 ++++++++++++++++++
+ .../MCP/UnstructuredMCP/unstructured.png      | Bin 0 -> 5114 bytes
+ 3 files changed, 141 insertions(+)
+ create mode 100644 packages/components/credentials/UnstructuredTransformApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
+ create mode 100644 packages/components/nodes/tools/MCP/UnstructuredMCP/unstructured.png
+
+diff --git a/packages/components/credentials/UnstructuredTransformApi.credential.ts b/packages/components/credentials/UnstructuredTransformApi.credential.ts
+new file mode 100644
+index 00000000000..fdbea75670a
+--- /dev/null
++++ b/packages/components/credentials/UnstructuredTransformApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class UnstructuredTransformApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Unstructured Transform API'
++        this.name = 'unstructuredTransformApi'
++        this.version = 1.0
++        this.description =
++            'Sign in at <a target="_blank" href="https://transform.unstructured.io/get-started">Unstructured Transform</a> to get your API key. See the <a target="_blank" href="https://docs.unstructured.io/transform/quickstart">quickstart</a> for details.'
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'unstructuredTransformAPIKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: UnstructuredTransformApi }
+diff --git a/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts b/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
+new file mode 100644
+index 00000000000..b0360491e95
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
+@@ -0,0 +1,115 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { MCPToolkit } from '../core'
++
++class Unstructured_MCP implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    documentation: string
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Unstructured MCP'
++        this.name = 'unstructuredMCP'
++        this.version = 1.0
++        this.type = 'Unstructured MCP Tool'
++        this.icon = 'unstructured.png'
++        this.category = 'Tools (MCP)'
++        this.description =
++            'MCP Server for Unstructured.io — parse PDFs, DOCX, PPTX, images and 60+ other file types into clean markdown or structured JSON'
++        this.documentation = 'https://docs.unstructured.io/transform/overview'
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['unstructuredTransformApi']
++        }
++        this.inputs = [
++            {
++                label: 'Available Actions',
++                name: 'mcpActions',
++                type: 'asyncMultiOptions',
++                loadMethod: 'listActions',
++                refresh: true
++            }
++        ]
++        this.baseClasses = ['Tool']
++    }
++
++    //@ts-ignore
++    loadMethods = {
++        listActions: async (nodeData: INodeData, options: ICommonObject): Promise<INodeOptionsValue[]> => {
++            try {
++                const toolset = await this.getTools(nodeData, options)
++                toolset.sort((a: any, b: any) => a.name.localeCompare(b.name))
++
++                return toolset.map(({ name, ...rest }) => ({
++                    label: name.toUpperCase(),
++                    name: name,
++                    description: rest.description || name
++                }))
++            } catch (error) {
++                console.error('Error listing actions:', error)
++                return [
++                    {
++                        label: 'No Available Actions',
++                        name: 'error',
++                        description: 'No available actions, please check your Unstructured.io Transform API Key and refresh'
++                    }
++                ]
++            }
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const tools = await this.getTools(nodeData, options)
++
++        const _mcpActions = nodeData.inputs?.mcpActions
++        let mcpActions = []
++        if (_mcpActions) {
++            try {
++                mcpActions = typeof _mcpActions === 'string' ? JSON.parse(_mcpActions) : _mcpActions
++            } catch (error) {
++                console.error('Error parsing mcp actions:', error)
++            }
++        }
++
++        return tools.filter((tool: any) => mcpActions.includes(tool.name))
++    }
++
++    async getTools(nodeData: INodeData, options: ICommonObject): Promise<Tool[]> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('unstructuredTransformAPIKey', credentialData, nodeData)
++
++        const url = 'https://mcp.transform.unstructured.io/'
++
++        if (!apiKey) {
++            throw new Error('Missing Unstructured.io Transform API Key')
++        }
++
++        const serverParams = {
++            type: 'http',
++            url,
++            headers: {
++                Authorization: `Bearer ${apiKey}`
++            }
++        }
++
++        const toolkit = new MCPToolkit(serverParams, 'http')
++        await toolkit.initialize()
++
++        const tools = toolkit.tools ?? []
++
++        return tools as Tool[]
++    }
++}
++
++module.exports = { nodeClass: Unstructured_MCP }
+diff --git a/packages/components/nodes/tools/MCP/UnstructuredMCP/unstructured.png b/packages/components/nodes/tools/MCP/UnstructuredMCP/unstructured.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..4f6a644ed9367f416e9a70e47dbc1c465a89f9e9
+GIT binary patch
+literal 5114
+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
+
+literal 0
+HcmV?d00001
+
+
+From 6212c025fce79a65abf1e911df642c9b021a466f Mon Sep 17 00:00:00 2001
+From: mattbarrio <mbarrio@gmail.com>
+Date: Tue, 14 Jul 2026 13:35:12 -0700
+Subject: [PATCH 2/2] fix: address code review feedback
+
+- Rename Unstructured_MCP class to UnstructuredMCP (PascalCase)
+- Replace @ts-ignore with optional options parameter defaults
+- Fail fast when mcpActions is not an array
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../MCP/UnstructuredMCP/UnstructuredMCP.ts    | 21 +++++++++----------
+ 1 file changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts b/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
+index b0360491e95..1b2263a9d57 100644
+--- a/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
++++ b/packages/components/nodes/tools/MCP/UnstructuredMCP/UnstructuredMCP.ts
+@@ -3,7 +3,7 @@ import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from
+ import { getCredentialData, getCredentialParam } from '../../../../src/utils'
+ import { MCPToolkit } from '../core'
+ 
+-class Unstructured_MCP implements INode {
++class UnstructuredMCP implements INode {
+     label: string
+     name: string
+     version: number
+@@ -44,9 +44,8 @@ class Unstructured_MCP implements INode {
+         this.baseClasses = ['Tool']
+     }
+ 
+-    //@ts-ignore
+     loadMethods = {
+-        listActions: async (nodeData: INodeData, options: ICommonObject): Promise<INodeOptionsValue[]> => {
++        listActions: async (nodeData: INodeData, options: ICommonObject = {}): Promise<INodeOptionsValue[]> => {
+             try {
+                 const toolset = await this.getTools(nodeData, options)
+                 toolset.sort((a: any, b: any) => a.name.localeCompare(b.name))
+@@ -69,23 +68,23 @@ class Unstructured_MCP implements INode {
+         }
+     }
+ 
+-    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++    async init(nodeData: INodeData, _: string, options: ICommonObject = {}): Promise<any> {
+         const tools = await this.getTools(nodeData, options)
+ 
+         const _mcpActions = nodeData.inputs?.mcpActions
+-        let mcpActions = []
++        let mcpActions: string[] = []
+         if (_mcpActions) {
+-            try {
+-                mcpActions = typeof _mcpActions === 'string' ? JSON.parse(_mcpActions) : _mcpActions
+-            } catch (error) {
+-                console.error('Error parsing mcp actions:', error)
++            const parsed = typeof _mcpActions === 'string' ? JSON.parse(_mcpActions) : _mcpActions
++            if (!Array.isArray(parsed)) {
++                throw new Error('mcpActions must be an array')
+             }
++            mcpActions = parsed
+         }
+ 
+         return tools.filter((tool: any) => mcpActions.includes(tool.name))
+     }
+ 
+-    async getTools(nodeData: INodeData, options: ICommonObject): Promise<Tool[]> {
++    async getTools(nodeData: INodeData, options: ICommonObject = {}): Promise<Tool[]> {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('unstructuredTransformAPIKey', credentialData, nodeData)
+ 
+@@ -112,4 +111,4 @@ class Unstructured_MCP implements INode {
+     }
+ }
+ 
+-module.exports = { nodeClass: Unstructured_MCP }
++module.exports = { nodeClass: UnstructuredMCP }

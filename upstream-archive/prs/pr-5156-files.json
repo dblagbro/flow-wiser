@@ -1,0 +1,1 @@
+[{"additions":46,"deletions":7,"filename":"docker/Dockerfile","status":"modified"},{"additions":45,"deletions":32,"filename":"packages/server/src/index.ts","status":"modified"},{"additions":10,"deletions":7,"filename":"packages/ui/src/index.jsx","status":"modified"},{"additions":4,"deletions":2,"filename":"packages/ui/vite.config.js","status":"modified"}]

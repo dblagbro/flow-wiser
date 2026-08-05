@@ -1,0 +1,226 @@
+From aaa1faddf8982264344426d9809d19a9c7e95311 Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Fri, 27 Dec 2024 23:15:22 +0200
+Subject: [PATCH 1/7] feat: add new session btn
+
+---
+ .../ui/src/views/chatmessage/ChatMessage.jsx  | 28 +++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index d5a67de7acf..99314881665 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -167,6 +167,22 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+ 
+     const dispatch = useDispatch()
+ 
++    // Add resetChat function here, after initial declarations
++    const resetChat = useCallback(() => {
++        const newChatId = uuidv4()
++        setChatId(newChatId)
++        setMessages([
++            {
++                message: 'Hi there! How can I help?',
++                type: 'apiMessage'
++            }
++        ])
++        setUserInput('')
++        setUploadedFiles([])
++        setPreviews([])
++        setLocalStorageChatflow(chatflowid, newChatId)
++    }, [chatflowid, setPreviews])
++
+     useNotifier()
+     const enqueueSnackbar = (...args) => dispatch(enqueueSnackbarAction(...args))
+     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
+@@ -1538,6 +1554,18 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+                 )}
+             <div ref={ps} className={`${isDialog ? 'cloud-dialog' : 'cloud'}`}>
+                 <div id='messagelist' className={'messagelist'}>
++                    <Box sx={{ width: '100%', display: 'flex', justifyContent: 'flex-end', p: 1 }}>
++                        <Button
++                            onClick={resetChat}
++                            startIcon={<IconTrash size={20} />}
++                            variant='outlined'
++                            color='error'
++                            size='small'
++                            sx={{ borderRadius: '20px' }}
++                        >
++                            Reset Chat
++                        </Button>
++                    </Box>
+                     {messages &&
+                         messages.map((message, index) => {
+                             return (
+
+From dbf1fe2cc6b8afd39b7024d4c5b506452bf8c955 Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Fri, 27 Dec 2024 23:17:52 +0200
+Subject: [PATCH 2/7] chore: update
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 99314881665..8d842e798bb 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -39,7 +39,8 @@ import {
+     IconDeviceSdCard,
+     IconCheck,
+     IconPaperclip,
+-    IconSparkles
++    IconSparkles,
++    IconRefresh
+ } from '@tabler/icons-react'
+ import robotPNG from '@/assets/images/robot.png'
+ import userPNG from '@/assets/images/account.png'
+@@ -1557,13 +1558,13 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+                     <Box sx={{ width: '100%', display: 'flex', justifyContent: 'flex-end', p: 1 }}>
+                         <Button
+                             onClick={resetChat}
+-                            startIcon={<IconTrash size={20} />}
++                            startIcon={<IconRefresh size={20} />}
+                             variant='outlined'
+-                            color='error'
++                            color='primary'
+                             size='small'
+                             sx={{ borderRadius: '20px' }}
+                         >
+-                            Reset Chat
++                            New Session
+                         </Button>
+                     </Box>
+                     {messages &&
+
+From 2bbcd964a7ddb6ee99c0f2221550a36613634317 Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Sat, 28 Dec 2024 10:01:49 +0200
+Subject: [PATCH 3/7] chore: update
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 8d842e798bb..9ab8ceb2227 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1037,7 +1037,10 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+         if (getChatmessageApi.data?.length) {
+             const chatId = getChatmessageApi.data[0]?.chatId
+             setChatId(chatId)
+-            const loadedMessages = getChatmessageApi.data.map((message) => {
++            // Filter messages to only include those with matching chatId
++            const messagesForChat = getChatmessageApi.data.filter((message) => message.chatId === chatId)
++
++            const loadedMessages = messagesForChat.map((message) => {
+                 const obj = {
+                     id: message.id,
+                     message: message.content,
+
+From 4b4cb3966fc6ac99db1c15a7cfbc55e2a1a7637d Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Sat, 28 Dec 2024 10:02:14 +0200
+Subject: [PATCH 4/7] chore: update
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 9ab8ceb2227..e9b4012cbae 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1035,7 +1035,8 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+     // Get chatmessages successful
+     useEffect(() => {
+         if (getChatmessageApi.data?.length) {
+-            const chatId = getChatmessageApi.data[0]?.chatId
++            const latestMessage = getChatmessageApi.data[getChatmessageApi.data.length - 1]
++            const chatId = latestMessage?.chatId
+             setChatId(chatId)
+             // Filter messages to only include those with matching chatId
+             const messagesForChat = getChatmessageApi.data.filter((message) => message.chatId === chatId)
+
+From 1af5367c9462c007ef5955d8db246f5fb223ef05 Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Tue, 31 Dec 2024 04:49:35 +0200
+Subject: [PATCH 5/7] chore: update
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index e9b4012cbae..79fe696feca 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1559,7 +1559,19 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+                 )}
+             <div ref={ps} className={`${isDialog ? 'cloud-dialog' : 'cloud'}`}>
+                 <div id='messagelist' className={'messagelist'}>
+-                    <Box sx={{ width: '100%', display: 'flex', justifyContent: 'flex-end', p: 1 }}>
++                    <Box
++                        sx={{
++                            width: '100%',
++                            display: 'flex',
++                            justifyContent: 'flex-end',
++                            p: 1,
++                            position: 'sticky',
++                            top: 0,
++                            backgroundColor: theme.palette.background.default,
++                            zIndex: 1000,
++                            borderBottom: `1px solid ${theme.palette.divider}`
++                        }}
++                    >
+                         <Button
+                             onClick={resetChat}
+                             startIcon={<IconRefresh size={20} />}
+
+From 578d772664f29a2a994af5c66549b2c39b9bcb62 Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Tue, 31 Dec 2024 05:25:36 +0200
+Subject: [PATCH 6/7] chore: always shown the new session button
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 79fe696feca..9d65c3a5797 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1559,6 +1559,7 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+                 )}
+             <div ref={ps} className={`${isDialog ? 'cloud-dialog' : 'cloud'}`}>
+                 <div id='messagelist' className={'messagelist'}>
++                    {/* New Session Button - Fixed position at the top of chat */}
+                     <Box
+                         sx={{
+                             width: '100%',
+
+From 45f7d5a25dd8db485d94db3b3ab9a316b650a9db Mon Sep 17 00:00:00 2001
+From: khiemfle <khiemfle@gmail.com>
+Date: Tue, 31 Dec 2024 12:48:20 +0200
+Subject: [PATCH 7/7] chore: always shown the new session button
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 9d65c3a5797..23cd2d28ff0 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1568,7 +1568,7 @@ export const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, preview
+                             p: 1,
+                             position: 'sticky',
+                             top: 0,
+-                            backgroundColor: theme.palette.background.default,
++                            backgroundColor: theme.palette.background.paper,
+                             zIndex: 1000,
+                             borderBottom: `1px solid ${theme.palette.divider}`
+                         }}

@@ -1,0 +1,110 @@
+From 5082a7af8175bbe9b386f5db52bcf1e844759493 Mon Sep 17 00:00:00 2001
+From: jooyoung <happyboyjoo@naver.com>
+Date: Mon, 22 Jun 2026 10:35:38 +0900
+Subject: [PATCH 1/2] Condition Node error fix
+
+---
+ .codegraph/.gitignore                       | 16 ++++++++++++++++
+ .codegraph/daemon.pid                       |  6 ++++++
+ packages/server/src/utils/buildAgentflow.ts |  4 ++--
+ 3 files changed, 24 insertions(+), 2 deletions(-)
+ create mode 100644 .codegraph/.gitignore
+ create mode 100644 .codegraph/daemon.pid
+
+diff --git a/.codegraph/.gitignore b/.codegraph/.gitignore
+new file mode 100644
+index 00000000000..9de0f169032
+--- /dev/null
++++ b/.codegraph/.gitignore
+@@ -0,0 +1,16 @@
++# CodeGraph data files
++# These are local to each machine and should not be committed
++
++# Database
++*.db
++*.db-wal
++*.db-shm
++
++# Cache
++cache/
++
++# Logs
++*.log
++
++# Hook markers
++.dirty
+diff --git a/.codegraph/daemon.pid b/.codegraph/daemon.pid
+new file mode 100644
+index 00000000000..ab77a06faa8
+--- /dev/null
++++ b/.codegraph/daemon.pid
+@@ -0,0 +1,6 @@
++{
++  "pid": 24088,
++  "version": "0.9.8",
++  "socketPath": "\\\\.\\pipe\\codegraph-0c1ea21029ed244f",
++  "startedAt": 1782089651168
++}
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..e9098b1b9a7 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -830,9 +830,9 @@ async function determineNodesToIgnore(
+ 
+         // Find nodes to ignore based on unfulfilled conditions
+         for (const index of unfulfilledIndexes) {
+-            const ignoreEdge = edges.find((edge) => edge.source === nodeId && edge.sourceHandle === `${nodeId}-output-${index}`)
++            const ignoreEdges = edges.filter((edge) => edge.source === nodeId && edge.sourceHandle === `${nodeId}-output-${index}`)
+ 
+-            if (ignoreEdge) {
++            for (const ignoreEdge of ignoreEdges) {
+                 ignoreNodeIds.push(ignoreEdge.target)
+             }
+         }
+
+From 9e3b707fefb10855328e87aaab349884c28cd5a9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=EC=99=95=EC=A3=BC=EC=98=81?= <happyboyjoo@naver.com>
+Date: Mon, 22 Jun 2026 10:37:01 +0900
+Subject: [PATCH 2/2] Delete .codegraph directory
+
+---
+ .codegraph/.gitignore | 16 ----------------
+ .codegraph/daemon.pid |  6 ------
+ 2 files changed, 22 deletions(-)
+ delete mode 100644 .codegraph/.gitignore
+ delete mode 100644 .codegraph/daemon.pid
+
+diff --git a/.codegraph/.gitignore b/.codegraph/.gitignore
+deleted file mode 100644
+index 9de0f169032..00000000000
+--- a/.codegraph/.gitignore
++++ /dev/null
+@@ -1,16 +0,0 @@
+-# CodeGraph data files
+-# These are local to each machine and should not be committed
+-
+-# Database
+-*.db
+-*.db-wal
+-*.db-shm
+-
+-# Cache
+-cache/
+-
+-# Logs
+-*.log
+-
+-# Hook markers
+-.dirty
+diff --git a/.codegraph/daemon.pid b/.codegraph/daemon.pid
+deleted file mode 100644
+index ab77a06faa8..00000000000
+--- a/.codegraph/daemon.pid
++++ /dev/null
+@@ -1,6 +0,0 @@
+-{
+-  "pid": 24088,
+-  "version": "0.9.8",
+-  "socketPath": "\\\\.\\pipe\\codegraph-0c1ea21029ed244f",
+-  "startedAt": 1782089651168
+-}

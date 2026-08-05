@@ -1,0 +1,85 @@
+From 6bdc00c8d4da799e8bf4ca8fb15cb1d76ad8ee3d Mon Sep 17 00:00:00 2001
+From: j-sanaa <sanaa.javidh@workday.com>
+Date: Fri, 1 May 2026 13:16:40 -0700
+Subject: [PATCH 1/2] Fix iteration node streaming bug
+
+---
+ packages/server/src/utils/buildAgentflow.ts | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index 3c4a451a17b..00e13be5d6b 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1244,8 +1244,8 @@ const executeNode = async ({
+                     flowData: JSON.stringify(iterationFlowData)
+                 }
+ 
+-                // Initialize array to collect results from iterations
+                 const iterationResults: string[] = []
++                let successfulCount = 0 // drives newline separator between streamed items
+ 
+                 // Execute sub-flow for each item in the iteration array
+                 for (let i = 0; i < results.input.iterationInput.length; i++) {
+@@ -1291,9 +1291,17 @@ const executeNode = async ({
+                             productId
+                         })
+ 
+-                        // Store the result
+-                        if (subFlowResult?.text) {
+-                            iterationResults.push(subFlowResult.text)
++                        if (subFlowResult) {
++                            iterationResults.push(subFlowResult.text || '')
++                            if (subFlowResult.text) {
++                                // Stream each result as it completes rather than batching at the end.
++                                // Sub-flows run with isRecursive=true, so inner nodes (e.g. DirectReply)
++                                // never reach isLastNode=true and never call streamTokenEvent themselves.
++                                if (isLastNode && sseStreamer) {
++                                    sseStreamer.streamTokenEvent(chatId, (successfulCount > 0 ? '\n' : '') + subFlowResult.text)
++                                }
++                                successfulCount++
++                            }
+                         }
+ 
+                         // Add executed data from sub-flow to main execution data with appropriate iteration context
+@@ -1349,7 +1357,6 @@ const executeNode = async ({
+                     }
+                 }
+ 
+-                // Update the output with combined results
+                 results.output = {
+                     ...(results.output || {}),
+                     iterationResults,
+
+From f38d49eb6358bf8447b04813ffeccd87d0d5e1cb Mon Sep 17 00:00:00 2001
+From: j-sanaa <sanaa.javidh@workday.com>
+Date: Wed, 6 May 2026 14:19:35 -0700
+Subject: [PATCH 2/2] Fixed gemini comment
+
+---
+ packages/server/src/utils/buildAgentflow.ts | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index c99a5a66269..ece5596527f 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1288,7 +1288,6 @@ const executeNode = async ({
+                 }
+ 
+                 const iterationResults: string[] = []
+-                let successfulCount = 0 // drives newline separator between streamed items
+ 
+                 // Execute sub-flow for each item in the iteration array
+                 for (let i = 0; i < results.input.iterationInput.length; i++) {
+@@ -1341,9 +1340,8 @@ const executeNode = async ({
+                                 // Sub-flows run with isRecursive=true, so inner nodes (e.g. DirectReply)
+                                 // never reach isLastNode=true and never call streamTokenEvent themselves.
+                                 if (isLastNode && sseStreamer) {
+-                                    sseStreamer.streamTokenEvent(chatId, (successfulCount > 0 ? '\n' : '') + subFlowResult.text)
++                                    sseStreamer.streamTokenEvent(chatId, (i > 0 ? '\n' : '') + subFlowResult.text)
+                                 }
+-                                successfulCount++
+                             }
+                         }
+ 

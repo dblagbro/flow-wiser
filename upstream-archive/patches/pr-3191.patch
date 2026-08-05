@@ -1,0 +1,224 @@
+From ed90bd4ea121445b3ddc39e2ea9d5f93f7c7f3c6 Mon Sep 17 00:00:00 2001
+From: unclebill <billbill290@gmail.com>
+Date: Thu, 12 Sep 2024 23:41:18 +0800
+Subject: [PATCH] resolve module paths in a proper way
+
+---
+ .gitignore                         |  1 +
+ packages/components/src/utils.ts   | 21 --------------------
+ packages/server/src/NodesPool.ts   |  5 ++---
+ packages/server/src/index.ts       | 32 ++++++++++++++----------------
+ packages/server/src/utils/index.ts | 17 ++++------------
+ packages/ui/main.js                |  2 ++
+ packages/ui/package.json           |  8 ++++++++
+ packages/ui/src/hooks/useApi.jsx   |  2 +-
+ packages/ui/types.d.ts             |  1 +
+ 9 files changed, 34 insertions(+), 55 deletions(-)
+ create mode 100644 packages/ui/main.js
+ create mode 100644 packages/ui/types.d.ts
+
+diff --git a/.gitignore b/.gitignore
+index 2f17096b63f..c1a886e1e5d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,6 +1,7 @@
+ # editor
+ .idea
+ .vscode
++.vim
+ 
+ # dependencies
+ **/node_modules
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index ab84836f46a..b31c445f1af 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -199,27 +199,6 @@ export function handleErrorMessage(error: any): string {
+     return errorMessage
+ }
+ 
+-/**
+- * Returns the path of node modules package
+- * @param {string} packageName
+- * @returns {string}
+- */
+-export const getNodeModulesPackagePath = (packageName: string): string => {
+-    const checkPaths = [
+-        path.join(__dirname, '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', '..', '..', 'node_modules', packageName)
+-    ]
+-    for (const checkPath of checkPaths) {
+-        if (fs.existsSync(checkPath)) {
+-            return checkPath
+-        }
+-    }
+-    return ''
+-}
+-
+ /**
+  * Get input variables
+  * @param {string} paramValue
+diff --git a/packages/server/src/NodesPool.ts b/packages/server/src/NodesPool.ts
+index 16604c34598..b7f52a3597e 100644
+--- a/packages/server/src/NodesPool.ts
++++ b/packages/server/src/NodesPool.ts
+@@ -1,7 +1,6 @@
+ import { IComponentNodes, IComponentCredentials } from './Interface'
+ import path from 'path'
+ import { Dirent } from 'fs'
+-import { getNodeModulesPackagePath } from './utils'
+ import { promises } from 'fs'
+ import { ICommonObject } from 'flowise-components'
+ import logger from './utils/logger'
+@@ -24,7 +23,7 @@ export class NodesPool {
+      * Initialize nodes
+      */
+     private async initializeNodes() {
+-        const packagePath = getNodeModulesPackagePath('flowise-components')
++        const packagePath = path.dirname(require.resolve('flowise-components/package.json'))
+         const nodesPath = path.join(packagePath, 'dist', 'nodes')
+         const nodeFiles = await this.getFiles(nodesPath)
+         return Promise.all(
+@@ -81,7 +80,7 @@ export class NodesPool {
+      * Initialize credentials
+      */
+     private async initializeCredentials() {
+-        const packagePath = getNodeModulesPackagePath('flowise-components')
++        const packagePath = path.dirname(require.resolve('flowise-components/package.json'))
+         const nodesPath = path.join(packagePath, 'dist', 'credentials')
+         const nodeFiles = await this.getFiles(nodesPath)
+         return Promise.all(
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index 406cb42d9c0..7a7eaceb04c 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -1,25 +1,25 @@
+-import express from 'express'
+-import { Request, Response } from 'express'
+-import path from 'path'
+ import cors from 'cors'
+-import http from 'http'
++import express, { Request, Response } from 'express'
+ import basicAuth from 'express-basic-auth'
++import { buildRoot } from 'flowise-ui'
++import http from 'http'
++import path from 'path'
+ import { Server } from 'socket.io'
+ import { DataSource } from 'typeorm'
+-import { IChatFlow } from './Interface'
+-import { getNodeModulesPackagePath, getEncryptionKey } from './utils'
+-import logger, { expressRequestLogger } from './utils/logger'
++import { CachePool } from './CachePool'
++import { ChatflowPool } from './ChatflowPool'
+ import { getDataSource } from './DataSource'
++import { IChatFlow } from './Interface'
+ import { NodesPool } from './NodesPool'
+ import { ChatFlow } from './database/entities/ChatFlow'
+-import { ChatflowPool } from './ChatflowPool'
+-import { CachePool } from './CachePool'
+-import { initializeRateLimiter } from './utils/rateLimit'
++import errorHandlerMiddleware from './middlewares/errors'
++import flowiseApiV1Router from './routes'
++import { getEncryptionKey } from './utils'
++import { getAllowedIframeOrigins, getCorsOptions, sanitizeMiddleware } from './utils/XSS'
+ import { getAPIKeys } from './utils/apiKey'
+-import { sanitizeMiddleware, getCorsOptions, getAllowedIframeOrigins } from './utils/XSS'
++import logger, { expressRequestLogger } from './utils/logger'
++import { initializeRateLimiter } from './utils/rateLimit'
+ import { Telemetry } from './utils/telemetry'
+-import flowiseApiV1Router from './routes'
+-import errorHandlerMiddleware from './middlewares/errors'
+ import { validateAPIKey } from './utils/validateKey'
+ 
+ declare global {
+@@ -215,11 +215,9 @@ export class App {
+         // Serve UI static
+         // ----------------------------------------
+ 
+-        const packagePath = getNodeModulesPackagePath('flowise-ui')
+-        const uiBuildPath = path.join(packagePath, 'build')
+-        const uiHtmlPath = path.join(packagePath, 'build', 'index.html')
++        const uiHtmlPath = path.join(buildRoot, 'index.html')
+ 
+-        this.app.use('/', express.static(uiBuildPath))
++        this.app.use('/', express.static(buildRoot))
+ 
+         // All other requests not handled will return React app
+         this.app.use((req: Request, res: Response) => {
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 90bd2b32ae0..d7792010b79 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -88,19 +88,10 @@ export const getUserHome = (): string => {
+  * @returns {string}
+  */
+ export const getNodeModulesPackagePath = (packageName: string): string => {
+-    const checkPaths = [
+-        path.join(__dirname, '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', '..', 'node_modules', packageName),
+-        path.join(__dirname, '..', '..', '..', '..', '..', 'node_modules', packageName)
+-    ]
+-    for (const checkPath of checkPaths) {
+-        if (fs.existsSync(checkPath)) {
+-            return checkPath
+-        }
+-    }
+-    return ''
++    const packagePath = require.resolve(packageName)
++
++    console.log({ packagePath })
++    return packagePath
+ }
+ 
+ /**
+diff --git a/packages/ui/main.js b/packages/ui/main.js
+new file mode 100644
+index 00000000000..a306cd46b48
+--- /dev/null
++++ b/packages/ui/main.js
+@@ -0,0 +1,2 @@
++const path = require('path')
++exports.buildRoot = path.resolve(__dirname, 'build')
+diff --git a/packages/ui/package.json b/packages/ui/package.json
+index db9d022b714..f03f638c656 100644
+--- a/packages/ui/package.json
++++ b/packages/ui/package.json
+@@ -7,6 +7,14 @@
+         "name": "HenryHeng",
+         "email": "henryheng@flowiseai.com"
+     },
++    "type": "commonjs",
++    "exports": {
++        ".": {
++            "types": "./types.d.ts",
++            "default": "./main.js"
++        }
++    },
++    "types": "./types.d.ts",
+     "dependencies": {
+         "@codemirror/lang-javascript": "^6.2.1",
+         "@codemirror/lang-json": "^6.0.1",
+diff --git a/packages/ui/src/hooks/useApi.jsx b/packages/ui/src/hooks/useApi.jsx
+index 932f0a6e04b..7f7d7600763 100644
+--- a/packages/ui/src/hooks/useApi.jsx
++++ b/packages/ui/src/hooks/useApi.jsx
+@@ -1,6 +1,6 @@
+ import { useState } from 'react'
+ 
+-export default (apiFunc) => {
++export default function useApi(apiFunc) {
+     const [data, setData] = useState(null)
+     const [error, setError] = useState(null)
+     const [loading, setLoading] = useState(false)
+diff --git a/packages/ui/types.d.ts b/packages/ui/types.d.ts
+new file mode 100644
+index 00000000000..f8e67d5ae4f
+--- /dev/null
++++ b/packages/ui/types.d.ts
+@@ -0,0 +1 @@
++export declare const buildRoot: string

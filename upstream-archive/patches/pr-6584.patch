@@ -1,0 +1,287 @@
+From a1dad111e711a9bf7c60fbe773d3167a38235b8a Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Tue, 30 Jun 2026 10:11:27 +0530
+Subject: [PATCH 1/3] fix(server): fail fast with a clear message on
+ unsupported Node.js versions
+
+Running `flowise start` on Node < 20 crashes at startup with an opaque
+`ReferenceError: File is not defined`, thrown from cheerio's transitive
+undici when it references the `File` global (added in Node 20). Flowise
+declares `engines.node: ^24`, but that field is only advisory, so users on
+older runtimes hit the cryptic crash with no hint of the real cause.
+
+Add a small, dependency-free version guard that runs at the very top of
+bin/run (before @oclif/core loads any command) and prints an actionable
+message naming the required and current Node versions, then exits 1. The
+guard reads the required major from engines.node, fails open on unparseable
+input, and is wrapped so it can never itself block startup. The logic lives
+in a pure, unit-tested helper.
+
+Closes #5670
+---
+ packages/server/bin/run                       | 17 ++++
+ packages/server/src/utils/nodeVersion.test.ts | 78 +++++++++++++++++++
+ packages/server/src/utils/nodeVersion.ts      | 78 +++++++++++++++++++
+ 3 files changed, 173 insertions(+)
+ create mode 100644 packages/server/src/utils/nodeVersion.test.ts
+ create mode 100644 packages/server/src/utils/nodeVersion.ts
+
+diff --git a/packages/server/bin/run b/packages/server/bin/run
+index a7635de86ed..ae73973b8a4 100755
+--- a/packages/server/bin/run
++++ b/packages/server/bin/run
+@@ -1,5 +1,22 @@
+ #!/usr/bin/env node
+ 
++// Fail fast with a clear message when running on an unsupported Node.js version.
++// `undici` (pulled in transitively via `cheerio`) references the `File` global,
++// which only exists on Node >= 20, so older runtimes crash at startup with an
++// opaque "ReferenceError: File is not defined". This guard runs before
++// @oclif/core loads any command (the start command imports the server, and thus
++// cheerio, at module scope), and it can never itself break startup. See #5670.
++try {
++    const { assertNodeVersion } = require('../dist/utils/nodeVersion')
++    const check = assertNodeVersion()
++    if (!check.ok) {
++        console.error(check.message)
++        process.exit(1)
++    }
++} catch (err) {
++    // Never let the version guard block startup (e.g. dist not built yet).
++}
++
+ const oclif = require('@oclif/core')
+ 
+ oclif.run().then(require('@oclif/core/flush')).catch(require('@oclif/core/handle'))
+diff --git a/packages/server/src/utils/nodeVersion.test.ts b/packages/server/src/utils/nodeVersion.test.ts
+new file mode 100644
+index 00000000000..c79dc842af9
+--- /dev/null
++++ b/packages/server/src/utils/nodeVersion.test.ts
+@@ -0,0 +1,78 @@
++import { describe, expect, it } from '@jest/globals'
++import {
++    assertNodeVersion,
++    FALLBACK_MIN_NODE_MAJOR,
++    isSupportedNodeVersion,
++    nodeVersionErrorMessage,
++    parseMajor,
++    parseRequiredMajor
++} from './nodeVersion'
++
++describe('nodeVersion utilities', () => {
++    describe('parseMajor', () => {
++        it('parses a v-prefixed version', () => {
++            expect(parseMajor('v18.20.0')).toBe(18)
++        })
++
++        it('parses a non-prefixed version', () => {
++            expect(parseMajor('24.1.0')).toBe(24)
++        })
++
++        it('returns null for an unparseable string', () => {
++            expect(parseMajor('not-a-version')).toBeNull()
++        })
++    })
++
++    describe('parseRequiredMajor', () => {
++        it('parses a caret range', () => {
++            expect(parseRequiredMajor('^24')).toBe(24)
++        })
++
++        it('parses a >= range', () => {
++            expect(parseRequiredMajor('>=20.0.0')).toBe(20)
++        })
++
++        it('falls back when engines is undefined', () => {
++            expect(parseRequiredMajor(undefined)).toBe(FALLBACK_MIN_NODE_MAJOR)
++        })
++    })
++
++    describe('isSupportedNodeVersion', () => {
++        it('rejects a version below the required major', () => {
++            expect(isSupportedNodeVersion('v18.0.0', 24)).toBe(false)
++        })
++
++        it('accepts a version equal to the required major', () => {
++            expect(isSupportedNodeVersion('v24.0.0', 24)).toBe(true)
++        })
++
++        it('accepts a version above the required major', () => {
++            expect(isSupportedNodeVersion('v25.9.0', 24)).toBe(true)
++        })
++
++        it('fails open for an unparseable current version', () => {
++            expect(isSupportedNodeVersion('garbage', 24)).toBe(true)
++        })
++    })
++
++    describe('nodeVersionErrorMessage', () => {
++        it('names the required major, the current version, and the File symptom', () => {
++            const msg = nodeVersionErrorMessage('v18.20.0', 24)
++            expect(msg).toContain('Flowise requires Node.js >= 24')
++            expect(msg).toContain('v18.20.0')
++            expect(msg).toContain('File is not defined')
++        })
++    })
++
++    describe('assertNodeVersion', () => {
++        it('flags an unsupported version with a message', () => {
++            const result = assertNodeVersion('v18.0.0')
++            expect(result.ok).toBe(false)
++            expect(result.message).toBeDefined()
++        })
++
++        it('accepts a clearly supported version', () => {
++            expect(assertNodeVersion('v99.0.0')).toEqual({ ok: true })
++        })
++    })
++})
+diff --git a/packages/server/src/utils/nodeVersion.ts b/packages/server/src/utils/nodeVersion.ts
+new file mode 100644
+index 00000000000..be728e1038c
+--- /dev/null
++++ b/packages/server/src/utils/nodeVersion.ts
+@@ -0,0 +1,78 @@
++import { readFileSync } from 'fs'
++import path from 'path'
++
++/**
++ * Minimum supported Node.js major version, used only as a fallback when the
++ * `engines.node` field cannot be read from package.json. Keep in sync with the
++ * `engines.node` declaration (currently `^24`).
++ */
++export const FALLBACK_MIN_NODE_MAJOR = 24
++
++/**
++ * Parse the major version number from a Node.js version string.
++ * @param version e.g. "v24.1.0" or "24.1.0"
++ * @returns the major version number, or null if it cannot be parsed
++ */
++export const parseMajor = (version: string): number | null => {
++    const match = /^v?(\d+)\./.exec(String(version ?? '').trim())
++    return match ? parseInt(match[1], 10) : null
++}
++
++/**
++ * Parse the required major version from an `engines.node` range string.
++ * Handles the common forms ("^24", ">=24.0.0", "24.x", "24"). Falls back to
++ * {@link FALLBACK_MIN_NODE_MAJOR} when the range is missing or unparseable.
++ * @param engines the `engines.node` value
++ */
++export const parseRequiredMajor = (engines: string | undefined): number => {
++    if (!engines) return FALLBACK_MIN_NODE_MAJOR
++    const match = /(\d+)/.exec(engines)
++    return match ? parseInt(match[1], 10) : FALLBACK_MIN_NODE_MAJOR
++}
++
++/**
++ * Read the required Node.js major version from this package's `engines.node`
++ * field. Falls back to {@link FALLBACK_MIN_NODE_MAJOR} on any read/parse error
++ * so the check can never throw.
++ */
++export const getRequiredNodeMajor = (): number => {
++    try {
++        const pkgPath = path.join(__dirname, '..', '..', 'package.json')
++        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
++        return parseRequiredMajor(pkg?.engines?.node)
++    } catch {
++        return FALLBACK_MIN_NODE_MAJOR
++    }
++}
++
++/**
++ * Whether the running Node.js version satisfies the required major version.
++ * Fails open (returns true) when the current version cannot be parsed, so an
++ * unexpected version format never blocks startup.
++ */
++export const isSupportedNodeVersion = (current: string, requiredMajor: number): boolean => {
++    const major = parseMajor(current)
++    if (major === null) return true
++    return major >= requiredMajor
++}
++
++/**
++ * Build the user-facing message shown when Node.js is too old. References the
++ * exact symptom (`ReferenceError: File is not defined`) so users hitting the
++ * raw crash can connect it to the version requirement.
++ */
++export const nodeVersionErrorMessage = (current: string, requiredMajor: number): string =>
++    `Flowise requires Node.js >= ${requiredMajor}. You are running ${current}. ` +
++    `Please upgrade Node.js (https://nodejs.org) and try again. ` +
++    `Running on an unsupported version causes startup errors such as "ReferenceError: File is not defined".`
++
++/**
++ * Assert that the running Node.js version is supported.
++ * @param current the running version string (defaults to `process.versions.node`)
++ * @returns `{ ok: true }` when supported, otherwise `{ ok: false, message }`
++ */
++export const assertNodeVersion = (current: string = process.versions.node): { ok: boolean; message?: string } => {
++    const requiredMajor = getRequiredNodeMajor()
++    if (isSupportedNodeVersion(current, requiredMajor)) return { ok: true }
++    return { ok: false, message: nodeVersionErrorMessage(current, requiredMajor) }
++}
+
+From fa78a64fba82034af084e4871c7d089cd2fd4ce6 Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Tue, 30 Jun 2026 10:19:59 +0530
+Subject: [PATCH 2/3] fix(server): use optional catch binding in the Node
+ version guard
+
+Drop the unused `err` binding from the bin/run try/catch.
+---
+ packages/server/bin/run | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/bin/run b/packages/server/bin/run
+index ae73973b8a4..dbc4df91392 100755
+--- a/packages/server/bin/run
++++ b/packages/server/bin/run
+@@ -13,7 +13,7 @@ try {
+         console.error(check.message)
+         process.exit(1)
+     }
+-} catch (err) {
++} catch {
+     // Never let the version guard block startup (e.g. dist not built yet).
+ }
+ 
+
+From ec6e557928ed19747d736d4c79d6f79514e437fa Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Tue, 30 Jun 2026 10:23:01 +0530
+Subject: [PATCH 3/3] fix(server): address review feedback on the Node version
+ guard
+
+- parseMajor: drop the redundant String()/nullish coalescing now that the
+  parameter is typed as string
+- nodeVersion.test.ts: rely on Jest's global describe/expect/it (typed via
+  @types/jest) instead of importing from @jest/globals, matching the
+  majority convention of the server test suite
+---
+ packages/server/src/utils/nodeVersion.test.ts | 1 -
+ packages/server/src/utils/nodeVersion.ts      | 2 +-
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/packages/server/src/utils/nodeVersion.test.ts b/packages/server/src/utils/nodeVersion.test.ts
+index c79dc842af9..7809f249ec6 100644
+--- a/packages/server/src/utils/nodeVersion.test.ts
++++ b/packages/server/src/utils/nodeVersion.test.ts
+@@ -1,4 +1,3 @@
+-import { describe, expect, it } from '@jest/globals'
+ import {
+     assertNodeVersion,
+     FALLBACK_MIN_NODE_MAJOR,
+diff --git a/packages/server/src/utils/nodeVersion.ts b/packages/server/src/utils/nodeVersion.ts
+index be728e1038c..141a2087d4d 100644
+--- a/packages/server/src/utils/nodeVersion.ts
++++ b/packages/server/src/utils/nodeVersion.ts
+@@ -14,7 +14,7 @@ export const FALLBACK_MIN_NODE_MAJOR = 24
+  * @returns the major version number, or null if it cannot be parsed
+  */
+ export const parseMajor = (version: string): number | null => {
+-    const match = /^v?(\d+)\./.exec(String(version ?? '').trim())
++    const match = /^v?(\d+)\./.exec(version.trim())
+     return match ? parseInt(match[1], 10) : null
+ }
+ 

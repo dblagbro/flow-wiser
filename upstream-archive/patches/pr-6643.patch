@@ -1,0 +1,93 @@
+From ec855a14111ae934abb2dc4acb012173de99e11c Mon Sep 17 00:00:00 2001
+From: wanxiankai <xiankai.wan@gmail.com>
+Date: Sun, 19 Jul 2026 22:49:30 +0800
+Subject: [PATCH] fix: allow custom Azure OpenAI model names
+
+---
+ .../nodes/llms/Azure OpenAI/AzureOpenAI.ts           |  3 ++-
+ .../ui/src/ui-component/dropdown/AsyncDropdown.jsx   | 12 ++++++++++--
+ packages/ui/src/ui-component/dropdown/Dropdown.jsx   | 12 ++++++++++--
+ 3 files changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/packages/components/nodes/llms/Azure OpenAI/AzureOpenAI.ts b/packages/components/nodes/llms/Azure OpenAI/AzureOpenAI.ts
+index 022173f6326..d8eacc47e5a 100644
+--- a/packages/components/nodes/llms/Azure OpenAI/AzureOpenAI.ts	
++++ b/packages/components/nodes/llms/Azure OpenAI/AzureOpenAI.ts	
+@@ -55,7 +55,8 @@ class AzureOpenAI_LLMs implements INode {
+                 name: 'modelName',
+                 type: 'asyncOptions',
+                 loadMethod: 'listModels',
+-                default: 'text-davinci-003'
++                default: 'text-davinci-003',
++                freeSolo: true
+             },
+             {
+                 label: 'Temperature',
+diff --git a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+index 5534d6526fb..0ab609d938a 100644
+--- a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+@@ -92,6 +92,12 @@ export const AsyncDropdown = ({
+         }
+         return options.find((option) => option.name === value)
+     }
++    const getSelectionValue = (selection) => (typeof selection === 'string' ? selection : selection?.name ?? '')
++    const getAutocompleteValue = (options = [], value) => {
++        const matchingOption = findMatchingOptions(options, value)
++        if (matchingOption) return matchingOption
++        return !multiple && freeSolo && value && value !== 'choose an option' ? value : getDefaultOptionValue()
++    }
+     const getDefaultOptionValue = () => (multiple ? [] : '')
+     const addNewOption = [{ label: '- Create New -', name: '-create-' }]
+     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
+@@ -194,7 +200,9 @@ export const AsyncDropdown = ({
+                     setOpen(false)
+                 }}
+                 options={options}
+-                value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
++                value={getAutocompleteValue(options, internalValue)}
++                getOptionLabel={(option) => (typeof option === 'string' ? option : option?.label ?? option?.name ?? '')}
++                isOptionEqualToValue={(option, value) => option?.name === (typeof value === 'string' ? value : value?.name)}
+                 onChange={(e, selection) => {
+                     if (multiple) {
+                         let value = ''
+@@ -205,7 +213,7 @@ export const AsyncDropdown = ({
+                         setInternalValue(value)
+                         onSelect(value)
+                     } else {
+-                        const value = selection ? selection.name : ''
++                        const value = getSelectionValue(selection)
+                         if (isCreateNewOption && value === '-create-') {
+                             onCreateNew()
+                         } else {
+diff --git a/packages/ui/src/ui-component/dropdown/Dropdown.jsx b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+index c18f52c944e..3e9de2dc313 100644
+--- a/packages/ui/src/ui-component/dropdown/Dropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+@@ -21,6 +21,12 @@ const StyledPopper = styled(Popper)({
+ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = false, freeSolo = false, disableClearable = false }) => {
+     const customization = useSelector((state) => state.customization)
+     const findMatchingOptions = (options = [], value) => options.find((option) => option.name === value)
++    const getSelectionValue = (selection) => (typeof selection === 'string' ? selection : selection?.name ?? '')
++    const getAutocompleteValue = (options = [], value) => {
++        const matchingOption = findMatchingOptions(options, value)
++        if (matchingOption) return matchingOption
++        return freeSolo && value && value !== 'choose an option' ? value : getDefaultOptionValue()
++    }
+     const getDefaultOptionValue = () => ''
+     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
+     const theme = useTheme()
+@@ -35,9 +41,11 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
+                 size='small'
+                 loading={loading}
+                 options={options || []}
+-                value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
++                value={getAutocompleteValue(options, internalValue)}
++                getOptionLabel={(option) => (typeof option === 'string' ? option : option?.label ?? option?.name ?? '')}
++                isOptionEqualToValue={(option, value) => option?.name === (typeof value === 'string' ? value : value?.name)}
+                 onChange={(e, selection) => {
+-                    const value = selection ? selection.name : ''
++                    const value = getSelectionValue(selection)
+                     setInternalValue(value)
+                     onSelect(value)
+                 }}

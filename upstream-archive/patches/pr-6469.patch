@@ -1,0 +1,257 @@
+From b50597df6acffae4fb6827bee7f669d6ef92811c Mon Sep 17 00:00:00 2001
+From: JCorners68 <jonathan.corners@gmail.com>
+Date: Tue, 2 Jun 2026 11:35:42 -0700
+Subject: [PATCH] feat(components): add Forge embeddings node
+
+---
+ packages/components/models.json               |  17 +++
+ .../ForgeEmbedding/ForgeEmbedding.test.ts     |  73 +++++++++++
+ .../ForgeEmbedding/ForgeEmbedding.ts          | 118 ++++++++++++++++++
+ .../nodes/embeddings/ForgeEmbedding/forge.svg |   5 +
+ 4 files changed, 213 insertions(+)
+ create mode 100644 packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.test.ts
+ create mode 100644 packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.ts
+ create mode 100644 packages/components/nodes/embeddings/ForgeEmbedding/forge.svg
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..9c1c8b05014 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -2756,6 +2756,23 @@
+                 }
+             ]
+         },
++        {
++            "name": "forgeEmbeddings",
++            "models": [
++                {
++                    "label": "forge-turbo (1024d)",
++                    "name": "forge-turbo"
++                },
++                {
++                    "label": "forge-pro (2560d)",
++                    "name": "forge-pro"
++                },
++                {
++                    "label": "forge-ultra-4k (4096d)",
++                    "name": "forge-ultra-4k"
++                }
++            ]
++        },
+         {
+             "name": "mistralAIEmbeddings",
+             "models": [
+diff --git a/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.test.ts b/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.test.ts
+new file mode 100644
+index 00000000000..e41ff5590de
+--- /dev/null
++++ b/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.test.ts
+@@ -0,0 +1,73 @@
++jest.mock('@langchain/openai', () => ({
++    OpenAIEmbeddings: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['Embeddings']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ForgeEmbedding } = require('./ForgeEmbedding')
++
++describe('ForgeEmbedding', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('exposes the expected node metadata', () => {
++        const node = new ForgeEmbedding()
++
++        expect(node.label).toBe('Forge Embedding')
++        expect(node.name).toBe('forgeEmbeddings')
++        expect(node.type).toBe('ForgeEmbeddings')
++        expect(node.icon).toBe('forge.svg')
++        expect(node.category).toBe('Embeddings')
++        expect(node.credential.credentialNames).toEqual(['openAIApi'])
++    })
++
++    it('initializes an embeddings instance pinned to the Forge base URL', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ openAIApiKey: 'forge-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ForgeEmbedding()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'forge-ultra-4k',
++                    dimensions: '4096',
++                    batchSize: '8',
++                    timeout: '15000',
++                    stripNewLines: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            openAIApiKey: 'forge-key',
++            modelName: 'forge-ultra-4k',
++            dimensions: 4096,
++            batchSize: 8,
++            timeout: 15000,
++            stripNewLines: true,
++            configuration: {
++                baseURL: 'https://api.voxell.ai/v1'
++            }
++        })
++    })
++
++    it('defaults the base URL even when only the api key is provided', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ openAIApiKey: 'forge-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ForgeEmbedding()
++        const model = await node.init({ credential: 'cred-1', inputs: {} }, '', {})
++
++        expect(model.fields.configuration.baseURL).toBe('https://api.voxell.ai/v1')
++    })
++})
+diff --git a/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.ts b/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.ts
+new file mode 100644
+index 00000000000..ce400b51609
+--- /dev/null
++++ b/packages/components/nodes/embeddings/ForgeEmbedding/ForgeEmbedding.ts
+@@ -0,0 +1,118 @@
++import { ClientOptions, OpenAIEmbeddings, OpenAIEmbeddingsParams } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class ForgeEmbedding_Embeddings implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Forge Embedding'
++        this.name = 'forgeEmbeddings'
++        this.version = 1.0
++        this.type = 'ForgeEmbeddings'
++        this.icon = 'forge.svg'
++        this.category = 'Embeddings'
++        this.description = 'Voxell Forge OpenAI-compatible API to generate embeddings for a given text'
++        this.baseClasses = [this.type, ...getBaseClasses(OpenAIEmbeddings)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['openAIApi']
++        }
++        this.inputs = [
++            {
++                label: 'Strip New Lines',
++                name: 'stripNewLines',
++                type: 'boolean',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Batch Size',
++                name: 'batchSize',
++                type: 'number',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                default: 'forge-pro',
++                optional: true
++            },
++            {
++                label: 'Dimensions',
++                name: 'dimensions',
++                type: 'number',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Encoding Format',
++                name: 'encodingFormat',
++                type: 'options',
++                options: [
++                    {
++                        label: 'float',
++                        name: 'float'
++                    },
++                    {
++                        label: 'base64',
++                        name: 'base64'
++                    }
++                ],
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const stripNewLines = nodeData.inputs?.stripNewLines as boolean
++        const batchSize = nodeData.inputs?.batchSize as string
++        const timeout = nodeData.inputs?.timeout as string
++        const modelName = nodeData.inputs?.modelName as string
++        const dimensions = nodeData.inputs?.dimensions as string
++        const encodingFormat = nodeData.inputs?.encodingFormat as 'float' | 'base64' | undefined
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const openAIApiKey = getCredentialParam('openAIApiKey', credentialData, nodeData)
++
++        const obj: Partial<OpenAIEmbeddingsParams> & { openAIApiKey?: string; configuration?: ClientOptions } = {
++            openAIApiKey,
++            configuration: {
++                baseURL: 'https://api.voxell.ai/v1'
++            }
++        }
++
++        if (stripNewLines) obj.stripNewLines = stripNewLines
++        if (batchSize) obj.batchSize = parseInt(batchSize, 10)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (modelName) obj.modelName = modelName
++        if (dimensions) obj.dimensions = parseInt(dimensions, 10)
++        if (encodingFormat) obj.encodingFormat = encodingFormat
++
++        const model = new OpenAIEmbeddings(obj)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ForgeEmbedding_Embeddings }
+diff --git a/packages/components/nodes/embeddings/ForgeEmbedding/forge.svg b/packages/components/nodes/embeddings/ForgeEmbedding/forge.svg
+new file mode 100644
+index 00000000000..6d3081793b6
+--- /dev/null
++++ b/packages/components/nodes/embeddings/ForgeEmbedding/forge.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++    <path d="M12 2 3 7v10l9 5 9-5V7z" />
++    <path d="M12 22V12" />
++    <path d="M3 7l9 5 9-5" />
++</svg>

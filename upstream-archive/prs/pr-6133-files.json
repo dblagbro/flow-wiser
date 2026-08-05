@@ -1,0 +1,1 @@
+[{"additions":3,"deletions":1,"filename":"packages/server/src/controllers/chatflows/index.ts","status":"modified"},{"additions":21,"deletions":5,"filename":"packages/server/src/services/chatflows/index.ts","status":"modified"},{"additions":28,"deletions":13,"filename":"packages/ui/src/views/agentflows/index.jsx","status":"modified"}]

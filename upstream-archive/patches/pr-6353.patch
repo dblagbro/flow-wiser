@@ -1,0 +1,52 @@
+From 7d6721d5241007649b3533ba3c79784800a2014f Mon Sep 17 00:00:00 2001
+From: Asim <blackhatcode786@gmail.com>
+Date: Wed, 6 May 2026 09:45:07 +0530
+Subject: [PATCH 1/2] fix(tools): pass tavilyApiKey to TavilySearch constructor
+
+---
+ packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts b/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
+index 66f4b20fe8d..116ac03e28f 100644
+--- a/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
++++ b/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
+@@ -171,7 +171,7 @@ class TavilyAPI_Tools implements INode {
+         const excludeDomains = nodeData.inputs?.excludeDomains as string
+ 
+         const config: any = {
+-            apiKey: tavilyApiKey,
++            tavilyApiKey,
+             topic,
+             searchDepth,
+             maxResults,
+
+From 167bd6eba24a08e5b1738aad02bd5b028e98f6d2 Mon Sep 17 00:00:00 2001
+From: Asim <blackhatcode786@gmail.com>
+Date: Thu, 7 May 2026 09:45:23 +0530
+Subject: [PATCH 2/2] refactor: use TavilySearchAPIRetrieverFields type instead
+ of any
+
+---
+ packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts b/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
+index 116ac03e28f..cbdeeb57ab7 100644
+--- a/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
++++ b/packages/components/nodes/tools/TavilyAPI/TavilyAPI.ts
+@@ -1,4 +1,4 @@
+-import { TavilySearch } from '@langchain/tavily'
++import { TavilySearch, type TavilySearchAPIRetrieverFields } from '@langchain/tavily'
+ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ 
+@@ -170,7 +170,7 @@ class TavilyAPI_Tools implements INode {
+         const includeDomains = nodeData.inputs?.includeDomains as string
+         const excludeDomains = nodeData.inputs?.excludeDomains as string
+ 
+-        const config: any = {
++        const config: TavilySearchAPIRetrieverFields = {
+             tavilyApiKey,
+             topic,
+             searchDepth,

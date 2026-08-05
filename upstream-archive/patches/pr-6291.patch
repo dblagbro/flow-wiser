@@ -1,0 +1,289 @@
+From 2d71c3cf228eee4ce007d03cacd6a86090caa5de Mon Sep 17 00:00:00 2001
+From: Deepak Bhagat <deepak988088@gmail.com>
+Date: Sun, 26 Apr 2026 17:00:35 +0530
+Subject: [PATCH 1/3] feat(components): add newer Voyage AI embedding and
+ reranker models
+
+Add missing Voyage AI models to the embeddings model list and
+reranker node options. New embedding models: voyage-3.5,
+voyage-3.5-lite, voyage-multimodal-3, voyage-multimodal-3.5,
+voyage-3-large, voyage-code-3. New reranker models: rerank-2.5,
+rerank-2.5-lite, rerank-2-lite. Updated reranker default to
+rerank-2.5.
+---
+ packages/components/models.json               | 30 +++++++++++++++++++
+ .../VoyageAIRerankRetriever.ts                | 22 +++++++++-----
+ 2 files changed, 45 insertions(+), 7 deletions(-)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index d654c803ab2..28f963178e7 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -2258,6 +2258,26 @@
+         {
+             "name": "voyageAIEmbeddings",
+             "models": [
++                {
++                    "label": "voyage-3.5",
++                    "name": "voyage-3.5",
++                    "description": "Latest general-purpose embedding model with top retrieval quality."
++                },
++                {
++                    "label": "voyage-3.5-lite",
++                    "name": "voyage-3.5-lite",
++                    "description": "Lightweight version of voyage-3.5, optimized for latency and cost."
++                },
++                {
++                    "label": "voyage-multimodal-3.5",
++                    "name": "voyage-multimodal-3.5",
++                    "description": "Multimodal embedding model for text and image retrieval."
++                },
++                {
++                    "label": "voyage-multimodal-3",
++                    "name": "voyage-multimodal-3",
++                    "description": "Multimodal embedding model for text and image retrieval."
++                },
+                 {
+                     "label": "voyage-3",
+                     "name": "voyage-3",
+@@ -2268,6 +2288,16 @@
+                     "name": "voyage-3-lite",
+                     "description": "Lightweight embedding model optimized for low latency and cost, 32K token context, and 512 dimension size."
+                 },
++                {
++                    "label": "voyage-3-large",
++                    "name": "voyage-3-large",
++                    "description": "Large embedding model with higher dimension size for improved retrieval quality."
++                },
++                {
++                    "label": "voyage-code-3",
++                    "name": "voyage-code-3",
++                    "description": "Optimized for code retrieval and understanding."
++                },
+                 {
+                     "label": "voyage-2",
+                     "name": "voyage-2",
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+index 8a53f1edbc9..0274143ec49 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+@@ -46,23 +46,31 @@ class VoyageAIRerankRetriever_Retrievers implements INode {
+                 type: 'options',
+                 options: [
+                     {
+-                        label: 'rerank-lite-1',
+-                        name: 'rerank-lite-1'
++                        label: 'rerank-2.5',
++                        name: 'rerank-2.5'
++                    },
++                    {
++                        label: 'rerank-2.5-lite',
++                        name: 'rerank-2.5-lite'
++                    },
++                    {
++                        label: 'rerank-2',
++                        name: 'rerank-2'
+                     },
+                     {
+-                        label: 'rerank-lite-2',
+-                        name: 'rerank-lite-2'
++                        label: 'rerank-2-lite',
++                        name: 'rerank-2-lite'
+                     },
+                     {
+                         label: 'rerank-1',
+                         name: 'rerank-1'
+                     },
+                     {
+-                        label: 'rerank-2',
+-                        name: 'rerank-2'
++                        label: 'rerank-lite-1',
++                        name: 'rerank-lite-1'
+                     }
+                 ],
+-                default: 'rerank-lite-1',
++                default: 'rerank-2.5',
+                 optional: true
+             },
+             {
+
+From f3df0ef16f07da8552752c80302f31aaa94617f7 Mon Sep 17 00:00:00 2001
+From: Deepak Bhagat <deepak988088@gmail.com>
+Date: Sun, 26 Apr 2026 17:11:35 +0530
+Subject: [PATCH 2/3] fix: keep rerank-lite-2 in options for backward
+ compatibility
+
+Existing chatflows may reference rerank-lite-2. Removing it from
+the dropdown would cause those flows to send an invalid model name
+to the API. Added it back to the options list.
+---
+ .../retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts   | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+index 0274143ec49..aa5c4d749f0 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+@@ -65,6 +65,10 @@ class VoyageAIRerankRetriever_Retrievers implements INode {
+                         label: 'rerank-1',
+                         name: 'rerank-1'
+                     },
++                    {
++                        label: 'rerank-lite-2',
++                        name: 'rerank-lite-2'
++                    },
+                     {
+                         label: 'rerank-lite-1',
+                         name: 'rerank-lite-1'
+
+From 4faa19d664fc0cba5cc211175d70440430556416 Mon Sep 17 00:00:00 2001
+From: Deepak Bhagat <deepak988088@gmail.com>
+Date: Sat, 2 May 2026 03:29:20 +0530
+Subject: [PATCH 3/3] refactor(components): move Voyage AI rerank models to
+ models.json
+
+Adds a new RERANKER MODEL_TYPE and a top-level "reranker" key in
+models.json for the VoyageAIRerankRetriever entries, then flips the
+node's model input from inline options to asyncOptions + listModels
+to mirror VoyageAIEmbedding. Legacy rerank-lite-1/2 and rerank-1/2
+entries are retained so existing chatflows keep working.
+---
+ packages/components/models.json               | 42 ++++++++++++++++++
+ .../VoyageAIRerankRetriever.ts                | 43 +++++--------------
+ packages/components/src/modelLoader.ts        |  3 +-
+ 3 files changed, 55 insertions(+), 33 deletions(-)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 28f963178e7..a6e9f55ed5a 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -2626,5 +2626,47 @@
+                 }
+             ]
+         }
++    ],
++    "reranker": [
++        {
++            "name": "voyageAIRerankRetriever",
++            "models": [
++                {
++                    "label": "rerank-2.5",
++                    "name": "rerank-2.5",
++                    "description": "Latest general-purpose reranker with top relevance quality."
++                },
++                {
++                    "label": "rerank-2.5-lite",
++                    "name": "rerank-2.5-lite",
++                    "description": "Lightweight version of rerank-2.5, optimized for latency and cost."
++                },
++                {
++                    "label": "rerank-2",
++                    "name": "rerank-2",
++                    "description": "General-purpose reranker model."
++                },
++                {
++                    "label": "rerank-2-lite",
++                    "name": "rerank-2-lite",
++                    "description": "Lightweight version of rerank-2, optimized for latency and cost."
++                },
++                {
++                    "label": "rerank-1",
++                    "name": "rerank-1",
++                    "description": "Legacy general-purpose reranker. Kept for backward compatibility."
++                },
++                {
++                    "label": "rerank-lite-2",
++                    "name": "rerank-lite-2",
++                    "description": "Legacy lightweight reranker. Kept for backward compatibility."
++                },
++                {
++                    "label": "rerank-lite-1",
++                    "name": "rerank-lite-1",
++                    "description": "Legacy lightweight reranker. Kept for backward compatibility."
++                }
++            ]
++        }
+     ]
+ }
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+index aa5c4d749f0..219729f23eb 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerankRetriever.ts
+@@ -3,7 +3,8 @@ import { VectorStoreRetriever } from '@langchain/core/vectorstores'
+ import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
+ import { VoyageAIRerank } from './VoyageAIRerank'
+ import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
+-import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { MODEL_TYPE, getModels } from '../../../src/modelLoader'
+ 
+ class VoyageAIRerankRetriever_Retrievers implements INode {
+     label: string
+@@ -43,37 +44,8 @@ class VoyageAIRerankRetriever_Retrievers implements INode {
+             {
+                 label: 'Model Name',
+                 name: 'model',
+-                type: 'options',
+-                options: [
+-                    {
+-                        label: 'rerank-2.5',
+-                        name: 'rerank-2.5'
+-                    },
+-                    {
+-                        label: 'rerank-2.5-lite',
+-                        name: 'rerank-2.5-lite'
+-                    },
+-                    {
+-                        label: 'rerank-2',
+-                        name: 'rerank-2'
+-                    },
+-                    {
+-                        label: 'rerank-2-lite',
+-                        name: 'rerank-2-lite'
+-                    },
+-                    {
+-                        label: 'rerank-1',
+-                        name: 'rerank-1'
+-                    },
+-                    {
+-                        label: 'rerank-lite-2',
+-                        name: 'rerank-lite-2'
+-                    },
+-                    {
+-                        label: 'rerank-lite-1',
+-                        name: 'rerank-lite-1'
+-                    }
+-                ],
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
+                 default: 'rerank-2.5',
+                 optional: true
+             },
+@@ -116,6 +88,13 @@ class VoyageAIRerankRetriever_Retrievers implements INode {
+         ]
+     }
+ 
++    //@ts-ignore
++    loadMethods = {
++        async listModels(): Promise<INodeOptionsValue[]> {
++            return await getModels(MODEL_TYPE.RERANKER, 'voyageAIRerankRetriever')
++        }
++    }
++
+     async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
+         const baseRetriever = nodeData.inputs?.baseRetriever as BaseRetriever
+         const model = nodeData.inputs?.model as string
+diff --git a/packages/components/src/modelLoader.ts b/packages/components/src/modelLoader.ts
+index dc728634b74..3d58b318549 100644
+--- a/packages/components/src/modelLoader.ts
++++ b/packages/components/src/modelLoader.ts
+@@ -6,7 +6,8 @@ import { INodeOptionsValue } from './Interface'
+ export enum MODEL_TYPE {
+     CHAT = 'chat',
+     LLM = 'llm',
+-    EMBEDDING = 'embedding'
++    EMBEDDING = 'embedding',
++    RERANKER = 'reranker'
+ }
+ 
+ const getModelsJSONPath = (): string => {

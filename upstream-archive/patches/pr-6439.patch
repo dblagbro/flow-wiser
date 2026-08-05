@@ -1,0 +1,1180 @@
+From 7315e7090e2576a63a660f7a1d3dbd1ad35c3cdf Mon Sep 17 00:00:00 2001
+From: jimmyzhuu <ziming_zhu2002@163.com>
+Date: Wed, 27 May 2026 20:53:26 +0800
+Subject: [PATCH 1/5] feat(components): add Baidu Qianfan rerank compressor
+
+---
+ .../BaiduQianfanRerank.test.ts                | 91 +++++++++++++++++++
+ .../BaiduQianfanRerank.ts                     | 74 +++++++++++++++
+ 2 files changed, 165 insertions(+)
+ create mode 100644 packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
+ create mode 100644 packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
+
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
+new file mode 100644
+index 00000000000..fb875094948
+--- /dev/null
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
+@@ -0,0 +1,91 @@
++jest.mock('@baiducloud/qianfan', () => ({
++    Reranker: jest.fn().mockImplementation(() => ({
++        reranker: jest.fn()
++    }))
++}))
++
++import { Document } from '@langchain/core/documents'
++import { Reranker } from '@baiducloud/qianfan'
++import { BaiduQianfanRerank } from './BaiduQianfanRerank'
++
++const mockedReranker = Reranker as jest.Mock
++
++describe('BaiduQianfanRerank', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('reranks documents using Qianfan response indexes and preserves metadata', async () => {
++        const rerankerCall = jest.fn().mockResolvedValue({
++            results: [
++                { index: 1, document: 'second', relevance_score: 0.92 },
++                { index: 0, document: 'first', relevance_score: 0.41 }
++            ]
++        })
++        mockedReranker.mockImplementation(() => ({
++            reranker: rerankerCall
++        }))
++
++        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 2)
++        const documents = [
++            new Document({ pageContent: 'first', metadata: { source: 'a' } }),
++            new Document({ pageContent: 'second', metadata: { source: 'b' } })
++        ]
++
++        const result = await compressor.compressDocuments(documents, 'weather in Shanghai')
++
++        expect(mockedReranker).toHaveBeenCalledWith({
++            QIANFAN_ACCESS_KEY: 'access-key',
++            QIANFAN_SECRET_KEY: 'secret-key'
++        })
++        expect(rerankerCall).toHaveBeenCalledWith(
++            {
++                query: 'weather in Shanghai',
++                documents: ['first', 'second'],
++                top_n: 2
++            },
++            'bce-reranker-base_v1'
++        )
++        expect(result.map((doc) => doc.pageContent)).toEqual(['second', 'first'])
++        expect(result[0].metadata).toEqual({ source: 'b', relevance_score: 0.92 })
++        expect(result[1].metadata).toEqual({ source: 'a', relevance_score: 0.41 })
++    })
++
++    it('returns an empty array without calling Qianfan when no documents are provided', async () => {
++        const rerankerCall = jest.fn()
++        mockedReranker.mockImplementation(() => ({
++            reranker: rerankerCall
++        }))
++
++        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++
++        await expect(compressor.compressDocuments([], 'query')).resolves.toEqual([])
++        expect(rerankerCall).not.toHaveBeenCalled()
++    })
++
++    it('falls back to the original documents when Qianfan returns an invalid index', async () => {
++        const rerankerCall = jest.fn().mockResolvedValue({
++            results: [{ index: 99, document: 'missing', relevance_score: 0.9 }]
++        })
++        mockedReranker.mockImplementation(() => ({
++            reranker: rerankerCall
++        }))
++
++        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++        const documents = [new Document({ pageContent: 'first', metadata: { source: 'a' } })]
++
++        await expect(compressor.compressDocuments(documents, 'query')).resolves.toBe(documents)
++    })
++
++    it('falls back to the original documents when the Qianfan call fails', async () => {
++        const rerankerCall = jest.fn().mockRejectedValue(new Error('network failed'))
++        mockedReranker.mockImplementation(() => ({
++            reranker: rerankerCall
++        }))
++
++        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++        const documents = [new Document({ pageContent: 'first', metadata: { source: 'a' } })]
++
++        await expect(compressor.compressDocuments(documents, 'query')).resolves.toBe(documents)
++    })
++})
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
+new file mode 100644
+index 00000000000..4ff05337fdf
+--- /dev/null
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
+@@ -0,0 +1,74 @@
++import { Callbacks } from '@langchain/core/callbacks/manager'
++import { Document } from '@langchain/core/documents'
++import { BaseDocumentCompressor } from '@langchain/classic/retrievers/document_compressors'
++import { Reranker } from '@baiducloud/qianfan'
++
++type QianfanRerankResult = {
++    index: number
++    document: string
++    relevance_score: number
++}
++
++type QianfanRerankResponse = {
++    results?: QianfanRerankResult[]
++}
++
++type QianfanRerankerClient = {
++    reranker: (body: { query: string; documents: string[]; top_n?: number }, model?: string) => Promise<QianfanRerankResponse>
++}
++
++export class BaiduQianfanRerank extends BaseDocumentCompressor {
++    private readonly client: QianfanRerankerClient
++    private readonly model: string
++    private readonly topN: number
++
++    constructor(qianfanAccessKey: string, qianfanSecretKey: string, model: string, topN: number) {
++        super()
++        this.client = new Reranker({
++            QIANFAN_ACCESS_KEY: qianfanAccessKey,
++            QIANFAN_SECRET_KEY: qianfanSecretKey
++        }) as QianfanRerankerClient
++        this.model = model
++        this.topN = topN
++    }
++
++    async compressDocuments(
++        documents: Document<Record<string, any>>[],
++        query: string,
++        _?: Callbacks | undefined
++    ): Promise<Document<Record<string, any>>[]> {
++        if (documents.length === 0) return []
++
++        try {
++            const response = await this.client.reranker(
++                {
++                    query,
++                    documents: documents.map((doc) => doc.pageContent),
++                    top_n: this.topN
++                },
++                this.model
++            )
++
++            if (!Array.isArray(response.results)) return documents
++
++            const rerankedDocuments: Document<Record<string, any>>[] = []
++            for (const result of response.results) {
++                const doc = documents[result.index]
++                if (!doc) return documents
++                rerankedDocuments.push(
++                    new Document({
++                        pageContent: doc.pageContent,
++                        metadata: {
++                            ...doc.metadata,
++                            relevance_score: result.relevance_score
++                        }
++                    })
++                )
++            }
++
++            return rerankedDocuments
++        } catch (error) {
++            return documents
++        }
++    }
++}
+
+From 3f39e843efed926cbd76454cbd4cbcb7465fdbf2 Mon Sep 17 00:00:00 2001
+From: jimmyzhuu <ziming_zhu2002@163.com>
+Date: Wed, 27 May 2026 20:57:10 +0800
+Subject: [PATCH 2/5] feat(components): add Baidu Qianfan rerank retriever node
+
+---
+ .../BaiduQianfanRerankRetriever.test.ts       | 172 ++++++++++++++++++
+ .../BaiduQianfanRerankRetriever.ts            | 135 ++++++++++++++
+ 2 files changed, 307 insertions(+)
+ create mode 100644 packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+ create mode 100644 packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+new file mode 100644
+index 00000000000..c89753f20c1
+--- /dev/null
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+@@ -0,0 +1,172 @@
++jest.mock('@langchain/classic/retrievers/contextual_compression', () => ({
++    ContextualCompressionRetriever: jest.fn().mockImplementation(({ baseCompressor, baseRetriever }) => ({
++        baseCompressor,
++        baseRetriever,
++        invoke: jest.fn().mockResolvedValue([{ pageContent: 'reranked doc', metadata: { relevance_score: 0.98 } }])
++    }))
++}))
++
++jest.mock('../../../src', () => ({
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn(),
++    handleEscapeCharacters: jest.fn((text: string) => text)
++}))
++
++jest.mock('./BaiduQianfanRerank', () => ({
++    BaiduQianfanRerank: jest.fn().mockImplementation((qianfanAccessKey, qianfanSecretKey, model, topN) => ({
++        qianfanAccessKey,
++        qianfanSecretKey,
++        model,
++        topN
++    }))
++}))
++
++import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++import { BaiduQianfanRerank } from './BaiduQianfanRerank'
++
++const { nodeClass: BaiduQianfanRerankRetriever } = require('./BaiduQianfanRerankRetriever')
++
++describe('BaiduQianfanRerankRetriever', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('declares Flowise metadata, existing Baidu credential, and built-in model option', () => {
++        const node = new BaiduQianfanRerankRetriever()
++        const modelInput = node.inputs.find((input: { name: string }) => input.name === 'modelName')
++
++        expect(node).toMatchObject({
++            label: 'Baidu Qianfan Rerank Retriever',
++            name: 'baiduQianfanRerankRetriever',
++            type: 'BaiduQianfanRerankRetriever',
++            category: 'Retrievers',
++            icon: 'baiduwenxin.svg'
++        })
++        expect(node.credential).toMatchObject({
++            name: 'credential',
++            credentialNames: ['baiduQianfanApi']
++        })
++        expect(modelInput).toMatchObject({
++            type: 'options',
++            default: 'bce-reranker-base_v1',
++            options: [{ label: 'bce-reranker-base_v1', name: 'bce-reranker-base_v1' }]
++        })
++    })
++
++    it('creates a contextual compression retriever with Qianfan credentials and base retriever k by default', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanAccessKey: 'access-key',
++            qianfanSecretKey: 'secret-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++        const baseRetriever = { k: 6 }
++
++        const node = new BaiduQianfanRerankRetriever()
++        const result = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever,
++                    modelName: 'bce-reranker-base_v1'
++                },
++                outputs: {
++                    output: 'retriever'
++                }
++            },
++            'user query',
++            {}
++        )
++
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('access-key', 'secret-key', 'bce-reranker-base_v1', 6)
++        expect(ContextualCompressionRetriever).toHaveBeenCalledWith({
++            baseCompressor: expect.objectContaining({ model: 'bce-reranker-base_v1', topN: 6 }),
++            baseRetriever
++        })
++        expect(result).toMatchObject({ baseRetriever })
++    })
++
++    it('uses custom model names and explicit topN values', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanAccessKey: 'access-key',
++            qianfanSecretKey: 'secret-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever: { k: 10 },
++                    modelName: 'bce-reranker-base_v1',
++                    customModelName: 'custom-reranker',
++                    topN: '3'
++                },
++                outputs: {
++                    output: 'retriever'
++                }
++            },
++            'user query',
++            {}
++        )
++
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('access-key', 'secret-key', 'custom-reranker', 3)
++    })
++
++    it('returns document output by invoking the rerank retriever', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanAccessKey: 'access-key',
++            qianfanSecretKey: 'secret-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        const result = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever: { k: 4 },
++                    modelName: 'bce-reranker-base_v1',
++                    query: 'override query'
++                },
++                outputs: {
++                    output: 'document'
++                }
++            },
++            'input query',
++            {}
++        )
++
++        const retriever = (ContextualCompressionRetriever as unknown as jest.Mock).mock.results[0].value
++        expect(retriever.invoke).toHaveBeenCalledWith('override query')
++        expect(result).toEqual([{ pageContent: 'reranked doc', metadata: { relevance_score: 0.98 } }])
++    })
++
++    it('returns text output by concatenating reranked documents', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanAccessKey: 'access-key',
++            qianfanSecretKey: 'secret-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        const result = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever: { k: 4 },
++                    modelName: 'bce-reranker-base_v1'
++                },
++                outputs: {
++                    output: 'text'
++                }
++            },
++            'input query',
++            {}
++        )
++
++        expect(handleEscapeCharacters).toHaveBeenCalledWith('reranked doc\n', false)
++        expect(result).toBe('reranked doc\n')
++    })
++})
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+new file mode 100644
+index 00000000000..5b0469c3671
+--- /dev/null
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+@@ -0,0 +1,135 @@
++import { BaseRetriever } from '@langchain/core/retrievers'
++import { VectorStoreRetriever } from '@langchain/core/vectorstores'
++import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { BaiduQianfanRerank } from './BaiduQianfanRerank'
++
++class BaiduQianfanRerankRetriever_Retrievers implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'Baidu Qianfan Rerank Retriever'
++        this.name = 'baiduQianfanRerankRetriever'
++        this.version = 1.0
++        this.type = 'BaiduQianfanRerankRetriever'
++        this.icon = 'baiduwenxin.svg'
++        this.category = 'Retrievers'
++        this.description = 'Baidu Qianfan Rerank indexes the documents from most to least semantically relevant to the query.'
++        this.baseClasses = [this.type, 'BaseRetriever']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['baiduQianfanApi']
++        }
++        this.inputs = [
++            {
++                label: 'Vector Store Retriever',
++                name: 'baseRetriever',
++                type: 'VectorStoreRetriever'
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'options',
++                options: [
++                    {
++                        label: 'bce-reranker-base_v1',
++                        name: 'bce-reranker-base_v1'
++                    }
++                ],
++                default: 'bce-reranker-base_v1',
++                optional: true
++            },
++            {
++                label: 'Custom Model Name',
++                name: 'customModelName',
++                type: 'string',
++                placeholder: 'bce-reranker-base_v1',
++                description: 'Custom model name to use. If provided, it will override the selected model.',
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Query',
++                name: 'query',
++                type: 'string',
++                description: 'Query to retrieve documents from retriever. If not specified, user question will be used',
++                optional: true,
++                acceptVariable: true
++            },
++            {
++                label: 'Top N',
++                name: 'topN',
++                description: 'Number of top results to fetch. Default to the TopK of the Base Retriever',
++                placeholder: '4',
++                type: 'number',
++                additionalParams: true,
++                optional: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Baidu Qianfan Rerank Retriever',
++                name: 'retriever',
++                baseClasses: this.baseClasses
++            },
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: ['Document', 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
++        const baseRetriever = nodeData.inputs?.baseRetriever as BaseRetriever
++        const modelName = nodeData.inputs?.modelName as string
++        const customModelName = nodeData.inputs?.customModelName as string
++        const query = nodeData.inputs?.query as string
++        const topN = nodeData.inputs?.topN as string
++        const output = nodeData.outputs?.output as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const qianfanAccessKey = getCredentialParam('qianfanAccessKey', credentialData, nodeData)
++        const qianfanSecretKey = getCredentialParam('qianfanSecretKey', credentialData, nodeData)
++        const k = topN ? parseFloat(topN) : (baseRetriever as VectorStoreRetriever).k ?? 4
++
++        const qianfanCompressor = new BaiduQianfanRerank(qianfanAccessKey, qianfanSecretKey, customModelName || modelName, k)
++        const retriever = new ContextualCompressionRetriever({
++            baseCompressor: qianfanCompressor,
++            baseRetriever
++        })
++
++        if (output === 'retriever') return retriever
++        if (output === 'document') return await retriever.invoke(query ? query : input)
++        if (output === 'text') {
++            const docs = await retriever.invoke(query ? query : input)
++            let finaltext = ''
++            for (const doc of docs) finaltext += `${doc.pageContent}\n`
++            return handleEscapeCharacters(finaltext, false)
++        }
++
++        return retriever
++    }
++}
++
++module.exports = { nodeClass: BaiduQianfanRerankRetriever_Retrievers }
+
+From 2b4752e57d4e916c9dcdec77061611826175450a Mon Sep 17 00:00:00 2001
+From: jimmyzhuu <ziming_zhu2002@163.com>
+Date: Wed, 27 May 2026 21:02:14 +0800
+Subject: [PATCH 3/5] feat(components): register Baidu Qianfan rerank assets
+
+---
+ .../retrievers/BaiduQianfanRerankRetriever/baiduwenxin.svg | 7 +++++++
+ packages/components/package.json                           | 1 +
+ pnpm-lock.yaml                                             | 3 +++
+ 3 files changed, 11 insertions(+)
+ create mode 100644 packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/baiduwenxin.svg
+
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/baiduwenxin.svg b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/baiduwenxin.svg
+new file mode 100644
+index 00000000000..afe2bc69024
+--- /dev/null
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/baiduwenxin.svg
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?><!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
++<svg xmlns="http://www.w3.org/2000/svg"
++aria-label="Baidu" role="img"
++viewBox="0 0 512 512"><rect
++width="512" height="512"
++rx="15%"
++fill="#ffffff"/><path d="m131 251c41-9 35-58 34-68-2-17-21-45-48-43-33 3-37 50-37 50-5 22 10 70 51 61m76-82c22 0 40-26 40-58s-18-58-40-58c-23 0-41 26-41 58s18 58 41 58m96 4c31 4 50-28 54-53 4-24-16-52-37-57s-48 29-50 52c-3 27 3 54 33 58m120 41c0-12-10-47-46-47s-41 33-41 57c0 22 2 53 47 52s40-51 40-62m-46 102s-46-36-74-75c-36-57-89-34-106-5-18 29-45 48-49 53-4 4-56 33-44 84 11 52 52 51 52 51s30 3 65-5 65 2 65 2 81 27 104-25c22-53-13-80-13-80" fill="#2319dc"/><path d="m214 266v34h-28s-29 3-39 35c-3 21 4 34 5 36 1 3 10 19 33 23h53v-128zm-1 107h-21s-15-1-19-18c-3-7 0-16 1-20 1-3 6-11 17-14h22zm38-70v68s1 17 24 23h61v-91h-26v68h-25s-8-1-10-7v-61z" fill="#ffffff"/></svg>
+\ No newline at end of file
+diff --git a/packages/components/package.json b/packages/components/package.json
+index bebf3c06f3e..72f01f15131 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -43,6 +43,7 @@
+         "@aws-sdk/client-sns": "^3.699.0",
+         "@aws-sdk/client-sts": "^3.699.0",
+         "@azure/storage-blob": "^12.29.0",
++        "@baiducloud/qianfan": "0.1.9",
+         "@brave/brave-search-mcp-server": "2.0.80",
+         "@datastax/astra-db-ts": "1.5.0",
+         "@dqbd/tiktoken": "^1.0.21",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 812b8856aea..7412d0f11c5 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -320,6 +320,9 @@ importers:
+       '@azure/storage-blob':
+         specifier: ^12.29.0
+         version: 12.31.0
++      '@baiducloud/qianfan':
++        specifier: 0.1.9
++        version: 0.1.9(@babel/core@7.24.0)(encoding@0.1.13)
+       '@brave/brave-search-mcp-server':
+         specifier: 2.0.80
+         version: 2.0.80
+
+From d52527fb62095663b91e859d191a18ceb00cf8fe Mon Sep 17 00:00:00 2001
+From: jimmyzhuu <ziming_zhu2002@163.com>
+Date: Wed, 27 May 2026 21:41:19 +0800
+Subject: [PATCH 4/5] fix(components): use Qianfan bearer rerank API
+
+---
+ .../BaiduQianfanApiKey.credential.ts          | 23 +++++
+ .../BaiduQianfanRerank.test.ts                | 95 ++++++++++---------
+ .../BaiduQianfanRerank.ts                     | 39 ++++----
+ .../BaiduQianfanRerankRetriever.test.ts       | 66 ++++++++-----
+ .../BaiduQianfanRerankRetriever.ts            | 18 ++--
+ packages/components/package.json              |  1 -
+ pnpm-lock.yaml                                |  3 -
+ 7 files changed, 147 insertions(+), 98 deletions(-)
+ create mode 100644 packages/components/credentials/BaiduQianfanApiKey.credential.ts
+
+diff --git a/packages/components/credentials/BaiduQianfanApiKey.credential.ts b/packages/components/credentials/BaiduQianfanApiKey.credential.ts
+new file mode 100644
+index 00000000000..835ce5d9f38
+--- /dev/null
++++ b/packages/components/credentials/BaiduQianfanApiKey.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class BaiduQianfanApiKey implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Baidu Qianfan API Key'
++        this.name = 'baiduQianfanApiKey'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'Qianfan API Key',
++                name: 'qianfanApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: BaiduQianfanApiKey }
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
+index fb875094948..640e1099843 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.test.ts
+@@ -1,32 +1,31 @@
+-jest.mock('@baiducloud/qianfan', () => ({
+-    Reranker: jest.fn().mockImplementation(() => ({
+-        reranker: jest.fn()
+-    }))
+-}))
+-
+ import { Document } from '@langchain/core/documents'
+-import { Reranker } from '@baiducloud/qianfan'
+ import { BaiduQianfanRerank } from './BaiduQianfanRerank'
+ 
+-const mockedReranker = Reranker as jest.Mock
++const originalFetch = global.fetch
++const mockedFetch = jest.fn()
+ 
+ describe('BaiduQianfanRerank', () => {
+     beforeEach(() => {
+         jest.clearAllMocks()
++        global.fetch = mockedFetch as unknown as typeof fetch
++    })
++
++    afterAll(() => {
++        global.fetch = originalFetch
+     })
+ 
+-    it('reranks documents using Qianfan response indexes and preserves metadata', async () => {
+-        const rerankerCall = jest.fn().mockResolvedValue({
+-            results: [
+-                { index: 1, document: 'second', relevance_score: 0.92 },
+-                { index: 0, document: 'first', relevance_score: 0.41 }
+-            ]
++    it('calls Qianfan rerank API and preserves metadata from ranked indexes', async () => {
++        mockedFetch.mockResolvedValue({
++            ok: true,
++            json: jest.fn().mockResolvedValue({
++                results: [
++                    { index: 1, document: 'second', relevance_score: 0.92 },
++                    { index: 0, document: 'first', relevance_score: 0.41 }
++                ]
++            })
+         })
+-        mockedReranker.mockImplementation(() => ({
+-            reranker: rerankerCall
+-        }))
+ 
+-        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 2)
++        const compressor = new BaiduQianfanRerank('api-key', 'bce-reranker-base', 2)
+         const documents = [
+             new Document({ pageContent: 'first', metadata: { source: 'a' } }),
+             new Document({ pageContent: 'second', metadata: { source: 'b' } })
+@@ -34,56 +33,62 @@ describe('BaiduQianfanRerank', () => {
+ 
+         const result = await compressor.compressDocuments(documents, 'weather in Shanghai')
+ 
+-        expect(mockedReranker).toHaveBeenCalledWith({
+-            QIANFAN_ACCESS_KEY: 'access-key',
+-            QIANFAN_SECRET_KEY: 'secret-key'
+-        })
+-        expect(rerankerCall).toHaveBeenCalledWith(
+-            {
++        expect(mockedFetch).toHaveBeenCalledWith('https://qianfan.baidubce.com/v2/rerank', {
++            method: 'POST',
++            headers: {
++                Authorization: 'Bearer api-key',
++                'Content-Type': 'application/json'
++            },
++            body: JSON.stringify({
++                model: 'bce-reranker-base',
+                 query: 'weather in Shanghai',
+                 documents: ['first', 'second'],
+                 top_n: 2
+-            },
+-            'bce-reranker-base_v1'
+-        )
++            })
++        })
+         expect(result.map((doc) => doc.pageContent)).toEqual(['second', 'first'])
+         expect(result[0].metadata).toEqual({ source: 'b', relevance_score: 0.92 })
+         expect(result[1].metadata).toEqual({ source: 'a', relevance_score: 0.41 })
+     })
+ 
+     it('returns an empty array without calling Qianfan when no documents are provided', async () => {
+-        const rerankerCall = jest.fn()
+-        mockedReranker.mockImplementation(() => ({
+-            reranker: rerankerCall
+-        }))
+-
+-        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++        const compressor = new BaiduQianfanRerank('api-key', 'bce-reranker-base', 4)
+ 
+         await expect(compressor.compressDocuments([], 'query')).resolves.toEqual([])
+-        expect(rerankerCall).not.toHaveBeenCalled()
++        expect(mockedFetch).not.toHaveBeenCalled()
+     })
+ 
+     it('falls back to the original documents when Qianfan returns an invalid index', async () => {
+-        const rerankerCall = jest.fn().mockResolvedValue({
+-            results: [{ index: 99, document: 'missing', relevance_score: 0.9 }]
++        mockedFetch.mockResolvedValue({
++            ok: true,
++            json: jest.fn().mockResolvedValue({
++                results: [{ index: 99, document: 'missing', relevance_score: 0.9 }]
++            })
++        })
++
++        const compressor = new BaiduQianfanRerank('api-key', 'bce-reranker-base', 4)
++        const documents = [new Document({ pageContent: 'first', metadata: { source: 'a' } })]
++
++        await expect(compressor.compressDocuments(documents, 'query')).resolves.toBe(documents)
++    })
++
++    it('falls back to the original documents when Qianfan returns an API error', async () => {
++        mockedFetch.mockResolvedValue({
++            ok: false,
++            status: 404,
++            text: jest.fn().mockResolvedValue('model not found')
+         })
+-        mockedReranker.mockImplementation(() => ({
+-            reranker: rerankerCall
+-        }))
+ 
+-        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++        const compressor = new BaiduQianfanRerank('api-key', 'missing-model', 4)
+         const documents = [new Document({ pageContent: 'first', metadata: { source: 'a' } })]
+ 
+         await expect(compressor.compressDocuments(documents, 'query')).resolves.toBe(documents)
+     })
+ 
+     it('falls back to the original documents when the Qianfan call fails', async () => {
+-        const rerankerCall = jest.fn().mockRejectedValue(new Error('network failed'))
+-        mockedReranker.mockImplementation(() => ({
+-            reranker: rerankerCall
+-        }))
++        mockedFetch.mockRejectedValue(new Error('network failed'))
+ 
+-        const compressor = new BaiduQianfanRerank('access-key', 'secret-key', 'bce-reranker-base_v1', 4)
++        const compressor = new BaiduQianfanRerank('api-key', 'bce-reranker-base', 4)
+         const documents = [new Document({ pageContent: 'first', metadata: { source: 'a' } })]
+ 
+         await expect(compressor.compressDocuments(documents, 'query')).resolves.toBe(documents)
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
+index 4ff05337fdf..71caa1f19ec 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerank.ts
+@@ -1,7 +1,8 @@
+ import { Callbacks } from '@langchain/core/callbacks/manager'
+ import { Document } from '@langchain/core/documents'
+ import { BaseDocumentCompressor } from '@langchain/classic/retrievers/document_compressors'
+-import { Reranker } from '@baiducloud/qianfan'
++
++const QIANFAN_RERANK_API_URL = 'https://qianfan.baidubce.com/v2/rerank'
+ 
+ type QianfanRerankResult = {
+     index: number
+@@ -13,21 +14,14 @@ type QianfanRerankResponse = {
+     results?: QianfanRerankResult[]
+ }
+ 
+-type QianfanRerankerClient = {
+-    reranker: (body: { query: string; documents: string[]; top_n?: number }, model?: string) => Promise<QianfanRerankResponse>
+-}
+-
+ export class BaiduQianfanRerank extends BaseDocumentCompressor {
+-    private readonly client: QianfanRerankerClient
++    private readonly qianfanApiKey: string
+     private readonly model: string
+     private readonly topN: number
+ 
+-    constructor(qianfanAccessKey: string, qianfanSecretKey: string, model: string, topN: number) {
++    constructor(qianfanApiKey: string, model: string, topN: number) {
+         super()
+-        this.client = new Reranker({
+-            QIANFAN_ACCESS_KEY: qianfanAccessKey,
+-            QIANFAN_SECRET_KEY: qianfanSecretKey
+-        }) as QianfanRerankerClient
++        this.qianfanApiKey = qianfanApiKey
+         this.model = model
+         this.topN = topN
+     }
+@@ -40,19 +34,28 @@ export class BaiduQianfanRerank extends BaseDocumentCompressor {
+         if (documents.length === 0) return []
+ 
+         try {
+-            const response = await this.client.reranker(
+-                {
++            const response = await fetch(QIANFAN_RERANK_API_URL, {
++                method: 'POST',
++                headers: {
++                    Authorization: `Bearer ${this.qianfanApiKey}`,
++                    'Content-Type': 'application/json'
++                },
++                body: JSON.stringify({
++                    model: this.model,
+                     query,
+                     documents: documents.map((doc) => doc.pageContent),
+                     top_n: this.topN
+-                },
+-                this.model
+-            )
++                })
++            })
++
++            if (!response.ok) throw new Error(`Baidu Qianfan Rerank API call failed with status ${response.status}`)
++
++            const rerankResponse = (await response.json()) as QianfanRerankResponse
+ 
+-            if (!Array.isArray(response.results)) return documents
++            if (!Array.isArray(rerankResponse.results)) return documents
+ 
+             const rerankedDocuments: Document<Record<string, any>>[] = []
+-            for (const result of response.results) {
++            for (const result of rerankResponse.results) {
+                 const doc = documents[result.index]
+                 if (!doc) return documents
+                 rerankedDocuments.push(
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+index c89753f20c1..fd847ca7d5f 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+@@ -6,23 +6,22 @@ jest.mock('@langchain/classic/retrievers/contextual_compression', () => ({
+     }))
+ }))
+ 
+-jest.mock('../../../src', () => ({
++jest.mock('../../../src/utils', () => ({
+     getCredentialData: jest.fn(),
+     getCredentialParam: jest.fn(),
+     handleEscapeCharacters: jest.fn((text: string) => text)
+ }))
+ 
+ jest.mock('./BaiduQianfanRerank', () => ({
+-    BaiduQianfanRerank: jest.fn().mockImplementation((qianfanAccessKey, qianfanSecretKey, model, topN) => ({
+-        qianfanAccessKey,
+-        qianfanSecretKey,
++    BaiduQianfanRerank: jest.fn().mockImplementation((qianfanApiKey, model, topN) => ({
++        qianfanApiKey,
+         model,
+         topN
+     }))
+ }))
+ 
+ import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
+-import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
+ import { BaiduQianfanRerank } from './BaiduQianfanRerank'
+ 
+ const { nodeClass: BaiduQianfanRerankRetriever } = require('./BaiduQianfanRerankRetriever')
+@@ -45,17 +44,18 @@ describe('BaiduQianfanRerankRetriever', () => {
+         })
+         expect(node.credential).toMatchObject({
+             name: 'credential',
+-            credentialNames: ['baiduQianfanApi']
++            credentialNames: ['baiduQianfanApiKey', 'baiduQianfanApi']
+         })
+         expect(modelInput).toMatchObject({
+             type: 'options',
+-            default: 'bce-reranker-base_v1',
+-            options: [{ label: 'bce-reranker-base_v1', name: 'bce-reranker-base_v1' }]
++            default: 'bce-reranker-base',
++            options: [{ label: 'bce-reranker-base', name: 'bce-reranker-base' }]
+         })
+     })
+ 
+-    it('creates a contextual compression retriever with Qianfan credentials and base retriever k by default', async () => {
++    it('creates a contextual compression retriever with Qianfan API key and base retriever k by default', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanApiKey: 'api-key',
+             qianfanAccessKey: 'access-key',
+             qianfanSecretKey: 'secret-key'
+         })
+@@ -68,7 +68,7 @@ describe('BaiduQianfanRerankRetriever', () => {
+                 credential: 'cred-1',
+                 inputs: {
+                     baseRetriever,
+-                    modelName: 'bce-reranker-base_v1'
++                    modelName: 'bce-reranker-base'
+                 },
+                 outputs: {
+                     output: 'retriever'
+@@ -78,18 +78,42 @@ describe('BaiduQianfanRerankRetriever', () => {
+             {}
+         )
+ 
+-        expect(BaiduQianfanRerank).toHaveBeenCalledWith('access-key', 'secret-key', 'bce-reranker-base_v1', 6)
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('api-key', 'bce-reranker-base', 6)
+         expect(ContextualCompressionRetriever).toHaveBeenCalledWith({
+-            baseCompressor: expect.objectContaining({ model: 'bce-reranker-base_v1', topN: 6 }),
++            baseCompressor: expect.objectContaining({ model: 'bce-reranker-base', topN: 6 }),
+             baseRetriever
+         })
+         expect(result).toMatchObject({ baseRetriever })
+     })
+ 
++    it('falls back to Qianfan access key when the dedicated API key field is not configured', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanAccessKey: 'fallback-api-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever: { k: 4 },
++                    modelName: 'bce-reranker-base'
++                },
++                outputs: {
++                    output: 'retriever'
++                }
++            },
++            'user query',
++            {}
++        )
++
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('fallback-api-key', 'bce-reranker-base', 4)
++    })
++
+     it('uses custom model names and explicit topN values', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({
+-            qianfanAccessKey: 'access-key',
+-            qianfanSecretKey: 'secret-key'
++            qianfanApiKey: 'api-key'
+         })
+         ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
+ 
+@@ -99,7 +123,7 @@ describe('BaiduQianfanRerankRetriever', () => {
+                 credential: 'cred-1',
+                 inputs: {
+                     baseRetriever: { k: 10 },
+-                    modelName: 'bce-reranker-base_v1',
++                    modelName: 'bce-reranker-base',
+                     customModelName: 'custom-reranker',
+                     topN: '3'
+                 },
+@@ -111,13 +135,12 @@ describe('BaiduQianfanRerankRetriever', () => {
+             {}
+         )
+ 
+-        expect(BaiduQianfanRerank).toHaveBeenCalledWith('access-key', 'secret-key', 'custom-reranker', 3)
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('api-key', 'custom-reranker', 3)
+     })
+ 
+     it('returns document output by invoking the rerank retriever', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({
+-            qianfanAccessKey: 'access-key',
+-            qianfanSecretKey: 'secret-key'
++            qianfanApiKey: 'api-key'
+         })
+         ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
+ 
+@@ -127,7 +150,7 @@ describe('BaiduQianfanRerankRetriever', () => {
+                 credential: 'cred-1',
+                 inputs: {
+                     baseRetriever: { k: 4 },
+-                    modelName: 'bce-reranker-base_v1',
++                    modelName: 'bce-reranker-base',
+                     query: 'override query'
+                 },
+                 outputs: {
+@@ -145,8 +168,7 @@ describe('BaiduQianfanRerankRetriever', () => {
+ 
+     it('returns text output by concatenating reranked documents', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({
+-            qianfanAccessKey: 'access-key',
+-            qianfanSecretKey: 'secret-key'
++            qianfanApiKey: 'api-key'
+         })
+         ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
+ 
+@@ -156,7 +178,7 @@ describe('BaiduQianfanRerankRetriever', () => {
+                 credential: 'cred-1',
+                 inputs: {
+                     baseRetriever: { k: 4 },
+-                    modelName: 'bce-reranker-base_v1'
++                    modelName: 'bce-reranker-base'
+                 },
+                 outputs: {
+                     output: 'text'
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+index 5b0469c3671..0d00e0871af 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+@@ -1,7 +1,7 @@
+ import { BaseRetriever } from '@langchain/core/retrievers'
+ import { VectorStoreRetriever } from '@langchain/core/vectorstores'
+ import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
+-import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
+ import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
+ import { BaiduQianfanRerank } from './BaiduQianfanRerank'
+ 
+@@ -31,7 +31,7 @@ class BaiduQianfanRerankRetriever_Retrievers implements INode {
+             label: 'Connect Credential',
+             name: 'credential',
+             type: 'credential',
+-            credentialNames: ['baiduQianfanApi']
++            credentialNames: ['baiduQianfanApiKey', 'baiduQianfanApi']
+         }
+         this.inputs = [
+             {
+@@ -45,18 +45,18 @@ class BaiduQianfanRerankRetriever_Retrievers implements INode {
+                 type: 'options',
+                 options: [
+                     {
+-                        label: 'bce-reranker-base_v1',
+-                        name: 'bce-reranker-base_v1'
++                        label: 'bce-reranker-base',
++                        name: 'bce-reranker-base'
+                     }
+                 ],
+-                default: 'bce-reranker-base_v1',
++                default: 'bce-reranker-base',
+                 optional: true
+             },
+             {
+                 label: 'Custom Model Name',
+                 name: 'customModelName',
+                 type: 'string',
+-                placeholder: 'bce-reranker-base_v1',
++                placeholder: 'bce-reranker-base',
+                 description: 'Custom model name to use. If provided, it will override the selected model.',
+                 additionalParams: true,
+                 optional: true
+@@ -109,11 +109,11 @@ class BaiduQianfanRerankRetriever_Retrievers implements INode {
+         const output = nodeData.outputs?.output as string
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+-        const qianfanAccessKey = getCredentialParam('qianfanAccessKey', credentialData, nodeData)
+-        const qianfanSecretKey = getCredentialParam('qianfanSecretKey', credentialData, nodeData)
++        const qianfanApiKey =
++            getCredentialParam('qianfanApiKey', credentialData, nodeData) || getCredentialParam('qianfanAccessKey', credentialData, nodeData)
+         const k = topN ? parseFloat(topN) : (baseRetriever as VectorStoreRetriever).k ?? 4
+ 
+-        const qianfanCompressor = new BaiduQianfanRerank(qianfanAccessKey, qianfanSecretKey, customModelName || modelName, k)
++        const qianfanCompressor = new BaiduQianfanRerank(qianfanApiKey, customModelName || modelName, k)
+         const retriever = new ContextualCompressionRetriever({
+             baseCompressor: qianfanCompressor,
+             baseRetriever
+diff --git a/packages/components/package.json b/packages/components/package.json
+index 72f01f15131..bebf3c06f3e 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -43,7 +43,6 @@
+         "@aws-sdk/client-sns": "^3.699.0",
+         "@aws-sdk/client-sts": "^3.699.0",
+         "@azure/storage-blob": "^12.29.0",
+-        "@baiducloud/qianfan": "0.1.9",
+         "@brave/brave-search-mcp-server": "2.0.80",
+         "@datastax/astra-db-ts": "1.5.0",
+         "@dqbd/tiktoken": "^1.0.21",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 7412d0f11c5..812b8856aea 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -320,9 +320,6 @@ importers:
+       '@azure/storage-blob':
+         specifier: ^12.29.0
+         version: 12.31.0
+-      '@baiducloud/qianfan':
+-        specifier: 0.1.9
+-        version: 0.1.9(@babel/core@7.24.0)(encoding@0.1.13)
+       '@brave/brave-search-mcp-server':
+         specifier: 2.0.80
+         version: 2.0.80
+
+From 84891fc1939f989f7e948a51d0e41069162cec3a Mon Sep 17 00:00:00 2001
+From: jimmyzhuu <ziming_zhu2002@163.com>
+Date: Wed, 27 May 2026 21:59:45 +0800
+Subject: [PATCH 5/5] fix(components): validate Qianfan rerank inputs
+
+---
+ .../BaiduQianfanRerankRetriever.test.ts       | 49 +++++++++++++++++++
+ .../BaiduQianfanRerankRetriever.ts            |  9 +++-
+ 2 files changed, 56 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+index fd847ca7d5f..f824939714f 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.test.ts
+@@ -138,6 +138,55 @@ describe('BaiduQianfanRerankRetriever', () => {
+         expect(BaiduQianfanRerank).toHaveBeenCalledWith('api-key', 'custom-reranker', 3)
+     })
+ 
++    it('parses topN as an integer', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            qianfanApiKey: 'api-key'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    baseRetriever: { k: 10 },
++                    modelName: 'bce-reranker-base',
++                    topN: '3.7'
++                },
++                outputs: {
++                    output: 'retriever'
++                }
++            },
++            'user query',
++            {}
++        )
++
++        expect(BaiduQianfanRerank).toHaveBeenCalledWith('api-key', 'bce-reranker-base', 3)
++    })
++
++    it('throws when the Qianfan API key is missing from credentials', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({})
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new BaiduQianfanRerankRetriever()
++        await expect(
++            node.init(
++                {
++                    credential: 'cred-1',
++                    inputs: {
++                        baseRetriever: { k: 4 },
++                        modelName: 'bce-reranker-base'
++                    },
++                    outputs: {
++                        output: 'retriever'
++                    }
++                },
++                'user query',
++                {}
++            )
++        ).rejects.toThrow('Baidu Qianfan API Key is missing in credentials.')
++    })
++
+     it('returns document output by invoking the rerank retriever', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({
+             qianfanApiKey: 'api-key'
+diff --git a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+index 0d00e0871af..4691c98d1aa 100644
+--- a/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/BaiduQianfanRerankRetriever/BaiduQianfanRerankRetriever.ts
+@@ -110,8 +110,13 @@ class BaiduQianfanRerankRetriever_Retrievers implements INode {
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const qianfanApiKey =
+-            getCredentialParam('qianfanApiKey', credentialData, nodeData) || getCredentialParam('qianfanAccessKey', credentialData, nodeData)
+-        const k = topN ? parseFloat(topN) : (baseRetriever as VectorStoreRetriever).k ?? 4
++            getCredentialParam('qianfanApiKey', credentialData, nodeData) ||
++            getCredentialParam('qianfanAccessKey', credentialData, nodeData)
++        if (!qianfanApiKey) {
++            throw new Error('Baidu Qianfan API Key is missing in credentials.')
++        }
++
++        const k = topN ? parseInt(topN, 10) : (baseRetriever as VectorStoreRetriever).k ?? 4
+ 
+         const qianfanCompressor = new BaiduQianfanRerank(qianfanApiKey, customModelName || modelName, k)
+         const retriever = new ContextualCompressionRetriever({

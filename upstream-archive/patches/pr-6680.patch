@@ -1,0 +1,170 @@
+From 9f574e37ecbed95a2732d8f79942f06bfd458592 Mon Sep 17 00:00:00 2001
+From: Ilango Rajagopal <ilango.rajagopal@flowiseai.com>
+Date: Wed, 29 Jul 2026 14:40:15 +0530
+Subject: [PATCH] fix: upsert history permissions
+
+---
+ .../src/controllers/upsert-history/index.ts   | 18 +++++++++++++-
+ .../server/src/routes/upsert-history/index.ts |  5 ++--
+ .../src/services/upsert-history/index.ts      | 24 ++++++++++++++++---
+ packages/ui/src/menu-items/settings.js        |  3 ++-
+ .../views/vectorstore/UpsertHistoryDialog.jsx | 23 +++++++++++-------
+ 5 files changed, 57 insertions(+), 16 deletions(-)
+
+diff --git a/packages/server/src/controllers/upsert-history/index.ts b/packages/server/src/controllers/upsert-history/index.ts
+index 4381ade1cf9..d82402d2bc7 100644
+--- a/packages/server/src/controllers/upsert-history/index.ts
++++ b/packages/server/src/controllers/upsert-history/index.ts
+@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
+ import { StatusCodes } from 'http-status-codes'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import chatflowsService from '../../services/chatflows'
++import documentStoreService from '../../services/documentstore'
+ import upsertHistoryService from '../../services/upsert-history'
+ 
+ const getAllUpsertHistory = async (req: Request, res: Response, next: NextFunction) => {
+@@ -20,7 +21,22 @@ const getAllUpsertHistory = async (req: Request, res: Response, next: NextFuncti
+                 'Error: upsertHistoryController.getAllUpsertHistory - chatflow id is required!'
+             )
+         }
+-        await chatflowsService.getChatflowById(chatflowid, workspaceId)
++        let isAuthorized = true
++        try {
++            await chatflowsService.getChatflowById(chatflowid, workspaceId)
++        } catch (chatflowError) {
++            try {
++                await documentStoreService.getDocumentStoreById(chatflowid, workspaceId)
++            } catch (docStoreError) {
++                isAuthorized = false
++            }
++        }
++        if (!isAuthorized) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: upsertHistoryController.getAllUpsertHistory - resource ${chatflowid} not found in workspace!`
++            )
++        }
+ 
+         const sortOrder = req.query?.order as string | undefined
+         const startDate = req.query?.startDate as string | undefined
+diff --git a/packages/server/src/routes/upsert-history/index.ts b/packages/server/src/routes/upsert-history/index.ts
+index 3e3c9c1a853..9199748f374 100644
+--- a/packages/server/src/routes/upsert-history/index.ts
++++ b/packages/server/src/routes/upsert-history/index.ts
+@@ -1,14 +1,15 @@
+ import express from 'express'
++import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+ import upsertHistoryController from '../../controllers/upsert-history'
+ const router = express.Router()
+ 
+ // CREATE
+ 
+ // READ
+-router.get(['/', '/:id'], upsertHistoryController.getAllUpsertHistory)
++router.get(['/', '/:id'], checkAnyPermission('chatflows:view,documentStores:view'), upsertHistoryController.getAllUpsertHistory)
+ 
+ // PATCH
+-router.patch('/', upsertHistoryController.patchDeleteUpsertHistory)
++router.patch('/', checkAnyPermission('chatflows:update,documentStores:upsert-config'), upsertHistoryController.patchDeleteUpsertHistory)
+ 
+ // DELETE
+ 
+diff --git a/packages/server/src/services/upsert-history/index.ts b/packages/server/src/services/upsert-history/index.ts
+index 6ac41dad3ed..445c9cabde1 100644
+--- a/packages/server/src/services/upsert-history/index.ts
++++ b/packages/server/src/services/upsert-history/index.ts
+@@ -2,9 +2,10 @@ import { MoreThanOrEqual, LessThanOrEqual, Between, In, QueryRunner } from 'type
+ import { StatusCodes } from 'http-status-codes'
+ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+ import { UpsertHistory } from '../../database/entities/UpsertHistory'
++import { ChatFlow } from '../../database/entities/ChatFlow'
++import { DocumentStore } from '../../database/entities/DocumentStore'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+-import chatflowsService from '../chatflows'
+ 
+ const getAllUpsertHistory = async (
+     sortOrder: string | undefined,
+@@ -80,8 +81,25 @@ const patchDeleteUpsertHistory = async (ids: string[] = [], workspaceId: string)
+                 )
+             }
+ 
+-            const chatflowIds = [...new Set(rows.map((r) => r.chatflowid))]
+-            await chatflowsService.assertChatflowIdsInWorkspace(chatflowIds, workspaceId, queryRunner)
++            const resourceIds = [...new Set(rows.map((r) => r.chatflowid))]
++
++            const chatflowRepo = queryRunner.manager.getRepository(ChatFlow)
++            const foundChatflows = await chatflowRepo.find({ where: { id: In(resourceIds), workspaceId }, select: ['id'] })
++            const foundChatflowIds = new Set(foundChatflows.map((c) => c.id))
++            const remainingIds = resourceIds.filter((id) => !foundChatflowIds.has(id))
++
++            if (remainingIds.length > 0) {
++                const docStoreRepo = queryRunner.manager.getRepository(DocumentStore)
++                const foundDocStores = await docStoreRepo.find({ where: { id: In(remainingIds), workspaceId }, select: ['id'] })
++                const foundDocStoreIds = new Set(foundDocStores.map((d) => d.id))
++                const unauthorizedIds = remainingIds.filter((id) => !foundDocStoreIds.has(id))
++                if (unauthorizedIds.length > 0) {
++                    throw new InternalFlowiseError(
++                        StatusCodes.NOT_FOUND,
++                        'Error: upsertHistoryServices.patchDeleteUpsertHistory - one or more upsert history records were not found in the workspace!'
++                    )
++                }
++            }
+ 
+             const deleteResult = await repo.delete({ id: In(uniqueIds) })
+             await queryRunner.commitTransaction()
+diff --git a/packages/ui/src/menu-items/settings.js b/packages/ui/src/menu-items/settings.js
+index 01b4f537823..7899e756348 100644
+--- a/packages/ui/src/menu-items/settings.js
++++ b/packages/ui/src/menu-items/settings.js
+@@ -50,7 +50,8 @@ const settings = {
+             title: 'Upsert History',
+             type: 'item',
+             url: '',
+-            icon: icons.IconDatabaseExport
++            icon: icons.IconDatabaseExport,
++            permission: 'chatflows:view'
+         },
+         {
+             id: 'chatflowConfiguration',
+diff --git a/packages/ui/src/views/vectorstore/UpsertHistoryDialog.jsx b/packages/ui/src/views/vectorstore/UpsertHistoryDialog.jsx
+index dfff0287772..16f19a9c072 100644
+--- a/packages/ui/src/views/vectorstore/UpsertHistoryDialog.jsx
++++ b/packages/ui/src/views/vectorstore/UpsertHistoryDialog.jsx
+@@ -43,6 +43,9 @@ import HistoryEmptySVG from '@/assets/images/upsert_history_empty.svg'
+ import vectorstoreApi from '@/api/vectorstore'
+ import useApi from '@/hooks/useApi'
+ 
++// Rbac
++import { Available } from '@/ui-component/rbac/available'
++
+ // Store
+ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ import { baseURL } from '@/store/constant'
+@@ -352,15 +355,17 @@ const UpsertHistoryDialog = ({ show, dialogProps, onCancel }) => {
+                         </div>
+                     </div>
+                     {selected.length > 0 && (
+-                        <Button
+-                            sx={{ mt: 1, mb: 2 }}
+-                            variant='outlined'
+-                            onClick={handleRemoveHistory}
+-                            color='error'
+-                            startIcon={<IconTrash />}
+-                        >
+-                            Delete {selected.length} {selected.length === 1 ? 'row' : 'rows'}
+-                        </Button>
++                        <Available permission='chatflows:update'>
++                            <Button
++                                sx={{ mt: 1, mb: 2 }}
++                                variant='outlined'
++                                onClick={handleRemoveHistory}
++                                color='error'
++                                startIcon={<IconTrash />}
++                            >
++                                Delete {selected.length} {selected.length === 1 ? 'row' : 'rows'}
++                            </Button>
++                        </Available>
+                     )}
+                     {chatflowUpsertHistory.length <= 0 && (
+                         <Stack sx={{ alignItems: 'center', justifyContent: 'center' }} flexDirection='column'>

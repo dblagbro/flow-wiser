@@ -1,0 +1,74 @@
+From 60f16c5a8b0a8bdee51aca81ab5a8f174530de79 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Wed, 17 Jun 2026 23:09:55 +0530
+Subject: [PATCH 1/2] fix: include chatbotConfig to retain Starter Prompts
+ during Workspace Export
+
+---
+ packages/ui/src/utils/exportImport.js | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/utils/exportImport.js b/packages/ui/src/utils/exportImport.js
+index a9361a7faac..aa276b592f7 100644
+--- a/packages/ui/src/utils/exportImport.js
++++ b/packages/ui/src/utils/exportImport.js
+@@ -19,16 +19,35 @@ const sanitizeTool = (Tool) => {
+     }
+ }
+ 
++const CHATFLOW_FIELDS_TO_PRESERVE = [
++    'chatbotConfig',
++    'category',
++    'speechToText',
++    'textToSpeech',
++    'followUpPrompts',
++    'apiConfig',
++    'analytic',
++    'isPublic',
++    'apikeyid',
++    'mcpServerConfig'
++]
++
+ const sanitizeChatflow = (ChatFlow) => {
+     try {
+         return ChatFlow.map((chatFlow) => {
+             const sanitizeFlowData = generateExportFlowData(JSON.parse(chatFlow.flowData))
+-            return {
++            const sanitized = {
+                 id: chatFlow.id,
+                 name: chatFlow.name,
+                 flowData: stringify(sanitizeFlowData),
+                 type: chatFlow.type
+             }
++            CHATFLOW_FIELDS_TO_PRESERVE.forEach((field) => {
++                if (chatFlow[field] != null) {
++                    sanitized[field] = chatFlow[field]
++                }
++            })
++            return sanitized
+         })
+     } catch (error) {
+         throw new Error(`exportImport.sanitizeChatflow ${getErrorMessage(error)}`)
+
+From 1307deaa26a06f6c18d103eeb4c84a32cce62a16 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Wed, 17 Jun 2026 23:18:46 +0530
+Subject: [PATCH 2/2] fix: remove apikeyid from exportable flow configuration
+ fields
+
+---
+ packages/ui/src/utils/exportImport.js | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/packages/ui/src/utils/exportImport.js b/packages/ui/src/utils/exportImport.js
+index aa276b592f7..326cbbc2e06 100644
+--- a/packages/ui/src/utils/exportImport.js
++++ b/packages/ui/src/utils/exportImport.js
+@@ -28,7 +28,6 @@ const CHATFLOW_FIELDS_TO_PRESERVE = [
+     'apiConfig',
+     'analytic',
+     'isPublic',
+-    'apikeyid',
+     'mcpServerConfig'
+ ]
+ 

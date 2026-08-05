@@ -1,0 +1,129 @@
+From 2392104d9f7c7c395dfc40c55cc13927eaee09ff Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Madrigal=20Jim=C3=A9nez=20Rub=C3=A9n?= <RuMadr@ice.go.cr>
+Date: Wed, 4 Mar 2026 15:13:57 -0600
+Subject: [PATCH 1/2] Fix: prevent crash when parsing empty or malformed JSON
+ in chat message response
+
+---
+ .../src/controllers/chat-messages/index.ts    | 24 +++++++++++++------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/packages/server/src/controllers/chat-messages/index.ts b/packages/server/src/controllers/chat-messages/index.ts
+index 79c5cc64d99..1e0a71ba0a9 100644
+--- a/packages/server/src/controllers/chat-messages/index.ts
++++ b/packages/server/src/controllers/chat-messages/index.ts
+@@ -319,31 +319,41 @@ const abortChatMessage = async (req: Request, res: Response, next: NextFunction)
+     }
+ }
+ 
++const safeJsonParse = (input: string) => {
++    if (!input || input.trim() === '') return null
++    try {
++        return JSON.parse(input)
++    } catch (error) {
++        console.warn('Unable to parse chat message JSON field', error)
++        return null
++    }
++}
++
+ const parseAPIResponse = (apiResponse: ChatMessage | ChatMessage[]): ChatMessage | ChatMessage[] => {
+     const parseResponse = (response: ChatMessage): ChatMessage => {
+         const parsedResponse = { ...response }
+ 
+         try {
+             if (parsedResponse.sourceDocuments) {
+-                parsedResponse.sourceDocuments = JSON.parse(parsedResponse.sourceDocuments)
++                parsedResponse.sourceDocuments = safeJsonParse(parsedResponse.sourceDocuments) ?? parsedResponse.sourceDocuments
+             }
+             if (parsedResponse.usedTools) {
+-                parsedResponse.usedTools = JSON.parse(parsedResponse.usedTools)
++                parsedResponse.usedTools = safeJsonParse(parsedResponse.usedTools) ?? parsedResponse.usedTools
+             }
+             if (parsedResponse.fileAnnotations) {
+-                parsedResponse.fileAnnotations = JSON.parse(parsedResponse.fileAnnotations)
++                parsedResponse.fileAnnotations = safeJsonParse(parsedResponse.fileAnnotations) ?? parsedResponse.fileAnnotations
+             }
+             if (parsedResponse.agentReasoning) {
+-                parsedResponse.agentReasoning = JSON.parse(parsedResponse.agentReasoning)
++                parsedResponse.agentReasoning = safeJsonParse(parsedResponse.agentReasoning) ?? parsedResponse.agentReasoning
+             }
+             if (parsedResponse.fileUploads) {
+-                parsedResponse.fileUploads = JSON.parse(parsedResponse.fileUploads)
++                parsedResponse.fileUploads = safeJsonParse(parsedResponse.fileUploads) ?? parsedResponse.fileUploads
+             }
+             if (parsedResponse.action) {
+-                parsedResponse.action = JSON.parse(parsedResponse.action)
++                parsedResponse.action = safeJsonParse(parsedResponse.action) ?? parsedResponse.action
+             }
+             if (parsedResponse.artifacts) {
+-                parsedResponse.artifacts = JSON.parse(parsedResponse.artifacts)
++                parsedResponse.artifacts = safeJsonParse(parsedResponse.artifacts) ?? parsedResponse.artifacts
+             }
+         } catch (e) {
+             console.error('Error parsing chat message response', e)
+
+From b14960b2f29f1f1f10556c040d04f8b6b56588bc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Madrigal=20Jim=C3=A9nez=20Rub=C3=A9n?= <RuMadr@ice.go.cr>
+Date: Wed, 4 Mar 2026 15:27:17 -0600
+Subject: [PATCH 2/2] Fix: prevent crash when parsing malformed JSON in utils
+
+---
+ packages/components/src/utils.ts | 24 +++++++++++++++---------
+ 1 file changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 91bf5d4f1cb..b570130fe5d 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -124,6 +124,15 @@ const defaultAllowExternalDependencies = ['axios', 'moment', 'node-fetch']
+ 
+ export const defaultAllowBuiltInDep = ['assert', 'buffer', 'crypto', 'events', 'path', 'querystring', 'timers', 'url', 'zlib']
+ 
++const safeJsonParse = (input: string) => {
++    if (!input || input.trim() === '') return null
++    try {
++        return JSON.parse(input)
++    } catch {
++        return null
++    }
++}
++
+ /**
+  * Get base classes of components
+  *
+@@ -914,13 +923,8 @@ export const convertBaseMessagetoIMessage = (messages: BaseMessage[]): IMessage[
+  * @returns {string[]}
+  */
+ export const convertMultiOptionsToStringArray = (inputString: string): string[] => {
+-    let ArrayString: string[] = []
+-    try {
+-        ArrayString = JSON.parse(inputString)
+-    } catch (e) {
+-        ArrayString = []
+-    }
+-    return ArrayString
++    const parsed = safeJsonParse(inputString)
++    return Array.isArray(parsed) ? parsed : []
+ }
+ 
+ /**
+@@ -1318,7 +1322,8 @@ export const parseDocumentLoaderMetadata = (metadata: object | string): object =
+     if (!metadata) return {}
+ 
+     if (typeof metadata !== 'object') {
+-        return JSON.parse(metadata)
++        const parsed = safeJsonParse(metadata)
++        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+     }
+ 
+     return metadata
+@@ -1813,7 +1818,8 @@ export const processTemplateVariables = (state: ICommonObject, finalOutput: any)
+             if (match) {
+                 try {
+                     // Parse the response if it's JSON
+-                    const jsonResponse = typeof finalOutput === 'string' ? JSON.parse(finalOutput) : finalOutput
++                    const jsonResponse =
++                        typeof finalOutput === 'string' ? safeJsonParse(finalOutput) ?? finalOutput : finalOutput
+                     // Get the value using lodash get
+                     const path = match[1]
+                     const value = get(jsonResponse, path)

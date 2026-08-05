@@ -1,0 +1,68 @@
+From 07e97fa4eec63517519984b1a07eb504ac0ffef9 Mon Sep 17 00:00:00 2001
+From: Hetsavani <het07savani@gmail.com>
+Date: Wed, 19 Mar 2025 14:04:27 +0530
+Subject: [PATCH 1/2] Fixed: document loader cannot upload file with comma
+
+---
+ packages/ui/src/utils/genericHelper.js | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 32cfddb5b73..6e683aa68dd 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -346,8 +346,12 @@ export const getFileName = (fileBase64) => {
+         return fileNames.join(', ')
+     } else {
+         const splitDataURI = fileBase64.split(',')
+-        const filename = splitDataURI[splitDataURI.length - 1].split(':')[1]
+-        return filename
++        var name = ''
++        for (let i = 2; i < splitDataURI.length - 1; i++) {
++            name = name + splitDataURI[i] + ','
++        }
++        name += splitDataURI[splitDataURI.length - 1]
++        return name.substring(9)
+     }
+ }
+ 
+
+From 777b871fb4cc93763e1ac03ad41f24bc32edfbc8 Mon Sep 17 00:00:00 2001
+From: Hetsavani <het07savani@gmail.com>
+Date: Sun, 20 Apr 2025 14:18:50 +0530
+Subject: [PATCH 2/2] fixed-multiple-file-upload
+
+---
+ packages/ui/src/utils/genericHelper.js | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 6e683aa68dd..5e8bb693f57 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -338,19 +338,19 @@ export const getFileName = (fileBase64) => {
+     }
+     if (fileBase64.startsWith('[') && fileBase64.endsWith(']')) {
+         const files = JSON.parse(fileBase64)
++        let name = ''
+         for (const file of files) {
+-            const splitDataURI = file.split(',')
+-            const filename = splitDataURI[splitDataURI.length - 1].split(':')[1]
+-            fileNames.push(filename)
++            let ind = file.lastIndexOf(',filename:')
++            name = file.substring(ind + 10)
++            fileNames.push(name)
+         }
+         return fileNames.join(', ')
+     } else {
+         const splitDataURI = fileBase64.split(',')
+-        var name = ''
+-        for (let i = 2; i < splitDataURI.length - 1; i++) {
++        let name = ''
++        for (let i = 2; i <= splitDataURI.length - 1; i++) {
+             name = name + splitDataURI[i] + ','
+         }
+-        name += splitDataURI[splitDataURI.length - 1]
+         return name.substring(9)
+     }
+ }

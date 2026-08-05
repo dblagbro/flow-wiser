@@ -1,0 +1,55 @@
+From 31efcc8ba58ff01ea1727a62b8a6381d3a15482c Mon Sep 17 00:00:00 2001
+From: AkhilTrivediX <118957648+AkhilTrivediX@users.noreply.github.com>
+Date: Fri, 17 Jul 2026 15:21:34 +0530
+Subject: [PATCH] fix: honor telemetry opt-out
+
+---
+ packages/server/src/utils/telemetry.test.ts | 12 ++++++++++++
+ packages/server/src/utils/telemetry.ts      |  4 +++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/utils/telemetry.test.ts b/packages/server/src/utils/telemetry.test.ts
+index 41046bfc773..dcfd6b1cbed 100644
+--- a/packages/server/src/utils/telemetry.test.ts
++++ b/packages/server/src/utils/telemetry.test.ts
+@@ -43,6 +43,8 @@ const ORIGINAL_ENV = process.env
+ describe('utils/telemetry.ts', () => {
+     beforeEach(() => {
+         process.env = { ...ORIGINAL_ENV }
++        delete process.env.POSTHOG_PUBLIC_API_KEY
++        delete process.env.DISABLE_FLOWISE_TELEMETRY
+         jest.clearAllMocks()
+ 
+         jest.useFakeTimers()
+@@ -70,6 +72,16 @@ describe('utils/telemetry.ts', () => {
+             expect(posthogNode.PostHog).not.toHaveBeenCalled()
+         })
+ 
++        it('does not create PostHog when telemetry is disabled', async () => {
++            process.env.POSTHOG_PUBLIC_API_KEY = 'ph-key'
++            process.env.DISABLE_FLOWISE_TELEMETRY = 'true'
++
++            const t = new Telemetry()
++
++            expect(t.postHog).toBeUndefined()
++            expect(posthogNode.PostHog).not.toHaveBeenCalled()
++        })
++
+         it('creates PostHog when POSTHOG_PUBLIC_API_KEY is set and captures', async () => {
+             process.env.POSTHOG_PUBLIC_API_KEY = 'ph-key'
+ 
+diff --git a/packages/server/src/utils/telemetry.ts b/packages/server/src/utils/telemetry.ts
+index 177002f248b..0e441453c63 100644
+--- a/packages/server/src/utils/telemetry.ts
++++ b/packages/server/src/utils/telemetry.ts
+@@ -15,7 +15,9 @@ export class Telemetry {
+     postHog?: PostHog
+ 
+     constructor() {
+-        if (process.env.POSTHOG_PUBLIC_API_KEY) {
++        const telemetryDisabled = process.env.DISABLE_FLOWISE_TELEMETRY?.toLowerCase() === 'true'
++
++        if (process.env.POSTHOG_PUBLIC_API_KEY && !telemetryDisabled) {
+             this.postHog = new PostHog(process.env.POSTHOG_PUBLIC_API_KEY)
+         } else {
+             this.postHog = undefined

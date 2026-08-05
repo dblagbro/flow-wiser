@@ -1,0 +1,317 @@
+From 725e4b019687e516e89289f751cb44b2355e9121 Mon Sep 17 00:00:00 2001
+From: cansu-jarvis <cansu-jarvis@users.noreply.github.com>
+Date: Tue, 19 May 2026 21:07:28 +0300
+Subject: [PATCH 1/2] Fix legacy pdfjs dynamic import
+
+---
+ .../nodes/documentloaders/File/File.ts        |  6 ++---
+ .../nodes/documentloaders/Pdf/Pdf.ts          |  6 ++---
+ packages/components/nodes/tools/Arxiv/core.ts |  3 ++-
+ packages/components/src/utils.test.ts         | 22 ++++++++++++++++++-
+ packages/components/src/utils.ts              | 21 ++++++++++++++++++
+ 5 files changed, 50 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/File/File.ts b/packages/components/nodes/documentloaders/File/File.ts
+index c369a39633f..3fb2d96be1c 100644
+--- a/packages/components/nodes/documentloaders/File/File.ts
++++ b/packages/components/nodes/documentloaders/File/File.ts
+@@ -11,7 +11,7 @@ import { LoadOfSheet } from '../MicrosoftExcel/ExcelLoader'
+ import { PowerpointLoader } from '../MicrosoftPowerpoint/PowerpointLoader'
+ import { Document } from '@langchain/core/documents'
+ import { getFileFromStorage } from '../../../src/storageUtils'
+-import { handleEscapeCharacters, mapMimeTypeToExt } from '../../../src/utils'
++import { handleEscapeCharacters, loadLegacyPdfJs, mapMimeTypeToExt } from '../../../src/utils'
+ 
+ class File_DocumentLoaders implements INode {
+     label: string
+@@ -236,13 +236,13 @@ class File_DocumentLoaders implements INode {
+                           splitPages: false,
+                           pdfjs: () =>
+                               // @ts-ignore
+-                              legacyBuild ? import('pdfjs-dist/legacy/build/pdf.js') : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
++                              legacyBuild ? loadLegacyPdfJs() : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
+                       })
+                     : // @ts-ignore
+                       new PDFLoader(blob, {
+                           pdfjs: () =>
+                               // @ts-ignore
+-                              legacyBuild ? import('pdfjs-dist/legacy/build/pdf.js') : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
++                              legacyBuild ? loadLegacyPdfJs() : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
+                       }),
+             '': (blob) => new TextLoader(blob)
+         })
+diff --git a/packages/components/nodes/documentloaders/Pdf/Pdf.ts b/packages/components/nodes/documentloaders/Pdf/Pdf.ts
+index 0f52f814915..1684b452e31 100644
+--- a/packages/components/nodes/documentloaders/Pdf/Pdf.ts
++++ b/packages/components/nodes/documentloaders/Pdf/Pdf.ts
+@@ -2,7 +2,7 @@ import { omit } from 'lodash'
+ import { IDocument, ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { TextSplitter } from '@langchain/textsplitters'
+ import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf'
+-import { getFileFromStorage, handleEscapeCharacters, INodeOutputsValue } from '../../../src'
++import { getFileFromStorage, handleEscapeCharacters, INodeOutputsValue, loadLegacyPdfJs } from '../../../src'
+ 
+ class Pdf_DocumentLoaders implements INode {
+     label: string
+@@ -196,7 +196,7 @@ class Pdf_DocumentLoaders implements INode {
+                 splitPages: false,
+                 pdfjs: () =>
+                     // @ts-ignore
+-                    legacyBuild ? import('pdfjs-dist/legacy/build/pdf.js') : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
++                    legacyBuild ? loadLegacyPdfJs() : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
+             })
+             if (textSplitter) {
+                 let splittedDocs = await loader.load()
+@@ -209,7 +209,7 @@ class Pdf_DocumentLoaders implements INode {
+             const loader = new PDFLoader(new Blob([new Uint8Array(bf)]), {
+                 pdfjs: () =>
+                     // @ts-ignore
+-                    legacyBuild ? import('pdfjs-dist/legacy/build/pdf.js') : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
++                    legacyBuild ? loadLegacyPdfJs() : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
+             })
+             if (textSplitter) {
+                 let splittedDocs = await loader.load()
+diff --git a/packages/components/nodes/tools/Arxiv/core.ts b/packages/components/nodes/tools/Arxiv/core.ts
+index 2346fd0f0bd..562df5039cb 100644
+--- a/packages/components/nodes/tools/Arxiv/core.ts
++++ b/packages/components/nodes/tools/Arxiv/core.ts
+@@ -2,6 +2,7 @@ import { z } from 'zod/v3'
+ import fetch from 'node-fetch'
+ import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf'
+ import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
++import { loadLegacyPdfJs } from '../../../src/utils'
+ 
+ export const desc = `Use this tool to search for academic papers on Arxiv. You can search by keywords, topics, authors, or specific Arxiv IDs. The tool can return either paper summaries or download and extract full paper content.`
+ 
+@@ -184,7 +185,7 @@ export class ArxivTool extends DynamicStructuredTool {
+             splitPages: false,
+             pdfjs: () =>
+                 // @ts-ignore
+-                this.legacyBuild ? import('pdfjs-dist/legacy/build/pdf.js') : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
++                this.legacyBuild ? loadLegacyPdfJs() : import('pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js')
+         })
+ 
+         const docs = await loader.load()
+diff --git a/packages/components/src/utils.test.ts b/packages/components/src/utils.test.ts
+index ba8238ee049..1f95d40735f 100644
+--- a/packages/components/src/utils.test.ts
++++ b/packages/components/src/utils.test.ts
+@@ -1,4 +1,10 @@
+-import { removeInvalidImageMarkdown, convertRequireToImport, COMMONJS_REQUIRE_REGEX, IMPORT_EXTRACTION_REGEX } from './utils'
++import {
++    removeInvalidImageMarkdown,
++    convertRequireToImport,
++    COMMONJS_REQUIRE_REGEX,
++    IMPORT_EXTRACTION_REGEX,
++    loadLegacyPdfJs
++} from './utils'
+ 
+ describe('removeInvalidImageMarkdown', () => {
+     describe('strips non-http/https image markdown', () => {
+@@ -229,3 +235,17 @@ describe('Import extraction regex (utils.ts line 1596 pattern)', () => {
+         expect(extractModules('console.log("hello")')).toEqual([])
+     })
+ })
++
++describe('loadLegacyPdfJs', () => {
++    it('loads pdfjs-dist legacy pdf.mjs through a native file URL import', async () => {
++        const getDocument = jest.fn()
++        const importer = jest.fn().mockResolvedValue({ getDocument, version: '5.3.93' })
++        const resolver = jest.fn().mockReturnValue('/tmp/pdfjs-dist/legacy/build/pdf.mjs')
++
++        const loaded = await loadLegacyPdfJs(importer as any, resolver as any)
++
++        expect(resolver).toHaveBeenCalledWith('pdfjs-dist/legacy/build/pdf.mjs')
++        expect(importer).toHaveBeenCalledWith('file:///tmp/pdfjs-dist/legacy/build/pdf.mjs')
++        expect(loaded).toEqual({ getDocument, version: '5.3.93' })
++    })
++})
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index c89210a59f5..2c4aeca193a 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -14,6 +14,7 @@ import { JSDOM } from 'jsdom'
+ import JSON5 from 'json5'
+ import { cloneDeep, get, omit } from 'lodash'
+ import * as path from 'path'
++import { pathToFileURL } from 'url'
+ import TurndownService from 'turndown'
+ import { DataSource, Equal } from 'typeorm'
+ import { NodeVM } from 'vm2'
+@@ -28,6 +29,26 @@ export const numberOrExpressionRegex = '^(\\d+\\.?\\d*|{{.*}})$' //return true i
+ export const notEmptyRegex = '(.|\\s)*\\S(.|\\s)*' //return true if string is not empty or blank
+ export const FLOWISE_CHATID = 'flowise_chatId'
+ 
++type NativeModuleImporter = (specifier: string) => Promise<any>
++type ModuleResolver = (specifier: string) => string
++
++// Keep import() behind Function so TypeScript does not lower it to require(),
++// which cannot load pdfjs-dist's legacy ESM build from CommonJS output.
++const nativeImport: NativeModuleImporter = new Function('specifier', 'return import(specifier)') as NativeModuleImporter
++
++export const loadLegacyPdfJs = async (
++    importer: NativeModuleImporter = nativeImport,
++    resolver: ModuleResolver = (specifier) => require.resolve(specifier)
++): Promise<{ getDocument: unknown; version?: string }> => {
++    const modulePath = resolver('pdfjs-dist/legacy/build/pdf.mjs')
++    const pdfjs = await importer(pathToFileURL(modulePath).href)
++
++    return {
++        getDocument: pdfjs.getDocument,
++        version: pdfjs.version
++    }
++}
++
+ let secretsManagerClient: SecretsManagerClient | null = null
+ const USE_AWS_SECRETS_MANAGER = process.env.SECRETKEY_STORAGE_TYPE === 'aws'
+ if (USE_AWS_SECRETS_MANAGER) {
+
+From 739677668c9e62d809f90af11e728bdc57262b71 Mon Sep 17 00:00:00 2001
+From: cansu-jarvis <cansu-jarvis@users.noreply.github.com>
+Date: Tue, 19 May 2026 21:49:21 +0300
+Subject: [PATCH 2/2] Add legacy PDF build file upload option
+
+---
+ .../src/ui-component/extended/FileUpload.jsx  | 92 ++++++++++++-------
+ 1 file changed, 61 insertions(+), 31 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/extended/FileUpload.jsx b/packages/ui/src/ui-component/extended/FileUpload.jsx
+index fc561359088..37b08739fcb 100644
+--- a/packages/ui/src/ui-component/extended/FileUpload.jsx
++++ b/packages/ui/src/ui-component/extended/FileUpload.jsx
+@@ -34,7 +34,7 @@ const message = `The full contents of uploaded files will be converted to text a
+ <br />
+ Refer <a href='https://docs.flowiseai.com/using-flowise/uploads#files' target='_blank' style='color: #2196f3'>docs</a> for more details.`
+ 
+-const availableFileTypes = [
++export const availableFileTypes = [
+     { name: 'CSS', ext: 'text/css', extension: '.css' },
+     { name: 'CSV', ext: 'text/csv', extension: '.csv' },
+     { name: 'HTML', ext: 'text/html', extension: '.html' },
+@@ -51,6 +51,46 @@ const availableFileTypes = [
+     { name: 'PPTX', ext: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', extension: '.pptx' }
+ ]
+ 
++export const buildFullFileUploadConfig = ({ fullFileUpload, allowedFileTypes, pdfUsage, pdfLegacyBuild }) => ({
++    status: fullFileUpload,
++    allowedUploadFileTypes: allowedFileTypes.join(','),
++    pdfFile: {
++        usage: pdfUsage,
++        legacyBuild: pdfLegacyBuild
++    }
++})
++
++export const getInitialFileUploadState = (dialogProps) => {
++    const initialState = {
++        fullFileUpload: false,
++        allowedFileTypes: availableFileTypes.map((fileType) => fileType.ext),
++        chatbotConfig: {},
++        pdfUsage: 'perPage',
++        pdfLegacyBuild: false
++    }
++
++    if (!dialogProps?.chatflow?.chatbotConfig) {
++        return initialState
++    }
++
++    try {
++        const chatbotConfig = JSON.parse(dialogProps.chatflow.chatbotConfig)
++        const fullFileUploadConfig = chatbotConfig?.fullFileUpload
++
++        return {
++            fullFileUpload: !!fullFileUploadConfig?.status,
++            allowedFileTypes: fullFileUploadConfig?.allowedUploadFileTypes
++                ? fullFileUploadConfig.allowedUploadFileTypes.split(',')
++                : initialState.allowedFileTypes,
++            chatbotConfig: chatbotConfig || {},
++            pdfUsage: fullFileUploadConfig?.pdfFile?.usage || initialState.pdfUsage,
++            pdfLegacyBuild: fullFileUploadConfig?.pdfFile?.legacyBuild ?? initialState.pdfLegacyBuild
++        }
++    } catch (e) {
++        return initialState
++    }
++}
++
+ const FileUpload = ({ dialogProps }) => {
+     const dispatch = useDispatch()
+     const customization = useSelector((state) => state.customization)
+@@ -64,6 +104,7 @@ const FileUpload = ({ dialogProps }) => {
+     const [allowedFileTypes, setAllowedFileTypes] = useState([])
+     const [chatbotConfig, setChatbotConfig] = useState({})
+     const [pdfUsage, setPdfUsage] = useState('perPage')
++    const [pdfLegacyBuild, setPdfLegacyBuild] = useState(false)
+     const handleChange = (value) => {
+         setFullFileUpload(value)
+     }
+@@ -81,15 +122,13 @@ const FileUpload = ({ dialogProps }) => {
+         setPdfUsage(event.target.value)
+     }
+ 
++    const handlePdfLegacyBuildChange = (value) => {
++        setPdfLegacyBuild(value)
++    }
++
+     const onSave = async () => {
+         try {
+-            const value = {
+-                status: fullFileUpload,
+-                allowedUploadFileTypes: allowedFileTypes.join(','),
+-                pdfFile: {
+-                    usage: pdfUsage
+-                }
+-            }
++            const value = buildFullFileUploadConfig({ fullFileUpload, allowedFileTypes, pdfUsage, pdfLegacyBuild })
+             chatbotConfig.fullFileUpload = value
+ 
+             const saveResp = await chatflowsApi.updateChatflow(dialogProps.chatflow.id, {
+@@ -130,29 +169,12 @@ const FileUpload = ({ dialogProps }) => {
+     }
+ 
+     useEffect(() => {
+-        /* backward compatibility - by default, allow all */
+-        const allowedFileTypes = availableFileTypes.map((fileType) => fileType.ext)
+-        setAllowedFileTypes(allowedFileTypes)
+-        if (dialogProps.chatflow) {
+-            if (dialogProps.chatflow.chatbotConfig) {
+-                try {
+-                    let chatbotConfig = JSON.parse(dialogProps.chatflow.chatbotConfig)
+-                    setChatbotConfig(chatbotConfig || {})
+-                    if (chatbotConfig.fullFileUpload) {
+-                        setFullFileUpload(chatbotConfig.fullFileUpload.status)
+-                    }
+-                    if (chatbotConfig.fullFileUpload?.allowedUploadFileTypes) {
+-                        const allowedFileTypes = chatbotConfig.fullFileUpload.allowedUploadFileTypes.split(',')
+-                        setAllowedFileTypes(allowedFileTypes)
+-                    }
+-                    if (chatbotConfig.fullFileUpload?.pdfFile?.usage) {
+-                        setPdfUsage(chatbotConfig.fullFileUpload.pdfFile.usage)
+-                    }
+-                } catch (e) {
+-                    setChatbotConfig({})
+-                }
+-            }
+-        }
++        const initialState = getInitialFileUploadState(dialogProps)
++        setAllowedFileTypes(initialState.allowedFileTypes)
++        setChatbotConfig(initialState.chatbotConfig)
++        setFullFileUpload(initialState.fullFileUpload)
++        setPdfUsage(initialState.pdfUsage)
++        setPdfLegacyBuild(initialState.pdfLegacyBuild)
+ 
+         return () => {}
+     }, [dialogProps])
+@@ -268,6 +290,14 @@ const FileUpload = ({ dialogProps }) => {
+                                         />
+                                     </RadioGroup>
+                                 </FormControl>
++                                <Box sx={{ mt: 0.5 }}>
++                                    <SwitchInput
++                                        label='Use Legacy Build'
++                                        onChange={handlePdfLegacyBuildChange}
++                                        value={pdfLegacyBuild}
++                                        disabled={!fullFileUpload}
++                                    />
++                                </Box>
+                             </Box>
+                         )}
+                     </AccordionDetails>

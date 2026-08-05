@@ -1,0 +1,116 @@
+From 2bc4360165d2031361fa788732b5d7fd0231e0ab Mon Sep 17 00:00:00 2001
+From: Zhou jules <juleszhou01@gmail.com>
+Date: Sat, 11 Jul 2026 00:59:35 +0000
+Subject: [PATCH] fix(ui): prevent duplicate chatflow creation on rapid save
+ clicks
+
+When users click the Save/Create button multiple times in quick
+succession before the first API request completes, multiple chatflows
+are created.
+
+Fix by:
+1. Adding a `loading` prop to SaveChatflowDialog that disables the
+   confirm button while the save request is in progress
+2. Tracking saving state in CanvasHeader and passing it to the dialog
+3. Preventing dialog close while save is in progress
+
+Fixes #6502
+---
+ .../dialog/SaveChatflowDialog.jsx             | 13 ++++++++-----
+ packages/ui/src/views/canvas/CanvasHeader.jsx | 19 ++++++++++++++++---
+ 2 files changed, 24 insertions(+), 8 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx b/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
+index e567132899f..1ae36ccc090 100644
+--- a/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
+@@ -5,7 +5,7 @@ import PropTypes from 'prop-types'
+ import { Button, Dialog, DialogActions, DialogContent, OutlinedInput, DialogTitle } from '@mui/material'
+ import { StyledButton } from '@/ui-component/button/StyledButton'
+ 
+-const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
++const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm, loading = false }) => {
+     const portalElement = document.getElementById('portal')
+ 
+     const [chatflowName, setChatflowName] = useState('')
+@@ -16,6 +16,8 @@ const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
+         else setIsReadyToSave(false)
+     }, [chatflowName])
+ 
++    const isSaveDisabled = !isReadyToSave || loading
++
+     const component = show ? (
+         <Dialog
+             open={show}
+@@ -41,13 +43,13 @@ const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
+                     value={chatflowName}
+                     onChange={(e) => setChatflowName(e.target.value)}
+                     onKeyDown={(e) => {
+-                        if (isReadyToSave && e.key === 'Enter') onConfirm(e.target.value)
++                        if (!isSaveDisabled && e.key === 'Enter') onConfirm(e.target.value)
+                     }}
+                 />
+             </DialogContent>
+             <DialogActions>
+-                <Button onClick={onCancel}>{dialogProps.cancelButtonName}</Button>
+-                <StyledButton disabled={!isReadyToSave} variant='contained' onClick={() => onConfirm(chatflowName)}>
++                <Button onClick={onCancel} disabled={loading}>{dialogProps.cancelButtonName}</Button>
++                <StyledButton disabled={isSaveDisabled} variant='contained' onClick={() => onConfirm(chatflowName)}>
+                     {dialogProps.confirmButtonName}
+                 </StyledButton>
+             </DialogActions>
+@@ -61,7 +63,8 @@ SaveChatflowDialog.propTypes = {
+     show: PropTypes.bool,
+     dialogProps: PropTypes.object,
+     onCancel: PropTypes.func,
+-    onConfirm: PropTypes.func
++    onConfirm: PropTypes.func,
++    loading: PropTypes.bool
+ }
+ 
+ export default SaveChatflowDialog
+diff --git a/packages/ui/src/views/canvas/CanvasHeader.jsx b/packages/ui/src/views/canvas/CanvasHeader.jsx
+index ea455f41c2e..f8706141308 100644
+--- a/packages/ui/src/views/canvas/CanvasHeader.jsx
++++ b/packages/ui/src/views/canvas/CanvasHeader.jsx
+@@ -131,6 +131,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+     const [flowName, setFlowName] = useState('')
+     const [isSettingsOpen, setSettingsOpen] = useState(false)
+     const [flowDialogOpen, setFlowDialogOpen] = useState(false)
++    const [flowDialogLoading, setFlowDialogLoading] = useState(false)
+     const [apiDialogOpen, setAPIDialogOpen] = useState(false)
+     const [apiDialogProps, setAPIDialogProps] = useState({})
+     const [viewMessagesDialogOpen, setViewMessagesDialogOpen] = useState(false)
+@@ -324,9 +325,18 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+     }
+ 
+     const onConfirmSaveName = (flowName) => {
+-        setFlowDialogOpen(false)
++        setFlowDialogLoading(true)
+         setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
+-        handleSaveFlow(flowName)
++        const savePromise = handleSaveFlow(flowName)
++        if (savePromise && typeof savePromise.then === 'function') {
++            savePromise.finally(() => {
++                setFlowDialogOpen(false)
++                setFlowDialogLoading(false)
++            })
++        } else {
++            setFlowDialogOpen(false)
++            setFlowDialogLoading(false)
++        }
+     }
+ 
+     useEffect(() => {
+@@ -651,7 +661,10 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+                     confirmButtonName: 'Save',
+                     cancelButtonName: 'Cancel'
+                 }}
+-                onCancel={() => setFlowDialogOpen(false)}
++                loading={flowDialogLoading}
++                onCancel={() => {
++                    if (!flowDialogLoading) setFlowDialogOpen(false)
++                }}
+                 onConfirm={onConfirmSaveName}
+             />
+             {apiDialogOpen && <APICodeDialog show={apiDialogOpen} dialogProps={apiDialogProps} onCancel={() => setAPIDialogOpen(false)} />}

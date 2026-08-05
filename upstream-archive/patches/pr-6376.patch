@@ -1,0 +1,523 @@
+From a154f8c30e84aec2cbbf070104f74aea9e60c0cb Mon Sep 17 00:00:00 2001
+From: ExileK1G <2791541029@qq.com>
+Date: Wed, 13 May 2026 16:40:45 +0800
+Subject: [PATCH] fix(tools): validate Tool Icon Source and harden icon UI
+ (#6369)
+
+- Require http(s) URLs when set; optional empty with server-side normalization
+- Tool dialog validation, save guards, and iconSrc null safe state
+- Item card / tools table fallbacks for invalid or missing icon URLs
+- formatDataGridRows: guard non-array parsed schema
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .../server/src/controllers/tools/index.ts     |   5 +-
+ packages/server/src/utils/toolIconSrc.ts      |  26 ++++
+ .../ui/src/ui-component/cards/ItemCard.jsx    |   8 +-
+ .../src/ui-component/table/ToolsListTable.jsx | 125 ++++++++++++------
+ packages/ui/src/utils/genericHelper.js        |   3 +
+ packages/ui/src/utils/toolIconUrl.js          |  50 +++++++
+ packages/ui/src/views/tools/ToolDialog.jsx    |  74 +++++++++--
+ 7 files changed, 236 insertions(+), 55 deletions(-)
+ create mode 100644 packages/server/src/utils/toolIconSrc.ts
+ create mode 100644 packages/ui/src/utils/toolIconUrl.js
+
+diff --git a/packages/server/src/controllers/tools/index.ts b/packages/server/src/controllers/tools/index.ts
+index f4b3fef736f..1373de3e24b 100644
+--- a/packages/server/src/controllers/tools/index.ts
++++ b/packages/server/src/controllers/tools/index.ts
+@@ -3,6 +3,7 @@ import { StatusCodes } from 'http-status-codes'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import toolsService from '../../services/tools'
+ import { getPageAndLimitParams } from '../../utils/pagination'
++import { normalizeOptionalToolIconSrc } from '../../utils/toolIconSrc'
+ 
+ const createTool = async (req: Request, res: Response, next: NextFunction) => {
+     try {
+@@ -23,7 +24,7 @@ const createTool = async (req: Request, res: Response, next: NextFunction) => {
+         if (body.name !== undefined) toolBody.name = body.name
+         if (body.description !== undefined) toolBody.description = body.description
+         if (body.color !== undefined) toolBody.color = body.color
+-        if (body.iconSrc !== undefined) toolBody.iconSrc = body.iconSrc
++        if (body.iconSrc !== undefined) toolBody.iconSrc = normalizeOptionalToolIconSrc(body.iconSrc)
+         if (body.schema !== undefined) toolBody.schema = body.schema
+         if (body.func !== undefined) toolBody.func = body.func
+         toolBody.workspaceId = workspaceId
+@@ -98,7 +99,7 @@ const updateTool = async (req: Request, res: Response, next: NextFunction) => {
+         if (body.name !== undefined) toolBody.name = body.name
+         if (body.description !== undefined) toolBody.description = body.description
+         if (body.color !== undefined) toolBody.color = body.color
+-        if (body.iconSrc !== undefined) toolBody.iconSrc = body.iconSrc
++        if (body.iconSrc !== undefined) toolBody.iconSrc = normalizeOptionalToolIconSrc(body.iconSrc)
+         if (body.schema !== undefined) toolBody.schema = body.schema
+         if (body.func !== undefined) toolBody.func = body.func
+         const apiResponse = await toolsService.updateTool(req.params.id, toolBody, workspaceId)
+diff --git a/packages/server/src/utils/toolIconSrc.ts b/packages/server/src/utils/toolIconSrc.ts
+new file mode 100644
+index 00000000000..8e3b7f76b32
+--- /dev/null
++++ b/packages/server/src/utils/toolIconSrc.ts
+@@ -0,0 +1,26 @@
++import { StatusCodes } from 'http-status-codes'
++import { InternalFlowiseError } from '../errors/internalFlowiseError'
++
++/**
++ * Normalize optional tool iconSrc from the API: empty clears (null); non-empty must be http(s).
++ * Returns undefined when the client omitted the field (partial updates).
++ */
++export function normalizeOptionalToolIconSrc(iconSrc: unknown): string | null | undefined {
++    if (iconSrc === undefined) return undefined
++    if (iconSrc === null) return null
++    if (typeof iconSrc !== 'string') {
++        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, `Error: tool icon source must be a string, http(s) URL, or empty.`)
++    }
++    const trimmed = iconSrc.trim()
++    if (!trimmed) return null
++    try {
++        const u = new URL(trimmed)
++        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
++            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, `Error: tool icon source must be an http or https URL.`)
++        }
++        return u.href
++    } catch (e) {
++        if (e instanceof InternalFlowiseError) throw e
++        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, `Error: tool icon source must be a valid http or https URL.`)
++    }
++}
+diff --git a/packages/ui/src/ui-component/cards/ItemCard.jsx b/packages/ui/src/ui-component/cards/ItemCard.jsx
+index fa113ee22a1..3f37811ec59 100644
+--- a/packages/ui/src/ui-component/cards/ItemCard.jsx
++++ b/packages/ui/src/ui-component/cards/ItemCard.jsx
+@@ -9,6 +9,7 @@ import { Box, Grid, Tooltip, Typography, useTheme } from '@mui/material'
+ import MainCard from '@/ui-component/cards/MainCard'
+ import MoreItemsTooltip from '../tooltip/MoreItemsTooltip'
+ import ScheduleStatusBadge from '@/ui-component/extended/ScheduleStatusBadge'
++import { getItemCardIconBackgroundUrl } from '@/utils/toolIconUrl'
+ 
+ const CardWrapper = styled(MainCard)(({ theme }) => ({
+     background: theme.palette.card.main,
+@@ -34,6 +35,7 @@ const CardWrapper = styled(MainCard)(({ theme }) => ({
+ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
+     const theme = useTheme()
+     const customization = useSelector((state) => state.customization)
++    const headerIconBgUrl = getItemCardIconBackgroundUrl(data.iconSrc)
+ 
+     return (
+         <CardWrapper content={false} onClick={onClick} sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}>
+@@ -49,7 +51,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
+                                 overflow: 'hidden'
+                             }}
+                         >
+-                            {data.iconSrc && (
++                            {headerIconBgUrl && (
+                                 <div
+                                     style={{
+                                         width: 35,
+@@ -58,14 +60,14 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
+                                         flexShrink: 0,
+                                         marginRight: 10,
+                                         borderRadius: '50%',
+-                                        backgroundImage: `url(${data.iconSrc})`,
++                                        backgroundImage: `url(${headerIconBgUrl})`,
+                                         backgroundSize: 'contain',
+                                         backgroundRepeat: 'no-repeat',
+                                         backgroundPosition: 'center center'
+                                     }}
+                                 ></div>
+                             )}
+-                            {!data.iconSrc && data.color && (
++                            {!headerIconBgUrl && data.color && (
+                                 <div
+                                     style={{
+                                         width: 35,
+diff --git a/packages/ui/src/ui-component/table/ToolsListTable.jsx b/packages/ui/src/ui-component/table/ToolsListTable.jsx
+index f02e6366d9b..96468b8cb96 100644
+--- a/packages/ui/src/ui-component/table/ToolsListTable.jsx
++++ b/packages/ui/src/ui-component/table/ToolsListTable.jsx
+@@ -16,6 +16,9 @@ import {
+     useTheme
+ } from '@mui/material'
+ 
++import { getItemCardIconBackgroundUrl } from '@/utils/toolIconUrl'
++import defaultToolIcon from '@/assets/images/tool.svg'
++
+ const StyledTableCell = styled(TableCell)(({ theme }) => ({
+     borderColor: theme.palette.grey[900] + 25,
+ 
+@@ -87,47 +90,87 @@ export const ToolsTable = ({ data, isLoading, onSelect }) => {
+                             </>
+                         ) : (
+                             <>
+-                                {data?.map((row, index) => (
+-                                    <StyledTableRow key={index}>
+-                                        <StyledTableCell sx={{ display: 'flex', alignItems: 'center', gap: 1 }} key='0'>
+-                                            <div
+-                                                style={{
+-                                                    width: 35,
+-                                                    height: 35,
+-                                                    display: 'flex',
+-                                                    flexShrink: 0,
+-                                                    marginRight: 10,
+-                                                    borderRadius: '50%',
+-                                                    backgroundImage: `url(${row.iconSrc})`,
+-                                                    backgroundSize: 'contain',
+-                                                    backgroundRepeat: 'no-repeat',
+-                                                    backgroundPosition: 'center center'
+-                                                }}
+-                                            ></div>
+-                                            <Typography
+-                                                sx={{
+-                                                    display: '-webkit-box',
+-                                                    fontSize: 14,
+-                                                    fontWeight: 500,
+-                                                    WebkitLineClamp: 2,
+-                                                    WebkitBoxOrient: 'vertical',
+-                                                    textOverflow: 'ellipsis',
+-                                                    overflow: 'hidden'
+-                                                }}
+-                                            >
+-                                                <Button onClick={() => onSelect(row)} sx={{ textAlign: 'left' }}>
+-                                                    {row.templateName || row.name}
+-                                                </Button>
+-                                            </Typography>
+-                                        </StyledTableCell>
+-                                        <StyledTableCell key='1'>
+-                                            <Typography sx={{ overflowWrap: 'break-word', whiteSpace: 'pre-line' }}>
+-                                                {row.description || ''}
+-                                            </Typography>
+-                                        </StyledTableCell>
+-                                        <StyledTableCell key='3'></StyledTableCell>
+-                                    </StyledTableRow>
+-                                ))}
++                                {data?.map((row, index) => {
++                                    const headerIconBgUrl = getItemCardIconBackgroundUrl(row.iconSrc)
++                                    return (
++                                        <StyledTableRow key={index}>
++                                            <StyledTableCell sx={{ display: 'flex', alignItems: 'center', gap: 1 }} key='0'>
++                                                {headerIconBgUrl ? (
++                                                    <div
++                                                        style={{
++                                                            width: 35,
++                                                            height: 35,
++                                                            display: 'flex',
++                                                            flexShrink: 0,
++                                                            marginRight: 10,
++                                                            borderRadius: '50%',
++                                                            backgroundImage: `url(${headerIconBgUrl})`,
++                                                            backgroundSize: 'contain',
++                                                            backgroundRepeat: 'no-repeat',
++                                                            backgroundPosition: 'center center'
++                                                        }}
++                                                    ></div>
++                                                ) : row.color ? (
++                                                    <div
++                                                        style={{
++                                                            width: 35,
++                                                            height: 35,
++                                                            display: 'flex',
++                                                            flexShrink: 0,
++                                                            marginRight: 10,
++                                                            borderRadius: '50%',
++                                                            background: row.color
++                                                        }}
++                                                    ></div>
++                                                ) : (
++                                                    <div
++                                                        style={{
++                                                            width: 35,
++                                                            height: 35,
++                                                            display: 'flex',
++                                                            flexShrink: 0,
++                                                            marginRight: 10,
++                                                            borderRadius: '50%',
++                                                            alignItems: 'center',
++                                                            justifyContent: 'center',
++                                                            overflow: 'hidden',
++                                                            backgroundColor: customization.isDarkMode
++                                                                ? theme.palette.grey[800]
++                                                                : theme.palette.grey[200]
++                                                        }}
++                                                    >
++                                                        <img
++                                                            src={defaultToolIcon}
++                                                            alt=''
++                                                            style={{ width: 22, height: 22, objectFit: 'contain' }}
++                                                        />
++                                                    </div>
++                                                )}
++                                                <Typography
++                                                    sx={{
++                                                        display: '-webkit-box',
++                                                        fontSize: 14,
++                                                        fontWeight: 500,
++                                                        WebkitLineClamp: 2,
++                                                        WebkitBoxOrient: 'vertical',
++                                                        textOverflow: 'ellipsis',
++                                                        overflow: 'hidden'
++                                                    }}
++                                                >
++                                                    <Button onClick={() => onSelect(row)} sx={{ textAlign: 'left' }}>
++                                                        {row.templateName || row.name}
++                                                    </Button>
++                                                </Typography>
++                                            </StyledTableCell>
++                                            <StyledTableCell key='1'>
++                                                <Typography sx={{ overflowWrap: 'break-word', whiteSpace: 'pre-line' }}>
++                                                    {row.description || ''}
++                                                </Typography>
++                                            </StyledTableCell>
++                                            <StyledTableCell key='3'></StyledTableCell>
++                                        </StyledTableRow>
++                                    )
++                                })}
+                             </>
+                         )}
+                     </TableBody>
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index c077d3bceae..3e339ba8b00 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -869,6 +869,9 @@ export const isValidURL = (url) => {
+ export const formatDataGridRows = (rows) => {
+     try {
+         const parsedRows = typeof rows === 'string' ? JSON.parse(rows) : rows
++        if (!Array.isArray(parsedRows)) {
++            return []
++        }
+         return parsedRows.map((sch, index) => {
+             return {
+                 ...sch,
+diff --git a/packages/ui/src/utils/toolIconUrl.js b/packages/ui/src/utils/toolIconUrl.js
+new file mode 100644
+index 00000000000..64621f46c3f
+--- /dev/null
++++ b/packages/ui/src/utils/toolIconUrl.js
+@@ -0,0 +1,50 @@
++/**
++ * Custom Tool icon source: optional field; when set, must be an absolute http(s) URL.
++ * @param {string|undefined|null} value
++ * @returns {boolean}
++ */
++export function isOptionalHttpOrHttpsToolIconUrl(value) {
++    if (value == null) return true
++    const v = String(value).trim()
++    if (!v) return true
++    try {
++        const u = new URL(v)
++        return u.protocol === 'http:' || u.protocol === 'https:'
++    } catch {
++        return false
++    }
++}
++
++/**
++ * @param {string|undefined|null} value
++ * @returns {string|null}
++ */
++export function getValidHttpOrHttpsToolIconUrl(value) {
++    if (value == null) return null
++    const v = String(value).trim()
++    if (!v) return null
++    try {
++        const u = new URL(v)
++        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
++        return u.href
++    } catch {
++        return null
++    }
++}
++
++/**
++ * Resolves a value suitable for CSS `background-image: url(...)`, or null to use color/default fallback.
++ * Accepts http(s) URLs, root-relative paths, and data URLs; rejects plain invalid strings like "abc".
++ * @param {string|undefined|null} iconSrc
++ * @returns {string|null}
++ */
++export function getItemCardIconBackgroundUrl(iconSrc) {
++    if (iconSrc == null) return null
++    const t = String(iconSrc).trim()
++    if (!t) return null
++    const http = getValidHttpOrHttpsToolIconUrl(t)
++    if (http) return http
++    if (t.startsWith('/') || t.startsWith('./')) return t
++    if (t.toLowerCase().startsWith('data:')) return t
++    return null
++}
+diff --git a/packages/ui/src/views/tools/ToolDialog.jsx b/packages/ui/src/views/tools/ToolDialog.jsx
+index b73b15ec19a..379826569a7 100644
+--- a/packages/ui/src/views/tools/ToolDialog.jsx
++++ b/packages/ui/src/views/tools/ToolDialog.jsx
+@@ -5,7 +5,18 @@ import { useDispatch, useSelector } from 'react-redux'
+ import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction } from '@/store/actions'
+ import { cloneDeep } from 'lodash'
+ 
+-import { Box, Button, Typography, Dialog, DialogActions, DialogContent, DialogTitle, Stack, OutlinedInput } from '@mui/material'
++import {
++    Box,
++    Button,
++    Typography,
++    Dialog,
++    DialogActions,
++    DialogContent,
++    DialogTitle,
++    Stack,
++    OutlinedInput,
++    FormHelperText
++} from '@mui/material'
+ import { StyledButton } from '@/ui-component/button/StyledButton'
+ import { Grid } from '@/ui-component/grid/Grid'
+ import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
+@@ -32,6 +43,7 @@ import useApi from '@/hooks/useApi'
+ // utils
+ import useNotifier from '@/utils/useNotifier'
+ import { generateRandomGradient, formatDataGridRows } from '@/utils/genericHelper'
++import { isOptionalHttpOrHttpsToolIconUrl } from '@/utils/toolIconUrl'
+ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ 
+ const exampleAPIFunc = `/*
+@@ -120,7 +132,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             tool: {
+                 name: toolName,
+                 description: toolDesc,
+-                iconSrc: toolIcon,
++                iconSrc: toolIcon ?? '',
+                 schema: toolSchema,
+                 func: toolFunc
+             }
+@@ -177,6 +189,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             setToolId(getSpecificToolApi.data.id)
+             setToolName(getSpecificToolApi.data.name)
+             setToolDesc(getSpecificToolApi.data.description)
++            setToolIcon(getSpecificToolApi.data.iconSrc ?? '')
+             setToolSchema(formatDataGridRows(getSpecificToolApi.data.schema))
+             if (getSpecificToolApi.data.func) setToolFunc(getSpecificToolApi.data.func)
+             else setToolFunc('')
+@@ -196,7 +209,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             setToolId(dialogProps.data.id)
+             setToolName(dialogProps.data.name)
+             setToolDesc(dialogProps.data.description)
+-            setToolIcon(dialogProps.data.iconSrc)
++            setToolIcon(dialogProps.data.iconSrc ?? '')
+             setToolSchema(formatDataGridRows(dialogProps.data.schema))
+             if (dialogProps.data.func) setToolFunc(dialogProps.data.func)
+             else setToolFunc('')
+@@ -207,7 +220,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             // When tool dialog is to import existing tool
+             setToolName(dialogProps.data.name)
+             setToolDesc(dialogProps.data.description)
+-            setToolIcon(dialogProps.data.iconSrc)
++            setToolIcon(dialogProps.data.iconSrc ?? '')
+             setToolSchema(formatDataGridRows(dialogProps.data.schema))
+             if (dialogProps.data.func) setToolFunc(dialogProps.data.func)
+             else setToolFunc('')
+@@ -215,7 +228,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             // When tool dialog is a template
+             setToolName(dialogProps.data.name)
+             setToolDesc(dialogProps.data.description)
+-            setToolIcon(dialogProps.data.iconSrc)
++            setToolIcon(dialogProps.data.iconSrc ?? '')
+             setToolSchema(formatDataGridRows(dialogProps.data.schema))
+             if (dialogProps.data.func) setToolFunc(dialogProps.data.func)
+             else setToolFunc('')
+@@ -277,6 +290,23 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+     }
+ 
+     const addNewTool = async () => {
++        const trimmedIcon = (toolIcon ?? '').trim()
++        if (trimmedIcon && !isOptionalHttpOrHttpsToolIconUrl(trimmedIcon)) {
++            enqueueSnackbar({
++                message: 'Tool Icon Source must be a valid http or https URL, or left empty.',
++                options: {
++                    key: new Date().getTime() + Math.random(),
++                    variant: 'error',
++                    persist: true,
++                    action: (key) => (
++                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
++                            <IconX />
++                        </Button>
++                    )
++                }
++            })
++            return
++        }
+         try {
+             const obj = {
+                 name: toolName,
+@@ -284,7 +314,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+                 color: generateRandomGradient(),
+                 schema: JSON.stringify(toolSchema),
+                 func: toolFunc,
+-                iconSrc: toolIcon
++                iconSrc: trimmedIcon ? trimmedIcon : null
+             }
+             const createResp = await toolsApi.createNewTool(obj)
+             if (createResp.data) {
+@@ -323,13 +353,30 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+     }
+ 
+     const saveTool = async () => {
++        const trimmedIcon = (toolIcon ?? '').trim()
++        if (trimmedIcon && !isOptionalHttpOrHttpsToolIconUrl(trimmedIcon)) {
++            enqueueSnackbar({
++                message: 'Tool Icon Source must be a valid http or https URL, or left empty.',
++                options: {
++                    key: new Date().getTime() + Math.random(),
++                    variant: 'error',
++                    persist: true,
++                    action: (key) => (
++                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
++                            <IconX />
++                        </Button>
++                    )
++                }
++            })
++            return
++        }
+         try {
+             const saveResp = await toolsApi.updateTool(toolId, {
+                 name: toolName,
+                 description: toolDesc,
+                 schema: JSON.stringify(toolSchema),
+                 func: toolFunc,
+-                iconSrc: toolIcon
++                iconSrc: trimmedIcon ? trimmedIcon : null
+             })
+             if (saveResp.data) {
+                 enqueueSnackbar({
+@@ -419,6 +466,8 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+         setShowPasteJSONDialog(false)
+     }
+ 
++    const toolIconInvalid = (toolIcon ?? '').trim() !== '' && !isOptionalHttpOrHttpsToolIconUrl(toolIcon ?? '')
++
+     const component = show ? (
+         <Dialog
+             fullWidth
+@@ -511,10 +560,17 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+                             fullWidth
+                             disabled={dialogProps.type === 'TEMPLATE'}
+                             placeholder='https://raw.githubusercontent.com/gilbarbara/logos/main/logos/airtable.svg'
+-                            value={toolIcon}
++                            value={toolIcon ?? ''}
+                             name='toolIcon'
++                            error={toolIconInvalid}
+                             onChange={(e) => setToolIcon(e.target.value)}
++                            aria-describedby={toolIconInvalid ? 'tool-icon-helper-text' : undefined}
+                         />
++                        {toolIconInvalid && (
++                            <FormHelperText error id='tool-icon-helper-text'>
++                                Enter a valid http or https URL, or leave this field empty.
++                            </FormHelperText>
++                        )}
+                     </Box>
+                     <Box>
+                         <Stack sx={{ position: 'relative', justifyContent: 'space-between' }} direction='row'>
+@@ -583,7 +639,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+                 {dialogProps.type !== 'TEMPLATE' && (
+                     <StyledPermissionButton
+                         permissionId={'tools:update,tools:create'}
+-                        disabled={!(toolName && toolDesc)}
++                        disabled={!(toolName && toolDesc) || toolIconInvalid}
+                         variant='contained'
+                         onClick={() => (dialogProps.type === 'ADD' || dialogProps.type === 'IMPORT' ? addNewTool() : saveTool())}
+                     >

@@ -1,0 +1,115 @@
+From feb628862d49f72bd802df69dd090028e7cb6e2d Mon Sep 17 00:00:00 2001
+From: Dyan Galih <dyan.galih@gmail.com>
+Date: Wed, 17 Sep 2025 16:06:41 +0700
+Subject: [PATCH 1/2] fix(agents): avoid sending unsupported 'stop' param to
+ models (e.g. gpt-5-nano)
+
+Detect whether a model supports the `stop` parameter and only bind stop sequences when supported.
+Prevents 400 errors from models that reject `stop`.
+Files touched: ConversationalAgent, agents utils, XMLAgent (conditional stop binding).
+---
+ .../agents/ConversationalAgent/ConversationalAgent.ts    | 9 +++++----
+ packages/components/nodes/agents/XMLAgent/XMLAgent.ts    | 6 +++++-
+ packages/components/src/agents.ts                        | 9 ++++++---
+ 3 files changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/nodes/agents/ConversationalAgent/ConversationalAgent.ts b/packages/components/nodes/agents/ConversationalAgent/ConversationalAgent.ts
+index 8583826da46..fdc5db560e1 100644
+--- a/packages/components/nodes/agents/ConversationalAgent/ConversationalAgent.ts
++++ b/packages/components/nodes/agents/ConversationalAgent/ConversationalAgent.ts
+@@ -263,10 +263,11 @@ const prepareAgent = async (
+         }
+     }
+ 
+-    /** Bind a stop token to the model */
+-    const modelWithStop = model.bind({
+-        stop: ['\nObservation']
+-    })
++    /** Bind a stop token to the model if supported */
++    // Avoid passing `stop` to models that reject it (e.g. gpt-5-nano)
++    const { modelSupportsStop } = await import('../../../src/utils')
++    const modelId = (model as any)?.modelName ?? (model as any)?.model ?? (model as any)?.configuredModel
++    const modelWithStop = modelSupportsStop(modelId) ? model.bind({ stop: ['\nObservation'] }) : model
+ 
+     const runnableAgent = RunnableSequence.from([
+         {
+diff --git a/packages/components/nodes/agents/XMLAgent/XMLAgent.ts b/packages/components/nodes/agents/XMLAgent/XMLAgent.ts
+index f8377a66b79..126e114d42e 100644
+--- a/packages/components/nodes/agents/XMLAgent/XMLAgent.ts
++++ b/packages/components/nodes/agents/XMLAgent/XMLAgent.ts
+@@ -246,7 +246,11 @@ const prepareAgent = async (
+         throw new Error(`Provided prompt is missing required input variables: ${JSON.stringify(missingVariables)}`)
+     }
+ 
+-    const llmWithStop = model.bind({ stop: ['</tool_input>', '</final_answer>'] })
++    const { modelSupportsStop } = await import('../../../src/utils')
++    const modelId = (model as any)?.modelName ?? (model as any)?.model ?? (model as any)?.configuredModel
++    const llmWithStop = modelSupportsStop(modelId)
++        ? (model as BaseChatModel).bind({ stop: ['</tool_input>', '</final_answer>'] })
++        : (model as BaseChatModel)
+ 
+     const messages = (await memory.getChatMessages(flowObj.sessionId, false, prependMessages)) as IMessage[]
+     let chatHistoryMsgTxt = ''
+diff --git a/packages/components/src/agents.ts b/packages/components/src/agents.ts
+index 7b23f4788e8..5ece90df96f 100644
+--- a/packages/components/src/agents.ts
++++ b/packages/components/src/agents.ts
+@@ -24,6 +24,7 @@ import {
+ } from 'langchain/agents'
+ import { formatLogToString } from 'langchain/agents/format_scratchpad/log'
+ import { IUsedTool } from './Interface'
++import { modelSupportsStop } from './utils'
+ import { getErrorMessage } from './error'
+ 
+ export const SOURCE_DOCUMENTS_PREFIX = '\n\n----FLOWISE_SOURCE_DOCUMENTS----\n\n'
+@@ -778,9 +779,11 @@ export const createReactAgent = async ({ llm, tools, prompt }: CreateReactAgentP
+         tool_names: toolNames.join(', ')
+     })
+     // TODO: Add .bind to core runnable interface.
+-    const llmWithStop = (llm as BaseLanguageModel).bind({
+-        stop: ['\nObservation:']
+-    })
++    // Bind stop only when the underlying model supports it (some models like gpt-5-nano reject `stop`)
++    const llmModelName = (llm as any)?.modelName ?? (llm as any)?.model ?? (llm as any)?.configuredModel
++    const llmWithStop = modelSupportsStop(llmModelName)
++        ? (llm as BaseLanguageModel).bind({ stop: ['\nObservation:'] })
++        : (llm as BaseLanguageModel)
+     const agent = RunnableSequence.from([
+         RunnablePassthrough.assign({
+             //@ts-ignore
+
+From f5e5de55ff2925efaee9532056319b40d3d92efa Mon Sep 17 00:00:00 2001
+From: Dyan Galih <dyan.galih@gmail.com>
+Date: Thu, 18 Sep 2025 17:20:39 +0700
+Subject: [PATCH 2/2] add changes in the utils
+
+---
+ packages/components/src/utils.ts | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 7b0c4a25d5f..a79643b07be 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -138,6 +138,21 @@ export const defaultAllowBuiltInDep = [
+     'zlib'
+ ]
+ 
++/**
++ * Return true if the model name likely supports the `stop` parameter.
++ * Some newer OpenAI models (for example gpt-5-nano) do not accept the `stop` parameter
++ * and will return an HTTP 400 when it is provided. Add model names here as needed.
++ */
++export const modelSupportsStop = (modelName?: string): boolean => {
++    if (!modelName) return true
++    const lower = modelName.toLowerCase()
++    // Treat all gpt-5*, o1*, and o3* models as not supporting `stop`
++    // to avoid 400 Unsupported parameter errors.
++    const unsupportedPrefixes = ['gpt-5', 'o1', 'o3']
++    if (unsupportedPrefixes.some((prefix) => lower.startsWith(prefix))) return false
++    return true
++}
++
+ /**
+  * Get base classes of components
+  *

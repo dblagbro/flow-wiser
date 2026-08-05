@@ -1,0 +1,1712 @@
+From 77d8233c04e2087b23a1777b74ec39d39518910b Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 01:15:00 +0100
+Subject: [PATCH 1/8] feat: enhance sticky note interactions
+
+---
+ README.md                                     |  10 ++
+ packages/ui/src/assets/scss/style.scss        |   4 +
+ packages/ui/src/utils/genericHelper.js        |   4 +
+ packages/ui/src/views/agentflowsv2/Canvas.jsx |  23 ++-
+ .../ui/src/views/agentflowsv2/StickyNote.jsx  | 135 ++++++++++++++---
+ packages/ui/src/views/canvas/StickyNote.jsx   | 138 +++++++++++++++---
+ packages/ui/src/views/canvas/index.jsx        |  24 ++-
+ 7 files changed, 284 insertions(+), 54 deletions(-)
+
+diff --git a/README.md b/README.md
+index 1c7eb27e92d..bc0adfeff42 100644
+--- a/README.md
++++ b/README.md
+@@ -50,6 +50,16 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+ 
+ 3. Open [http://localhost:3000](http://localhost:3000)
+ 
++## ✨ Features
++
++### Enhanced Sticky Notes
++-   **Purpose:** Capture long-form thoughts with rich formatting while keeping the note unobtrusive behind flow nodes and connectors.
++-   **Usage example:**
++    1. Drag a sticky note onto the canvas.
++    2. Use the resize handles to expand the note, click the palette icon to switch between the five preset colors, and toggle the markdown mode to preview formatted content.
++    3. Save the flow—the sticky note keeps its size, color, and markdown content when reloaded or duplicated.
++-   **Dependencies / breaking changes:** No additional dependencies or breaking changes.
++
+ ## 🐳 Docker
+ 
+ ### Docker Compose
+diff --git a/packages/ui/src/assets/scss/style.scss b/packages/ui/src/assets/scss/style.scss
+index bda0dbb7bea..5fc13cea1f1 100644
+--- a/packages/ui/src/assets/scss/style.scss
++++ b/packages/ui/src/assets/scss/style.scss
+@@ -208,6 +208,10 @@
+     }
+ }
+ 
++.react-flow__node-stickyNote {
++    z-index: 0 !important;
++}
++
+ .spin-animation {
+     animation: spin 1s linear infinite;
+ }
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index ac834c77f19..d336a7d7399 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -223,6 +223,10 @@ export const initNode = (nodeData, newNodeId, isAgentflow) => {
+ 
+     nodeData.id = newNodeId
+ 
++    if (nodeData.type === 'StickyNote') {
++        nodeData.color = nodeData.color || '#FFE770'
++    }
++
+     return nodeData
+ }
+ 
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 07bf57df51b..4f4bac8f235 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -62,6 +62,19 @@ import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+ const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
++const applyStickyNoteStyling = (nodes = []) =>
++    nodes.map((node) =>
++        node.type === 'stickyNote'
++            ? {
++                  ...node,
++                  style: {
++                      ...node.style,
++                      zIndex: 0
++                  }
++              }
++            : node
++    )
++
+ // ==============================|| CANVAS ||============================== //
+ 
+ const AgentflowCanvas = () => {
+@@ -162,7 +175,7 @@ const AgentflowCanvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(nodes)
++            setNodes(applyStickyNoteStyling(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -333,6 +346,7 @@ const AgentflowCanvas = () => {
+                 newNode.type = 'iteration'
+             } else if (nodeData.type === 'StickyNote') {
+                 newNode.type = 'stickyNote'
++                newNode.style = { zIndex: 0 }
+             } else {
+                 newNode.type = 'agentFlow'
+             }
+@@ -408,7 +422,8 @@ const AgentflowCanvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) => {
+-                return (nds ?? []).concat(newNode).map((node) => {
++                const updatedNodes = applyStickyNoteStyling((nds ?? []).concat(newNode))
++                return updatedNodes.map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+                             ...node.data,
+@@ -448,7 +463,7 @@ const AgentflowCanvas = () => {
+             }
+         }
+ 
+-        setNodes(cloneNodes)
++        setNodes(applyStickyNoteStyling(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -528,7 +543,7 @@ const AgentflowCanvas = () => {
+         if (getSpecificChatflowApi.data) {
+             const chatflow = getSpecificChatflowApi.data
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+-            setNodes(initialFlow.nodes || [])
++            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+diff --git a/packages/ui/src/views/agentflowsv2/StickyNote.jsx b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+index c154adfa608..76294bd24e3 100644
+--- a/packages/ui/src/views/agentflowsv2/StickyNote.jsx
++++ b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+@@ -1,16 +1,17 @@
+ import PropTypes from 'prop-types'
+-import { useRef, useContext, useState } from 'react'
++import { useRef, useContext, useState, useEffect, useMemo } from 'react'
+ import { useSelector } from 'react-redux'
+-import { NodeToolbar } from 'reactflow'
++import { NodeToolbar, NodeResizer } from 'reactflow'
+ 
+ // material-ui
+ import { styled, useTheme, alpha, darken, lighten } from '@mui/material/styles'
+ 
+ // project imports
+-import { ButtonGroup, IconButton, Box } from '@mui/material'
+-import { IconCopy, IconTrash } from '@tabler/icons-react'
++import { ButtonGroup, IconButton, Box, Popover, Stack } from '@mui/material'
++import { IconCopy, IconMarkdown, IconMarkdownOff, IconPalette, IconTrash } from '@tabler/icons-react'
+ import { Input } from '@/ui-component/input/Input'
+ import MainCard from '@/ui-component/cards/MainCard'
++import { MemoizedReactMarkdown } from '@/ui-component/markdown/MemoizedReactMarkdown'
+ 
+ // const
+ import { flowContext } from '@/store/context/ReactFlowContext'
+@@ -41,8 +42,15 @@ const StickyNote = ({ data }) => {
+     const { reactFlowInstance, deleteNode, duplicateNode } = useContext(flowContext)
+     const [inputParam] = data.inputParams
+     const [isHovered, setIsHovered] = useState(false)
++    const [isEditing, setIsEditing] = useState(false)
++    const [anchorEl, setAnchorEl] = useState(null)
++    const colorOptions = useMemo(
++        () => ['#FFE770', '#B4F8C8', '#A0C4FF', '#FFADAD', '#FFD6A5'],
++        []
++    )
++    const [noteValue, setNoteValue] = useState(data.inputs?.[inputParam.name] ?? inputParam.default ?? '')
+ 
+-    const defaultColor = '#666666' // fallback color if data.color is not present
++    const defaultColor = '#FFE770' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+     // Get different shades of the color based on state
+@@ -54,15 +62,67 @@ const StickyNote = ({ data }) => {
+ 
+     const getBackgroundColor = () => {
+         if (customization.isDarkMode) {
+-            return isHovered ? darken(nodeColor, 0.7) : darken(nodeColor, 0.8)
++            return isHovered ? darken(nodeColor, 0.4) : darken(nodeColor, 0.5)
++        }
++        return isHovered ? lighten(nodeColor, 0.1) : lighten(nodeColor, 0.2)
++    }
++
++    useEffect(() => {
++        if (!data.color) {
++            data.color = defaultColor
+         }
+-        return isHovered ? lighten(nodeColor, 0.8) : lighten(nodeColor, 0.9)
++    }, [data, defaultColor])
++
++    const currentNoteValue = data.inputs?.[inputParam.name]
++
++    useEffect(() => {
++        const latestValue = currentNoteValue ?? inputParam.default ?? ''
++        setNoteValue(latestValue)
++    }, [currentNoteValue, inputParam.default, inputParam.name])
++
++    const handleToggleEditing = () => {
++        setIsEditing((prev) => !prev)
++    }
++
++    const handleColorButtonClick = (event) => {
++        setAnchorEl(event.currentTarget)
++    }
++
++    const handleColorSelect = (color) => {
++        data.color = color
++        setAnchorEl(null)
+     }
+ 
+     return (
+-        <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
++        <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} style={{ position: 'relative' }}>
+             <StyledNodeToolbar>
+                 <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
++                    <IconButton
++                        size={'small'}
++                        title='Change color'
++                        onClick={handleColorButtonClick}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.primary.main
++                            }
++                        }}
++                    >
++                        <IconPalette size={20} />
++                    </IconButton>
++                    <IconButton
++                        size={'small'}
++                        title={isEditing ? 'Preview markdown' : 'Edit markdown'}
++                        onClick={handleToggleEditing}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.primary.main
++                            }
++                        }}
++                    >
++                        {isEditing ? <IconMarkdown size={20} /> : <IconMarkdownOff size={20} />}
++                    </IconButton>
+                     <IconButton
+                         size={'small'}
+                         title='Duplicate'
+@@ -101,8 +161,9 @@ const StickyNote = ({ data }) => {
+                     borderColor: getStateColor(),
+                     borderWidth: '1px',
+                     boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
+-                    minHeight: 60,
+-                    height: 'auto',
++                    minHeight: 160,
++                    height: '100%',
++                    width: '100%',
+                     backgroundColor: getBackgroundColor(),
+                     display: 'flex',
+                     alignItems: 'center',
+@@ -112,19 +173,51 @@ const StickyNote = ({ data }) => {
+                 }}
+                 border={false}
+             >
+-                <Box>
+-                    <Input
+-                        key={data.id}
+-                        placeholder={inputParam.placeholder}
+-                        inputParam={inputParam}
+-                        onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
+-                        value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
+-                        nodes={reactFlowInstance ? reactFlowInstance.getNodes() : []}
+-                        edges={reactFlowInstance ? reactFlowInstance.getEdges() : []}
+-                        nodeId={data.id}
+-                    />
++                <Box sx={{ p: 1, width: '100%', height: '100%', overflow: 'auto' }}>
++                    {isEditing ? (
++                        <Input
++                            key={data.id}
++                            placeholder={inputParam.placeholder}
++                            inputParam={inputParam}
++                            onChange={(newValue) => {
++                                data.inputs[inputParam.name] = newValue
++                                setNoteValue(newValue)
++                            }}
++                            value={noteValue}
++                            nodes={reactFlowInstance ? reactFlowInstance.getNodes() : []}
++                            edges={reactFlowInstance ? reactFlowInstance.getEdges() : []}
++                            nodeId={data.id}
++                        />
++                    ) : (
++                        <MemoizedReactMarkdown>{noteValue || '*Add your note here...*'}</MemoizedReactMarkdown>
++                    )}
+                 </Box>
+             </CardWrapper>
++            <NodeResizer minWidth={180} minHeight={140} isVisible={data.selected} />
++            <Popover
++                open={Boolean(anchorEl)}
++                anchorEl={anchorEl}
++                onClose={() => setAnchorEl(null)}
++                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
++                transformOrigin={{ vertical: 'top', horizontal: 'center' }}
++            >
++                <Stack direction='row' spacing={1} sx={{ p: 1 }}>
++                    {colorOptions.map((color) => (
++                        <Box
++                            key={color}
++                            onClick={() => handleColorSelect(color)}
++                            sx={{
++                                width: 24,
++                                height: 24,
++                                borderRadius: '50%',
++                                backgroundColor: color,
++                                cursor: 'pointer',
++                                border: color === nodeColor ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent'
++                            }}
++                        />
++                    ))}
++                </Stack>
++            </Popover>
+         </div>
+     )
+ }
+diff --git a/packages/ui/src/views/canvas/StickyNote.jsx b/packages/ui/src/views/canvas/StickyNote.jsx
+index 938a18b78f5..7240d077e93 100644
+--- a/packages/ui/src/views/canvas/StickyNote.jsx
++++ b/packages/ui/src/views/canvas/StickyNote.jsx
+@@ -1,6 +1,7 @@
+ import PropTypes from 'prop-types'
+-import { useContext, useState, memo } from 'react'
++import { useContext, useEffect, useMemo, useState, memo } from 'react'
+ import { useSelector } from 'react-redux'
++import { NodeResizer } from 'reactflow'
+ 
+ // material-ui
+ import { useTheme, darken, lighten } from '@mui/material/styles'
+@@ -8,9 +9,10 @@ import { useTheme, darken, lighten } from '@mui/material/styles'
+ // project imports
+ import NodeCardWrapper from '@/ui-component/cards/NodeCardWrapper'
+ import NodeTooltip from '@/ui-component/tooltip/NodeTooltip'
+-import { IconButton, Box } from '@mui/material'
+-import { IconCopy, IconTrash } from '@tabler/icons-react'
++import { IconButton, Box, Popover, Stack } from '@mui/material'
++import { IconCopy, IconMarkdown, IconMarkdownOff, IconPalette, IconTrash } from '@tabler/icons-react'
+ import { Input } from '@/ui-component/input/Input'
++import { MemoizedReactMarkdown } from '@/ui-component/markdown/MemoizedReactMarkdown'
+ 
+ // const
+ import { flowContext } from '@/store/context/ReactFlowContext'
+@@ -19,10 +21,17 @@ const StickyNote = ({ data }) => {
+     const theme = useTheme()
+     const canvas = useSelector((state) => state.canvas)
+     const customization = useSelector((state) => state.customization)
+-    const { deleteNode, duplicateNode } = useContext(flowContext)
++    const { deleteNode, duplicateNode, reactFlowInstance } = useContext(flowContext)
+     const [inputParam] = data.inputParams
+ 
+     const [open, setOpen] = useState(false)
++    const [isEditing, setIsEditing] = useState(false)
++    const [anchorEl, setAnchorEl] = useState(null)
++    const colorOptions = useMemo(
++        () => ['#FFE770', '#B4F8C8', '#A0C4FF', '#FFADAD', '#FFD6A5'],
++        []
++    )
++    const [noteValue, setNoteValue] = useState(data.inputs?.[inputParam.name] ?? inputParam.default ?? '')
+ 
+     const handleClose = () => {
+         setOpen(false)
+@@ -35,6 +44,19 @@ const StickyNote = ({ data }) => {
+     const defaultColor = '#FFE770' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
++    useEffect(() => {
++        if (!data.color) {
++            data.color = defaultColor
++        }
++    }, [data, defaultColor])
++
++    const currentNoteValue = data.inputs?.[inputParam.name]
++
++    useEffect(() => {
++        const latestValue = currentNoteValue ?? inputParam.default ?? ''
++        setNoteValue(latestValue)
++    }, [currentNoteValue, inputParam.default, inputParam.name])
++
+     const getBorderColor = () => {
+         if (data.selected) return theme.palette.primary.main
+         else if (customization?.isDarkMode) return theme.palette.grey[700]
+@@ -43,12 +65,25 @@ const StickyNote = ({ data }) => {
+ 
+     const getBackgroundColor = () => {
+         if (customization?.isDarkMode) {
+-            return data.selected ? darken(nodeColor, 0.7) : darken(nodeColor, 0.8)
++            return data.selected ? darken(nodeColor, 0.4) : darken(nodeColor, 0.5)
+         } else {
+             return data.selected ? lighten(nodeColor, 0.1) : lighten(nodeColor, 0.2)
+         }
+     }
+ 
++    const handleColorButtonClick = (event) => {
++        setAnchorEl(event.currentTarget)
++    }
++
++    const handleColorSelect = (color) => {
++        data.color = color
++        setAnchorEl(null)
++    }
++
++    const handleToggleEditing = () => {
++        setIsEditing((prev) => !prev)
++    }
++
+     return (
+         <>
+             <NodeCardWrapper
+@@ -56,23 +91,47 @@ const StickyNote = ({ data }) => {
+                 sx={{
+                     padding: 0,
+                     borderColor: getBorderColor(),
+-                    backgroundColor: getBackgroundColor()
++                    backgroundColor: getBackgroundColor(),
++                    width: '100%',
++                    height: '100%',
++                    minWidth: 220,
++                    minHeight: 160,
++                    position: 'relative'
+                 }}
+                 border={false}
+             >
++                <NodeResizer minWidth={180} minHeight={140} isVisible={data.selected} />
+                 <NodeTooltip
+                     open={!canvas.canvasDialogShow && open}
+                     onClose={handleClose}
+                     onOpen={handleOpen}
+                     disableFocusListener={true}
+                     title={
+-                        <div
+-                            style={{
+-                                background: 'transparent',
+-                                display: 'flex',
+-                                flexDirection: 'column'
+-                            }}
+-                        >
++                        <Stack spacing={0.5}>
++                            <IconButton
++                                title='Change color'
++                                onClick={handleColorButtonClick}
++                                sx={{
++                                    height: '35px',
++                                    width: '35px',
++                                    color: customization?.isDarkMode ? 'white' : 'inherit',
++                                    '&:hover': { color: theme?.palette.primary.main }
++                                }}
++                            >
++                                <IconPalette />
++                            </IconButton>
++                            <IconButton
++                                title={isEditing ? 'Preview markdown' : 'Edit markdown'}
++                                onClick={handleToggleEditing}
++                                sx={{
++                                    height: '35px',
++                                    width: '35px',
++                                    color: customization?.isDarkMode ? 'white' : 'inherit',
++                                    '&:hover': { color: theme?.palette.primary.main }
++                                }}
++                            >
++                                {isEditing ? <IconMarkdown /> : <IconMarkdownOff />}
++                            </IconButton>
+                             <IconButton
+                                 title='Duplicate'
+                                 onClick={() => {
+@@ -101,23 +160,54 @@ const StickyNote = ({ data }) => {
+                             >
+                                 <IconTrash />
+                             </IconButton>
+-                        </div>
++                        </Stack>
+                     }
+                     placement='right-start'
+                 >
+-                    <Box>
+-                        <Input
+-                            key={data.id}
+-                            inputParam={inputParam}
+-                            onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
+-                            value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
+-                            nodes={inputParam?.acceptVariable && reactFlowInstance ? reactFlowInstance.getNodes() : []}
+-                            edges={inputParam?.acceptVariable && reactFlowInstance ? reactFlowInstance.getEdges() : []}
+-                            nodeId={data.id}
+-                        />
++                    <Box sx={{ p: 1.5, width: '100%', height: '100%', overflow: 'auto' }}>
++                        {isEditing ? (
++                            <Input
++                                key={data.id}
++                                inputParam={inputParam}
++                                onChange={(newValue) => {
++                                    data.inputs[inputParam.name] = newValue
++                                    setNoteValue(newValue)
++                                }}
++                                value={noteValue}
++                                nodes={inputParam?.acceptVariable && reactFlowInstance ? reactFlowInstance.getNodes() : []}
++                                edges={inputParam?.acceptVariable && reactFlowInstance ? reactFlowInstance.getEdges() : []}
++                                nodeId={data.id}
++                            />
++                        ) : (
++                            <MemoizedReactMarkdown>{noteValue || '*Add your note here...*'}</MemoizedReactMarkdown>
++                        )}
+                     </Box>
+                 </NodeTooltip>
+             </NodeCardWrapper>
++            <Popover
++                open={Boolean(anchorEl)}
++                anchorEl={anchorEl}
++                onClose={() => setAnchorEl(null)}
++                anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
++                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
++            >
++                <Stack direction='row' spacing={1} sx={{ p: 1 }}>
++                    {colorOptions.map((color) => (
++                        <Box
++                            key={color}
++                            onClick={() => handleColorSelect(color)}
++                            sx={{
++                                width: 24,
++                                height: 24,
++                                borderRadius: '50%',
++                                backgroundColor: color,
++                                cursor: 'pointer',
++                                border: color === nodeColor ? `2px solid ${theme.palette.primary.main}` : '2px solid transparent'
++                            }}
++                        />
++                    ))}
++                </Stack>
++            </Popover>
+         </>
+     )
+ }
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 8835706ecf3..e98abafac0e 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -58,6 +58,19 @@ import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
+ const nodeTypes = { customNode: CanvasNode, stickyNote: StickyNote }
+ const edgeTypes = { buttonedge: ButtonEdge }
+ 
++const applyStickyNoteStyling = (nodes = []) =>
++    nodes.map((node) =>
++        node.type === 'stickyNote'
++            ? {
++                  ...node,
++                  style: {
++                      ...node.style,
++                      zIndex: 0
++                  }
++              }
++            : node
++    )
++
+ // ==============================|| CANVAS ||============================== //
+ 
+ const Canvas = () => {
+@@ -168,7 +181,7 @@ const Canvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(nodes)
++            setNodes(applyStickyNoteStyling(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -295,12 +308,13 @@ const Canvas = () => {
+                 id: newNodeId,
+                 position,
+                 type: nodeData.type !== 'StickyNote' ? 'customNode' : 'stickyNote',
+-                data: initNode(nodeData, newNodeId)
++                data: initNode(nodeData, newNodeId),
++                style: nodeData.type === 'StickyNote' ? { zIndex: 0 } : undefined
+             }
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) =>
+-                nds.concat(newNode).map((node) => {
++                applyStickyNoteStyling(nds.concat(newNode)).map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+                             ...node.data,
+@@ -340,7 +354,7 @@ const Canvas = () => {
+             }
+         }
+ 
+-        setNodes(cloneNodes)
++        setNodes(applyStickyNoteStyling(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -416,7 +430,7 @@ const Canvas = () => {
+             }
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+             setLasUpdatedDateTime(chatflow.updatedDate)
+-            setNodes(initialFlow.nodes || [])
++            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+
+From 4900c104bd226298381bdd8959741b6b1b3c39d2 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 01:15:00 +0100
+Subject: [PATCH 2/8] feat: enhance sticky note interactions
+
+
+From 3bf0bcaf8cb81a3d04d64ce6ca71ec8ca7285419 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 09:12:22 +0100
+Subject: [PATCH 3/8] Normalize sticky note defaults
+
+---
+ .../ui/src/store/context/ReactFlowContext.jsx |  4 +--
+ packages/ui/src/utils/genericHelper.js        | 28 +++++++++++++++++++
+ packages/ui/src/views/agentflowsv2/Canvas.jsx | 26 +++++------------
+ .../views/agentflowsv2/MarketplaceCanvas.jsx  |  3 +-
+ .../ui/src/views/agentflowsv2/StickyNote.jsx  |  3 +-
+ packages/ui/src/views/canvas/StickyNote.jsx   |  3 +-
+ packages/ui/src/views/canvas/index.jsx        | 26 +++++------------
+ .../views/marketplaces/MarketplaceCanvas.jsx  |  3 +-
+ 8 files changed, 52 insertions(+), 44 deletions(-)
+
+diff --git a/packages/ui/src/store/context/ReactFlowContext.jsx b/packages/ui/src/store/context/ReactFlowContext.jsx
+index d59f28d5081..f9d520e8c0e 100644
+--- a/packages/ui/src/store/context/ReactFlowContext.jsx
++++ b/packages/ui/src/store/context/ReactFlowContext.jsx
+@@ -1,7 +1,7 @@
+ import { createContext, useState } from 'react'
+ import { useDispatch } from 'react-redux'
+ import PropTypes from 'prop-types'
+-import { getUniqueNodeId, showHideInputParams } from '@/utils/genericHelper'
++import { getUniqueNodeId, showHideInputParams, normalizeStickyNoteNodes } from '@/utils/genericHelper'
+ import { cloneDeep, isEqual } from 'lodash'
+ import { SET_DIRTY } from '@/store/actions'
+ 
+@@ -239,7 +239,7 @@ export const ReactFlowContext = ({ children }) => {
+                 }
+             }
+ 
+-            reactFlowInstance.setNodes([...nodes, duplicatedNode])
++            reactFlowInstance.setNodes(normalizeStickyNoteNodes([...nodes, duplicatedNode]))
+             dispatch({ type: SET_DIRTY })
+         }
+     }
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index d336a7d7399..65a353bb289 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -1,6 +1,34 @@
+ import { uniq, get, isEqual } from 'lodash'
+ import moment from 'moment'
+ 
++export const DEFAULT_STICKY_NOTE_COLOR = '#FFE770'
++
++const isStickyNoteNode = (node) => {
++    if (!node) return false
++
++    const nodeName = node?.data?.name
++    return node.type === 'stickyNote' || nodeName === 'stickyNote' || nodeName === 'stickyNoteAgentflow'
++}
++
++export const normalizeStickyNoteNodes = (nodes = []) =>
++    nodes.map((node) => {
++        if (!isStickyNoteNode(node)) return node
++
++        const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
++
++        return {
++            ...node,
++            data: {
++                ...node.data,
++                color
++            },
++            style: {
++                ...node.style,
++                zIndex: node?.style?.zIndex ?? 0
++            }
++        }
++    })
++
+ export const getUniqueNodeId = (nodeData, nodes) => {
+     let suffix = 0
+ 
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 4f4bac8f235..36b84e9e0a3 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -51,7 +51,8 @@ import {
+     initNode,
+     updateOutdatedNodeData,
+     updateOutdatedNodeEdge,
+-    isValidConnectionAgentflowV2
++    isValidConnectionAgentflowV2,
++    normalizeStickyNoteNodes
+ } from '@/utils/genericHelper'
+ import useNotifier from '@/utils/useNotifier'
+ import { usePrompt } from '@/utils/usePrompt'
+@@ -62,19 +63,6 @@ import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+ const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
+-const applyStickyNoteStyling = (nodes = []) =>
+-    nodes.map((node) =>
+-        node.type === 'stickyNote'
+-            ? {
+-                  ...node,
+-                  style: {
+-                      ...node.style,
+-                      zIndex: 0
+-                  }
+-              }
+-            : node
+-    )
+-
+ // ==============================|| CANVAS ||============================== //
+ 
+ const AgentflowCanvas = () => {
+@@ -175,7 +163,7 @@ const AgentflowCanvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(applyStickyNoteStyling(nodes))
++            setNodes(normalizeStickyNoteNodes(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -217,7 +205,7 @@ const AgentflowCanvas = () => {
+ 
+     const handleSaveFlow = (chatflowName) => {
+         if (reactFlowInstance) {
+-            const nodes = reactFlowInstance.getNodes().map((node) => {
++            const nodes = normalizeStickyNoteNodes(reactFlowInstance.getNodes()).map((node) => {
+                 const nodeData = cloneDeep(node.data)
+                 if (Object.prototype.hasOwnProperty.call(nodeData.inputs, FLOWISE_CREDENTIAL_ID)) {
+                     nodeData.credential = nodeData.inputs[FLOWISE_CREDENTIAL_ID]
+@@ -422,7 +410,7 @@ const AgentflowCanvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) => {
+-                const updatedNodes = applyStickyNoteStyling((nds ?? []).concat(newNode))
++                const updatedNodes = normalizeStickyNoteNodes((nds ?? []).concat(newNode))
+                 return updatedNodes.map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+@@ -463,7 +451,7 @@ const AgentflowCanvas = () => {
+             }
+         }
+ 
+-        setNodes(applyStickyNoteStyling(cloneNodes))
++        setNodes(normalizeStickyNoteNodes(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -543,7 +531,7 @@ const AgentflowCanvas = () => {
+         if (getSpecificChatflowApi.data) {
+             const chatflow = getSpecificChatflowApi.data
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+-            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+diff --git a/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx b/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
+index aa62363c49a..793a7cc5aa9 100644
+--- a/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
+@@ -18,6 +18,7 @@ import MarketplaceCanvasHeader from '@/views/marketplaces/MarketplaceCanvasHeade
+ import StickyNote from './StickyNote'
+ import EditNodeDialog from '@/views/agentflowsv2/EditNodeDialog'
+ import { flowContext } from '@/store/context/ReactFlowContext'
++import { normalizeStickyNoteNodes } from '@/utils/genericHelper'
+ 
+ // icons
+ import { IconMagnetFilled, IconMagnetOff, IconArtboard, IconArtboardOff } from '@tabler/icons-react'
+@@ -52,7 +53,7 @@ const MarketplaceCanvasV2 = () => {
+     useEffect(() => {
+         if (flowData) {
+             const initialFlow = JSON.parse(flowData)
+-            setNodes(initialFlow.nodes || [])
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+         }
+ 
+diff --git a/packages/ui/src/views/agentflowsv2/StickyNote.jsx b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+index 76294bd24e3..3f4668dd01a 100644
+--- a/packages/ui/src/views/agentflowsv2/StickyNote.jsx
++++ b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+@@ -15,6 +15,7 @@ import { MemoizedReactMarkdown } from '@/ui-component/markdown/MemoizedReactMark
+ 
+ // const
+ import { flowContext } from '@/store/context/ReactFlowContext'
++import { DEFAULT_STICKY_NOTE_COLOR } from '@/utils/genericHelper'
+ 
+ const CardWrapper = styled(MainCard)(({ theme }) => ({
+     background: theme.palette.card.main,
+@@ -50,7 +51,7 @@ const StickyNote = ({ data }) => {
+     )
+     const [noteValue, setNoteValue] = useState(data.inputs?.[inputParam.name] ?? inputParam.default ?? '')
+ 
+-    const defaultColor = '#FFE770' // fallback color if data.color is not present
++    const defaultColor = DEFAULT_STICKY_NOTE_COLOR // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+     // Get different shades of the color based on state
+diff --git a/packages/ui/src/views/canvas/StickyNote.jsx b/packages/ui/src/views/canvas/StickyNote.jsx
+index 7240d077e93..55707d6cae7 100644
+--- a/packages/ui/src/views/canvas/StickyNote.jsx
++++ b/packages/ui/src/views/canvas/StickyNote.jsx
+@@ -16,6 +16,7 @@ import { MemoizedReactMarkdown } from '@/ui-component/markdown/MemoizedReactMark
+ 
+ // const
+ import { flowContext } from '@/store/context/ReactFlowContext'
++import { DEFAULT_STICKY_NOTE_COLOR } from '@/utils/genericHelper'
+ 
+ const StickyNote = ({ data }) => {
+     const theme = useTheme()
+@@ -41,7 +42,7 @@ const StickyNote = ({ data }) => {
+         setOpen(true)
+     }
+ 
+-    const defaultColor = '#FFE770' // fallback color if data.color is not present
++    const defaultColor = DEFAULT_STICKY_NOTE_COLOR // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+     useEffect(() => {
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index e98abafac0e..07313d8e1bd 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -47,7 +47,8 @@ import {
+     rearrangeToolsOrdering,
+     getUpsertDetails,
+     updateOutdatedNodeData,
+-    updateOutdatedNodeEdge
++    updateOutdatedNodeEdge,
++    normalizeStickyNoteNodes
+ } from '@/utils/genericHelper'
+ import useNotifier from '@/utils/useNotifier'
+ import { usePrompt } from '@/utils/usePrompt'
+@@ -58,19 +59,6 @@ import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
+ const nodeTypes = { customNode: CanvasNode, stickyNote: StickyNote }
+ const edgeTypes = { buttonedge: ButtonEdge }
+ 
+-const applyStickyNoteStyling = (nodes = []) =>
+-    nodes.map((node) =>
+-        node.type === 'stickyNote'
+-            ? {
+-                  ...node,
+-                  style: {
+-                      ...node.style,
+-                      zIndex: 0
+-                  }
+-              }
+-            : node
+-    )
+-
+ // ==============================|| CANVAS ||============================== //
+ 
+ const Canvas = () => {
+@@ -181,7 +169,7 @@ const Canvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(applyStickyNoteStyling(nodes))
++            setNodes(normalizeStickyNoteNodes(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -223,7 +211,7 @@ const Canvas = () => {
+ 
+     const handleSaveFlow = async (chatflowName) => {
+         if (reactFlowInstance) {
+-            const nodes = reactFlowInstance.getNodes().map((node) => {
++            const nodes = normalizeStickyNoteNodes(reactFlowInstance.getNodes()).map((node) => {
+                 const nodeData = cloneDeep(node.data)
+                 if (Object.prototype.hasOwnProperty.call(nodeData.inputs, FLOWISE_CREDENTIAL_ID)) {
+                     nodeData.credential = nodeData.inputs[FLOWISE_CREDENTIAL_ID]
+@@ -314,7 +302,7 @@ const Canvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) =>
+-                applyStickyNoteStyling(nds.concat(newNode)).map((node) => {
++                normalizeStickyNoteNodes(nds.concat(newNode)).map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+                             ...node.data,
+@@ -354,7 +342,7 @@ const Canvas = () => {
+             }
+         }
+ 
+-        setNodes(applyStickyNoteStyling(cloneNodes))
++        setNodes(normalizeStickyNoteNodes(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -430,7 +418,7 @@ const Canvas = () => {
+             }
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+             setLasUpdatedDateTime(chatflow.updatedDate)
+-            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+diff --git a/packages/ui/src/views/marketplaces/MarketplaceCanvas.jsx b/packages/ui/src/views/marketplaces/MarketplaceCanvas.jsx
+index b1b9c2b1121..74602232354 100644
+--- a/packages/ui/src/views/marketplaces/MarketplaceCanvas.jsx
++++ b/packages/ui/src/views/marketplaces/MarketplaceCanvas.jsx
+@@ -14,6 +14,7 @@ import { useTheme } from '@mui/material/styles'
+ import MarketplaceCanvasNode from './MarketplaceCanvasNode'
+ import MarketplaceCanvasHeader from './MarketplaceCanvasHeader'
+ import StickyNote from '../canvas/StickyNote'
++import { normalizeStickyNoteNodes } from '@/utils/genericHelper'
+ 
+ // icons
+ import { IconMagnetFilled, IconMagnetOff, IconArtboard, IconArtboardOff } from '@tabler/icons-react'
+@@ -45,7 +46,7 @@ const MarketplaceCanvas = () => {
+     useEffect(() => {
+         if (flowData) {
+             const initialFlow = JSON.parse(flowData)
+-            setNodes(initialFlow.nodes || [])
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+         }
+ 
+
+From 71f8fdd9c0eef1c2a652d89051c3aacb10538b23 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 09:57:09 +0100
+Subject: [PATCH 4/8] Fix sticky note layering
+
+---
+ README.md                              |  1 +
+ packages/ui/src/assets/scss/style.scss |  2 +-
+ packages/ui/src/utils/genericHelper.js | 50 ++++++++++++++++++++------
+ 3 files changed, 41 insertions(+), 12 deletions(-)
+
+diff --git a/README.md b/README.md
+index bc0adfeff42..673aa260cab 100644
+--- a/README.md
++++ b/README.md
+@@ -59,6 +59,7 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+     2. Use the resize handles to expand the note, click the palette icon to switch between the five preset colors, and toggle the markdown mode to preview formatted content.
+     3. Save the flow—the sticky note keeps its size, color, and markdown content when reloaded or duplicated.
+ -   **Dependencies / breaking changes:** No additional dependencies or breaking changes.
++-   **Layering assurance:** Notes automatically stay behind every agentflow and chatflow node as well as their connectors so they never hide important UI.
+ 
+ ## 🐳 Docker
+ 
+diff --git a/packages/ui/src/assets/scss/style.scss b/packages/ui/src/assets/scss/style.scss
+index 5fc13cea1f1..c01c20403cb 100644
+--- a/packages/ui/src/assets/scss/style.scss
++++ b/packages/ui/src/assets/scss/style.scss
+@@ -209,7 +209,7 @@
+ }
+ 
+ .react-flow__node-stickyNote {
+-    z-index: 0 !important;
++    z-index: -1 !important;
+ }
+ 
+ .spin-animation {
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 65a353bb289..24005e3433e 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -2,6 +2,8 @@ import { uniq, get, isEqual } from 'lodash'
+ import moment from 'moment'
+ 
+ export const DEFAULT_STICKY_NOTE_COLOR = '#FFE770'
++const DEFAULT_STICKY_NOTE_Z_INDEX = -1
++const DEFAULT_NODE_Z_INDEX = 1
+ 
+ const isStickyNoteNode = (node) => {
+     if (!node) return false
+@@ -12,21 +14,47 @@ const isStickyNoteNode = (node) => {
+ 
+ export const normalizeStickyNoteNodes = (nodes = []) =>
+     nodes.map((node) => {
+-        if (!isStickyNoteNode(node)) return node
++        if (!node) return node
+ 
+-        const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
++        if (isStickyNoteNode(node)) {
++            const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
++            const currentZIndex = node?.style?.zIndex
+ 
+-        return {
+-            ...node,
+-            data: {
+-                ...node.data,
+-                color
+-            },
+-            style: {
+-                ...node.style,
+-                zIndex: node?.style?.zIndex ?? 0
++            const needsColorUpdate = node?.data?.color !== color
++            const needsZIndexUpdate = currentZIndex !== DEFAULT_STICKY_NOTE_Z_INDEX
++
++            if (!needsColorUpdate && !needsZIndexUpdate) {
++                return node
++            }
++
++            return {
++                ...node,
++                data: needsColorUpdate
++                    ? {
++                          ...node.data,
++                          color
++                      }
++                    : node.data,
++                style: needsZIndexUpdate
++                    ? {
++                          ...node.style,
++                          zIndex: DEFAULT_STICKY_NOTE_Z_INDEX
++                      }
++                    : node.style
+             }
+         }
++
++        if (node?.style?.zIndex == null) {
++            return {
++                ...node,
++                style: {
++                    ...node.style,
++                    zIndex: DEFAULT_NODE_Z_INDEX
++                }
++            }
++        }
++
++        return node
+     })
+ 
+ export const getUniqueNodeId = (nodeData, nodes) => {
+
+From e9e0843600692fa42f3949b00cd0679dc22ceac6 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 01:15:00 +0100
+Subject: [PATCH 5/8] feat: enhance sticky note interactions
+
+---
+ README.md                                     |  1 -
+ packages/ui/src/assets/scss/style.scss        |  2 +-
+ packages/ui/src/views/agentflowsv2/Canvas.jsx | 21 +++++++++++++++----
+ .../ui/src/views/agentflowsv2/StickyNote.jsx  |  2 +-
+ packages/ui/src/views/canvas/index.jsx        | 21 +++++++++++++++----
+ 5 files changed, 36 insertions(+), 11 deletions(-)
+
+diff --git a/README.md b/README.md
+index 673aa260cab..bc0adfeff42 100644
+--- a/README.md
++++ b/README.md
+@@ -59,7 +59,6 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+     2. Use the resize handles to expand the note, click the palette icon to switch between the five preset colors, and toggle the markdown mode to preview formatted content.
+     3. Save the flow—the sticky note keeps its size, color, and markdown content when reloaded or duplicated.
+ -   **Dependencies / breaking changes:** No additional dependencies or breaking changes.
+--   **Layering assurance:** Notes automatically stay behind every agentflow and chatflow node as well as their connectors so they never hide important UI.
+ 
+ ## 🐳 Docker
+ 
+diff --git a/packages/ui/src/assets/scss/style.scss b/packages/ui/src/assets/scss/style.scss
+index c01c20403cb..5fc13cea1f1 100644
+--- a/packages/ui/src/assets/scss/style.scss
++++ b/packages/ui/src/assets/scss/style.scss
+@@ -209,7 +209,7 @@
+ }
+ 
+ .react-flow__node-stickyNote {
+-    z-index: -1 !important;
++    z-index: 0 !important;
+ }
+ 
+ .spin-animation {
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 36b84e9e0a3..cd9f9bb524a 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -63,6 +63,19 @@ import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+ const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
++const applyStickyNoteStyling = (nodes = []) =>
++    nodes.map((node) =>
++        node.type === 'stickyNote'
++            ? {
++                  ...node,
++                  style: {
++                      ...node.style,
++                      zIndex: 0
++                  }
++              }
++            : node
++    )
++
+ // ==============================|| CANVAS ||============================== //
+ 
+ const AgentflowCanvas = () => {
+@@ -163,7 +176,7 @@ const AgentflowCanvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(normalizeStickyNoteNodes(nodes))
++            setNodes(applyStickyNoteStyling(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -410,7 +423,7 @@ const AgentflowCanvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) => {
+-                const updatedNodes = normalizeStickyNoteNodes((nds ?? []).concat(newNode))
++                const updatedNodes = applyStickyNoteStyling((nds ?? []).concat(newNode))
+                 return updatedNodes.map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+@@ -451,7 +464,7 @@ const AgentflowCanvas = () => {
+             }
+         }
+ 
+-        setNodes(normalizeStickyNoteNodes(cloneNodes))
++        setNodes(applyStickyNoteStyling(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -531,7 +544,7 @@ const AgentflowCanvas = () => {
+         if (getSpecificChatflowApi.data) {
+             const chatflow = getSpecificChatflowApi.data
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+-            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
++            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+diff --git a/packages/ui/src/views/agentflowsv2/StickyNote.jsx b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+index 3f4668dd01a..2505c79c328 100644
+--- a/packages/ui/src/views/agentflowsv2/StickyNote.jsx
++++ b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+@@ -51,7 +51,7 @@ const StickyNote = ({ data }) => {
+     )
+     const [noteValue, setNoteValue] = useState(data.inputs?.[inputParam.name] ?? inputParam.default ?? '')
+ 
+-    const defaultColor = DEFAULT_STICKY_NOTE_COLOR // fallback color if data.color is not present
++    const defaultColor = '#FFE770' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+     // Get different shades of the color based on state
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 07313d8e1bd..fcef6336768 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -59,6 +59,19 @@ import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
+ const nodeTypes = { customNode: CanvasNode, stickyNote: StickyNote }
+ const edgeTypes = { buttonedge: ButtonEdge }
+ 
++const applyStickyNoteStyling = (nodes = []) =>
++    nodes.map((node) =>
++        node.type === 'stickyNote'
++            ? {
++                  ...node,
++                  style: {
++                      ...node.style,
++                      zIndex: 0
++                  }
++              }
++            : node
++    )
++
+ // ==============================|| CANVAS ||============================== //
+ 
+ const Canvas = () => {
+@@ -169,7 +182,7 @@ const Canvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(normalizeStickyNoteNodes(nodes))
++            setNodes(applyStickyNoteStyling(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -302,7 +315,7 @@ const Canvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) =>
+-                normalizeStickyNoteNodes(nds.concat(newNode)).map((node) => {
++                applyStickyNoteStyling(nds.concat(newNode)).map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+                             ...node.data,
+@@ -342,7 +355,7 @@ const Canvas = () => {
+             }
+         }
+ 
+-        setNodes(normalizeStickyNoteNodes(cloneNodes))
++        setNodes(applyStickyNoteStyling(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -418,7 +431,7 @@ const Canvas = () => {
+             }
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+             setLasUpdatedDateTime(chatflow.updatedDate)
+-            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
++            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+
+From 830816b9face91804eb73e0c01d2ed65c57507f0 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 09:12:22 +0100
+Subject: [PATCH 6/8] Normalize sticky note defaults
+
+---
+ packages/ui/src/utils/genericHelper.js        | 50 ++++---------------
+ packages/ui/src/views/agentflowsv2/Canvas.jsx | 21 ++------
+ .../ui/src/views/agentflowsv2/StickyNote.jsx  |  2 +-
+ packages/ui/src/views/canvas/index.jsx        | 21 ++------
+ 4 files changed, 20 insertions(+), 74 deletions(-)
+
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 24005e3433e..65a353bb289 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -2,8 +2,6 @@ import { uniq, get, isEqual } from 'lodash'
+ import moment from 'moment'
+ 
+ export const DEFAULT_STICKY_NOTE_COLOR = '#FFE770'
+-const DEFAULT_STICKY_NOTE_Z_INDEX = -1
+-const DEFAULT_NODE_Z_INDEX = 1
+ 
+ const isStickyNoteNode = (node) => {
+     if (!node) return false
+@@ -14,47 +12,21 @@ const isStickyNoteNode = (node) => {
+ 
+ export const normalizeStickyNoteNodes = (nodes = []) =>
+     nodes.map((node) => {
+-        if (!node) return node
++        if (!isStickyNoteNode(node)) return node
+ 
+-        if (isStickyNoteNode(node)) {
+-            const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
+-            const currentZIndex = node?.style?.zIndex
++        const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
+ 
+-            const needsColorUpdate = node?.data?.color !== color
+-            const needsZIndexUpdate = currentZIndex !== DEFAULT_STICKY_NOTE_Z_INDEX
+-
+-            if (!needsColorUpdate && !needsZIndexUpdate) {
+-                return node
+-            }
+-
+-            return {
+-                ...node,
+-                data: needsColorUpdate
+-                    ? {
+-                          ...node.data,
+-                          color
+-                      }
+-                    : node.data,
+-                style: needsZIndexUpdate
+-                    ? {
+-                          ...node.style,
+-                          zIndex: DEFAULT_STICKY_NOTE_Z_INDEX
+-                      }
+-                    : node.style
+-            }
+-        }
+-
+-        if (node?.style?.zIndex == null) {
+-            return {
+-                ...node,
+-                style: {
+-                    ...node.style,
+-                    zIndex: DEFAULT_NODE_Z_INDEX
+-                }
++        return {
++            ...node,
++            data: {
++                ...node.data,
++                color
++            },
++            style: {
++                ...node.style,
++                zIndex: node?.style?.zIndex ?? 0
+             }
+         }
+-
+-        return node
+     })
+ 
+ export const getUniqueNodeId = (nodeData, nodes) => {
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index cd9f9bb524a..36b84e9e0a3 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -63,19 +63,6 @@ import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+ const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
+-const applyStickyNoteStyling = (nodes = []) =>
+-    nodes.map((node) =>
+-        node.type === 'stickyNote'
+-            ? {
+-                  ...node,
+-                  style: {
+-                      ...node.style,
+-                      zIndex: 0
+-                  }
+-              }
+-            : node
+-    )
+-
+ // ==============================|| CANVAS ||============================== //
+ 
+ const AgentflowCanvas = () => {
+@@ -176,7 +163,7 @@ const AgentflowCanvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(applyStickyNoteStyling(nodes))
++            setNodes(normalizeStickyNoteNodes(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -423,7 +410,7 @@ const AgentflowCanvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) => {
+-                const updatedNodes = applyStickyNoteStyling((nds ?? []).concat(newNode))
++                const updatedNodes = normalizeStickyNoteNodes((nds ?? []).concat(newNode))
+                 return updatedNodes.map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+@@ -464,7 +451,7 @@ const AgentflowCanvas = () => {
+             }
+         }
+ 
+-        setNodes(applyStickyNoteStyling(cloneNodes))
++        setNodes(normalizeStickyNoteNodes(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -544,7 +531,7 @@ const AgentflowCanvas = () => {
+         if (getSpecificChatflowApi.data) {
+             const chatflow = getSpecificChatflowApi.data
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+-            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+diff --git a/packages/ui/src/views/agentflowsv2/StickyNote.jsx b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+index 2505c79c328..3f4668dd01a 100644
+--- a/packages/ui/src/views/agentflowsv2/StickyNote.jsx
++++ b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+@@ -51,7 +51,7 @@ const StickyNote = ({ data }) => {
+     )
+     const [noteValue, setNoteValue] = useState(data.inputs?.[inputParam.name] ?? inputParam.default ?? '')
+ 
+-    const defaultColor = '#FFE770' // fallback color if data.color is not present
++    const defaultColor = DEFAULT_STICKY_NOTE_COLOR // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+     // Get different shades of the color based on state
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index fcef6336768..07313d8e1bd 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -59,19 +59,6 @@ import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
+ const nodeTypes = { customNode: CanvasNode, stickyNote: StickyNote }
+ const edgeTypes = { buttonedge: ButtonEdge }
+ 
+-const applyStickyNoteStyling = (nodes = []) =>
+-    nodes.map((node) =>
+-        node.type === 'stickyNote'
+-            ? {
+-                  ...node,
+-                  style: {
+-                      ...node.style,
+-                      zIndex: 0
+-                  }
+-              }
+-            : node
+-    )
+-
+ // ==============================|| CANVAS ||============================== //
+ 
+ const Canvas = () => {
+@@ -182,7 +169,7 @@ const Canvas = () => {
+             const flowData = JSON.parse(file)
+             const nodes = flowData.nodes || []
+ 
+-            setNodes(applyStickyNoteStyling(nodes))
++            setNodes(normalizeStickyNoteNodes(nodes))
+             setEdges(flowData.edges || [])
+             setTimeout(() => setDirty(), 0)
+         } catch (e) {
+@@ -315,7 +302,7 @@ const Canvas = () => {
+ 
+             setSelectedNode(newNode)
+             setNodes((nds) =>
+-                applyStickyNoteStyling(nds.concat(newNode)).map((node) => {
++                normalizeStickyNoteNodes(nds.concat(newNode)).map((node) => {
+                     if (node.id === newNode.id) {
+                         node.data = {
+                             ...node.data,
+@@ -355,7 +342,7 @@ const Canvas = () => {
+             }
+         }
+ 
+-        setNodes(applyStickyNoteStyling(cloneNodes))
++        setNodes(normalizeStickyNoteNodes(cloneNodes))
+         setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
+         setDirty()
+         setIsSyncNodesButtonEnabled(false)
+@@ -431,7 +418,7 @@ const Canvas = () => {
+             }
+             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+             setLasUpdatedDateTime(chatflow.updatedDate)
+-            setNodes(applyStickyNoteStyling(initialFlow.nodes || []))
++            setNodes(normalizeStickyNoteNodes(initialFlow.nodes || []))
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+
+From 735a3a7d6ee6c0ba1409d4daf162921bba8b9376 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 09:57:09 +0100
+Subject: [PATCH 7/8] Fix sticky note layering
+
+---
+ README.md                              |  1 +
+ packages/ui/src/assets/scss/style.scss |  2 +-
+ packages/ui/src/utils/genericHelper.js | 50 ++++++++++++++++++++------
+ 3 files changed, 41 insertions(+), 12 deletions(-)
+
+diff --git a/README.md b/README.md
+index bc0adfeff42..673aa260cab 100644
+--- a/README.md
++++ b/README.md
+@@ -59,6 +59,7 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+     2. Use the resize handles to expand the note, click the palette icon to switch between the five preset colors, and toggle the markdown mode to preview formatted content.
+     3. Save the flow—the sticky note keeps its size, color, and markdown content when reloaded or duplicated.
+ -   **Dependencies / breaking changes:** No additional dependencies or breaking changes.
++-   **Layering assurance:** Notes automatically stay behind every agentflow and chatflow node as well as their connectors so they never hide important UI.
+ 
+ ## 🐳 Docker
+ 
+diff --git a/packages/ui/src/assets/scss/style.scss b/packages/ui/src/assets/scss/style.scss
+index 5fc13cea1f1..c01c20403cb 100644
+--- a/packages/ui/src/assets/scss/style.scss
++++ b/packages/ui/src/assets/scss/style.scss
+@@ -209,7 +209,7 @@
+ }
+ 
+ .react-flow__node-stickyNote {
+-    z-index: 0 !important;
++    z-index: -1 !important;
+ }
+ 
+ .spin-animation {
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 65a353bb289..24005e3433e 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -2,6 +2,8 @@ import { uniq, get, isEqual } from 'lodash'
+ import moment from 'moment'
+ 
+ export const DEFAULT_STICKY_NOTE_COLOR = '#FFE770'
++const DEFAULT_STICKY_NOTE_Z_INDEX = -1
++const DEFAULT_NODE_Z_INDEX = 1
+ 
+ const isStickyNoteNode = (node) => {
+     if (!node) return false
+@@ -12,21 +14,47 @@ const isStickyNoteNode = (node) => {
+ 
+ export const normalizeStickyNoteNodes = (nodes = []) =>
+     nodes.map((node) => {
+-        if (!isStickyNoteNode(node)) return node
++        if (!node) return node
+ 
+-        const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
++        if (isStickyNoteNode(node)) {
++            const color = node?.data?.color || DEFAULT_STICKY_NOTE_COLOR
++            const currentZIndex = node?.style?.zIndex
+ 
+-        return {
+-            ...node,
+-            data: {
+-                ...node.data,
+-                color
+-            },
+-            style: {
+-                ...node.style,
+-                zIndex: node?.style?.zIndex ?? 0
++            const needsColorUpdate = node?.data?.color !== color
++            const needsZIndexUpdate = currentZIndex !== DEFAULT_STICKY_NOTE_Z_INDEX
++
++            if (!needsColorUpdate && !needsZIndexUpdate) {
++                return node
++            }
++
++            return {
++                ...node,
++                data: needsColorUpdate
++                    ? {
++                          ...node.data,
++                          color
++                      }
++                    : node.data,
++                style: needsZIndexUpdate
++                    ? {
++                          ...node.style,
++                          zIndex: DEFAULT_STICKY_NOTE_Z_INDEX
++                      }
++                    : node.style
+             }
+         }
++
++        if (node?.style?.zIndex == null) {
++            return {
++                ...node,
++                style: {
++                    ...node.style,
++                    zIndex: DEFAULT_NODE_Z_INDEX
++                }
++            }
++        }
++
++        return node
+     })
+ 
+ export const getUniqueNodeId = (nodeData, nodes) => {
+
+From aacbb5789800d8ae929442d4917aed62d4b12179 Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 17:09:49 +0100
+Subject: [PATCH 8/8] Fix sticky note selection highlight and resizing
+
+---
+ README.md                                     |  2 +-
+ .../ui/src/views/agentflowsv2/StickyNote.jsx  | 24 ++++++++++++-------
+ packages/ui/src/views/canvas/StickyNote.jsx   | 19 ++++++++-------
+ 3 files changed, 27 insertions(+), 18 deletions(-)
+
+diff --git a/README.md b/README.md
+index 673aa260cab..305c5852187 100644
+--- a/README.md
++++ b/README.md
+@@ -56,7 +56,7 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+ -   **Purpose:** Capture long-form thoughts with rich formatting while keeping the note unobtrusive behind flow nodes and connectors.
+ -   **Usage example:**
+     1. Drag a sticky note onto the canvas.
+-    2. Use the resize handles to expand the note, click the palette icon to switch between the five preset colors, and toggle the markdown mode to preview formatted content.
++    2. Use the resize handles to expand the note in any direction while it is selected—the blue outline and handles disappear as soon as you click outside—then click the palette icon to switch between the five preset colors and toggle the markdown mode to preview formatted content.
+     3. Save the flow—the sticky note keeps its size, color, and markdown content when reloaded or duplicated.
+ -   **Dependencies / breaking changes:** No additional dependencies or breaking changes.
+ -   **Layering assurance:** Notes automatically stay behind every agentflow and chatflow node as well as their connectors so they never hide important UI.
+diff --git a/packages/ui/src/views/agentflowsv2/StickyNote.jsx b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+index 3f4668dd01a..52e43e78bb4 100644
+--- a/packages/ui/src/views/agentflowsv2/StickyNote.jsx
++++ b/packages/ui/src/views/agentflowsv2/StickyNote.jsx
+@@ -35,7 +35,7 @@ const StyledNodeToolbar = styled(NodeToolbar)(({ theme }) => ({
+     boxShadow: '0 2px 14px 0 rgb(32 40 45 / 8%)'
+ }))
+ 
+-const StickyNote = ({ data }) => {
++const StickyNote = ({ data, selected }) => {
+     const theme = useTheme()
+     const customization = useSelector((state) => state.customization)
+     const ref = useRef(null)
+@@ -56,7 +56,7 @@ const StickyNote = ({ data }) => {
+ 
+     // Get different shades of the color based on state
+     const getStateColor = () => {
+-        if (data.selected) return nodeColor
++        if (selected) return nodeColor
+         if (isHovered) return alpha(nodeColor, 0.8)
+         return alpha(nodeColor, 0.5)
+     }
+@@ -95,7 +95,12 @@ const StickyNote = ({ data }) => {
+     }
+ 
+     return (
+-        <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} style={{ position: 'relative' }}>
++        <div
++            ref={ref}
++            onMouseEnter={() => setIsHovered(true)}
++            onMouseLeave={() => setIsHovered(false)}
++            style={{ position: 'relative', width: '100%', height: '100%' }}
++        >
+             <StyledNodeToolbar>
+                 <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                     <IconButton
+@@ -161,20 +166,20 @@ const StickyNote = ({ data }) => {
+                 sx={{
+                     borderColor: getStateColor(),
+                     borderWidth: '1px',
+-                    boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
++                    boxShadow: selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
+                     minHeight: 160,
+                     height: '100%',
+                     width: '100%',
+                     backgroundColor: getBackgroundColor(),
+                     display: 'flex',
+-                    alignItems: 'center',
++                    flexDirection: 'column',
+                     '&:hover': {
+-                        boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none'
++                        boxShadow: selected ? `0 0 0 1px ${getStateColor()} !important` : 'none'
+                     }
+                 }}
+                 border={false}
+             >
+-                <Box sx={{ p: 1, width: '100%', height: '100%', overflow: 'auto' }}>
++                <Box sx={{ p: 1, width: '100%', height: '100%', overflow: 'auto', flex: 1 }}>
+                     {isEditing ? (
+                         <Input
+                             key={data.id}
+@@ -194,7 +199,7 @@ const StickyNote = ({ data }) => {
+                     )}
+                 </Box>
+             </CardWrapper>
+-            <NodeResizer minWidth={180} minHeight={140} isVisible={data.selected} />
++            <NodeResizer minWidth={180} minHeight={140} isVisible={selected} />
+             <Popover
+                 open={Boolean(anchorEl)}
+                 anchorEl={anchorEl}
+@@ -224,7 +229,8 @@ const StickyNote = ({ data }) => {
+ }
+ 
+ StickyNote.propTypes = {
+-    data: PropTypes.object
++    data: PropTypes.object,
++    selected: PropTypes.bool
+ }
+ 
+ export default StickyNote
+diff --git a/packages/ui/src/views/canvas/StickyNote.jsx b/packages/ui/src/views/canvas/StickyNote.jsx
+index 55707d6cae7..8cb5b451eb1 100644
+--- a/packages/ui/src/views/canvas/StickyNote.jsx
++++ b/packages/ui/src/views/canvas/StickyNote.jsx
+@@ -18,7 +18,7 @@ import { MemoizedReactMarkdown } from '@/ui-component/markdown/MemoizedReactMark
+ import { flowContext } from '@/store/context/ReactFlowContext'
+ import { DEFAULT_STICKY_NOTE_COLOR } from '@/utils/genericHelper'
+ 
+-const StickyNote = ({ data }) => {
++const StickyNote = ({ data, selected }) => {
+     const theme = useTheme()
+     const canvas = useSelector((state) => state.canvas)
+     const customization = useSelector((state) => state.customization)
+@@ -59,16 +59,16 @@ const StickyNote = ({ data }) => {
+     }, [currentNoteValue, inputParam.default, inputParam.name])
+ 
+     const getBorderColor = () => {
+-        if (data.selected) return theme.palette.primary.main
++        if (selected) return theme.palette.primary.main
+         else if (customization?.isDarkMode) return theme.palette.grey[700]
+         else return theme.palette.grey[900] + 50
+     }
+ 
+     const getBackgroundColor = () => {
+         if (customization?.isDarkMode) {
+-            return data.selected ? darken(nodeColor, 0.4) : darken(nodeColor, 0.5)
++            return selected ? darken(nodeColor, 0.4) : darken(nodeColor, 0.5)
+         } else {
+-            return data.selected ? lighten(nodeColor, 0.1) : lighten(nodeColor, 0.2)
++            return selected ? lighten(nodeColor, 0.1) : lighten(nodeColor, 0.2)
+         }
+     }
+ 
+@@ -97,11 +97,13 @@ const StickyNote = ({ data }) => {
+                     height: '100%',
+                     minWidth: 220,
+                     minHeight: 160,
+-                    position: 'relative'
++                    position: 'relative',
++                    display: 'flex',
++                    flexDirection: 'column'
+                 }}
+                 border={false}
+             >
+-                <NodeResizer minWidth={180} minHeight={140} isVisible={data.selected} />
++                <NodeResizer minWidth={180} minHeight={140} isVisible={selected} />
+                 <NodeTooltip
+                     open={!canvas.canvasDialogShow && open}
+                     onClose={handleClose}
+@@ -165,7 +167,7 @@ const StickyNote = ({ data }) => {
+                     }
+                     placement='right-start'
+                 >
+-                    <Box sx={{ p: 1.5, width: '100%', height: '100%', overflow: 'auto' }}>
++                    <Box sx={{ p: 1.5, width: '100%', height: '100%', overflow: 'auto', flex: 1 }}>
+                         {isEditing ? (
+                             <Input
+                                 key={data.id}
+@@ -214,7 +216,8 @@ const StickyNote = ({ data }) => {
+ }
+ 
+ StickyNote.propTypes = {
+-    data: PropTypes.object
++    data: PropTypes.object,
++    selected: PropTypes.bool
+ }
+ 
+ export default memo(StickyNote)

@@ -1,0 +1,1126 @@
+From 5a6fb7adc0cfa9656e05fc7513d1c19e27005cd9 Mon Sep 17 00:00:00 2001
+From: matthias <matthias@engarde.net>
+Date: Sun, 15 Oct 2023 18:08:27 +0200
+Subject: [PATCH 1/5] Initial commit of Plugin & (event based) hooks
+
+---
+ packages/server/src/Plugin.ts      | 148 +++++++++++++++++++
+ packages/server/src/utils/hooks.ts | 226 +++++++++++++++++++++++++++++
+ 2 files changed, 374 insertions(+)
+ create mode 100644 packages/server/src/Plugin.ts
+ create mode 100644 packages/server/src/utils/hooks.ts
+
+diff --git a/packages/server/src/Plugin.ts b/packages/server/src/Plugin.ts
+new file mode 100644
+index 00000000000..549f0fee88d
+--- /dev/null
++++ b/packages/server/src/Plugin.ts
+@@ -0,0 +1,148 @@
++import fs from 'fs'
++import path from 'path'
++import logger from './utils/logger'
++import { hooks } from './utils/hooks'
++import { NodesPoolHooks } from './NodesPool'
++
++export async function loadPlugins() {
++    await pluginManager.loadPlugins()
++    return pluginManager
++}
++
++class PluginManager {
++    plugins: IFlowisePlugin[] = []
++
++    isLoaded = false
++
++    isInitialized = false
++
++    /**
++     * Initialize the plugin manager.
++     * Then call await pluginManager.loadPlugins() to load plugins.
++     */
++    constructor() {
++        this.plugins = []
++    }
++
++    /**
++     * Initialize all plugins by calling their init() method.
++     */
++    async initialize() {
++        this.plugins.forEach((plugin) => {
++            plugin.initialize()
++        })
++        this.isInitialized = true
++    }
++
++    getPlugins() {
++        return this.plugins
++    }
++
++    /**
++     * Load plugins from the plugin directory without initializing them.
++     *
++     * @uses process.env.PLUGIN_DIR to specify the plugin directory
++     * @returns {Promise<void>}
++     */
++    async loadPlugins() {
++        const pluginDir = process.env.PLUGIN_DIR
++            ? path.join(__dirname, process.env.PLUGIN_DIR)
++            : path.join(__dirname, '..', '..', '..', 'plugins')
++
++        const pluginFolders = fs.readdirSync(pluginDir)
++        logger.debug(`Loading plugins from ${pluginDir}`)
++
++        for (const folder of pluginFolders) {
++            const pluginPath = path.join(pluginDir, folder)
++            const packageJsonPath = path.join(pluginPath, 'package.json')
++
++            // Check if package.json exists
++            if (!fs.existsSync(packageJsonPath)) {
++                logger.error(`package.json missing for ${pluginFolders} at ${pluginPath}`)
++                continue
++            }
++
++            // Load package.json
++            const packageJson = require(packageJsonPath)
++
++            // Check if package.json has main field
++            if (!packageJson.main) {
++                logger.error(`package.json missing main field for ${pluginFolders} at ${pluginPath}`)
++                continue
++            }
++
++            // Assume main field in package.json points to the compiled plugin file
++            const mainFilePath = path.join(pluginPath, packageJson.main)
++
++            // Dynamic import
++            const pluginModule = await import(mainFilePath)
++            const plugin: IFlowisePlugin = new pluginModule.default()
++
++            plugin.registerComponentNodes()
++            plugin.registerCredentials()
++
++            // Successfully loaded plugin
++            plugin.isLoaded = true
++            this.plugins.push(plugin)
++            logger.debug(`Loaded plugin ${plugin.name} from ${pluginPath}`)
++        }
++        this.isLoaded = true
++    }
++}
++
++export const pluginManager = new PluginManager()
++
++export class FlowisePlugin implements IFlowisePlugin {
++    name: string = 'FlowisePlugin'
++
++    isLoaded: boolean = false
++
++    isInitialized: boolean = false
++
++    dirname: string | null
++
++    nodesPath: string | null
++
++    credentailsPath: string | null
++
++    constructor() {}
++
++    protected logger = logger
++
++    /**
++     * Will be called after app and plugins are loaded and initialized, just before the server starts listening.
++     */
++    initialize() {
++        // Base init implementation
++    }
++
++    registerComponentNodes() {
++        // Register (component) nodes
++        if (this.nodesPath) {
++            this.logger.debug(`Plugin:${this.name}: Registering (component) nodes from ${this.nodesPath}`)
++            hooks.on(NodesPoolHooks.GetAdditionalNodesPath, () => this.nodesPath)
++        }
++    }
++
++    registerCredentials() {
++        // Register credentials nodes
++        if (this.credentailsPath) {
++            this.logger.debug(`Plugin:${this.name}: Registering credentials from ${this.credentailsPath}`)
++            hooks.on(NodesPoolHooks.GetAdditionalCredentialsPath, () => this.credentailsPath)
++        }
++    }
++}
++
++// ------------------------------
++// Interface definitions
++
++// Plugin System
++export interface IFlowisePlugin {
++    isLoaded: boolean
++    name: string
++    dirname: string | null
++    nodesPath: string | null
++    initialize: () => void
++    registerComponentNodes: () => void
++    registerCredentials: () => void
++}
+diff --git a/packages/server/src/utils/hooks.ts b/packages/server/src/utils/hooks.ts
+new file mode 100644
+index 00000000000..f3d063615da
+--- /dev/null
++++ b/packages/server/src/utils/hooks.ts
+@@ -0,0 +1,226 @@
++import { EventEmitter } from 'events'
++
++/**
++ * WordPress inspired hooks system.
++ *
++ * Use via import { addFilter, addAction, hook, filter } from './Hooks'
++ * or import { hooks } from './Hooks'
++ * and then hooks.addFilter, hooks.addAction, hooks.callHooks
++ */
++
++/**
++ * Adds a new filter hook.
++ *
++ * @param name - The name of the filter.
++ * @param callback - The callback function to execute when the filter is applied.
++ * @param priority - The priority of this filter in relation to other filters. Default is 10.
++ *
++ * @example
++ *
++ * addFilter('changeValue', (value) => {
++ *     return value * 2;
++ * }, 15);
++ */
++export function addFilter(name: string, callback: (...args: any[]) => void | Promise<void>, priority: number = 10): void {
++    hooks.addFilter(name, callback, priority)
++}
++
++/**
++ * Adds a new action hook.
++ *
++ * @param name - The name of the action.
++ * @param callback - The callback function to execute when the action is applied.
++ * @param priority - The priority of this action in relation to other actions. Default is 10.
++ *
++ * @example
++ *
++ * addAction('printValue', (value) => {
++ *     console.log(value);
++ * });
++ */
++export function addAction(name: string, callback: (...args: any[]) => void | Promise<void>, priority: number = 10): void {
++    hooks.addAction(name, callback, priority)
++}
++
++/**
++ * Calls the hooks associated with the given name and returns the collected results as an array.
++ * Null values are filtered out.
++ *
++ * @param name - The name of the hook (action) to call.
++ * @param args - Additional arguments to pass to the hook callbacks.
++ * @returns An array of results from the callbacks.
++ *
++ * @example
++ * const finalValue = await hook('changeValue', initialValue);
++ */
++export async function hook(name: string, ...args: any[]): Promise<any[]> {
++    return hooks.callActions(name, ...args)
++}
++
++/**
++ * Calls the hooks associated with the given name using EventEmitter.emit.
++ * Priorities will be respected.
++ *
++ * @param name - The name of the hook (action) to call.
++ * @param args - Additional arguments to pass to the hook callbacks.
++ *
++ * @example
++ * const finalValue = await hook('changeValue', initialValue);
++ *
++ * @see EventEmitter.emit
++ */
++export async function emit(name: string, ...args: any[]): Promise<any> {
++    return hooks.emit(name, ...args)
++}
++
++/**
++ * Calls the filter hooks associated with the given name.
++ *
++ * @param name - The name of the hook (action/filter) to call.
++ * @param initial - The initial value to pass to filter hooks.
++ * @param args - Additional arguments to pass to the hook callbacks.
++ *
++ * @example
++ *
++ * const initialValue = 1;
++ * const finalValue = await filter('changeValue', initialValue);
++ * console.log(finalValue); // Output depends on added filters
++ */
++export async function filter(name: string, initial: any = null, ...args: any[]): Promise<any> {
++    return hooks.applyFilters(name, initial, ...args)
++}
++
++type PriorityCallback<T = any> = {
++    callback: (initial: T, ...args: any[]) => T | Promise<T>
++    priority: number
++}
++
++/**
++ * WordPress inspired hooks system, extending node EventEmitter.
++ * It defines two types of hooks: actions and filters.
++ *
++ * **Actions** are simple callbacks that are called when the hook is called.
++ * - They can be added with `addAction`
++ * - They work similarly to EventEmitter's or CustomEvents but extend the functionality by introducing priorities.
++ * - Callback functions can by async functions and may be passed additional arguments.
++ *
++ * **Filters** are extended callbacks that can manipulate the initial value by returning it.
++ * - They can be added with `addFilter`
++ * - Filter callback functions get the initial value as first argument and must return the (manipulated) value.
++ *
++ * **Priority** is an optional last parameter for both actions and filters, to define the order in which the callbacks are called.
++ * - Lower numbers correspond with earlier execution.
++ * - The priority must be a positive integer number, and should be typically in the range of 0 .. 20, and not higher than 99.
++ * - The default priority is 10
++ * - If two callbacks have the same priority, the one that was added first is executed first.
++ *
++ * **Naming** of hooks is important, as it is used to identify the hook.
++ * - Names may be any string. They should be easy to understand, but not too generic to avoid conflicts.
++ * - It's a good practice to prefix them with a namespace (could be the package or class name, or similar)
++ *   name, e.g. `mypackage:initapp`, `mypackage:ClassName:initialize`, ...
++ * - [!WARNING] You should not use the same name for actions and filters.
++ *
++ * @see https://developer.wordpress.org/plugins/hooks/
++ * @extends EventEmitter
++ */
++class Hooks extends EventEmitter {
++    private callbacks: Map<string, PriorityCallback[]> = new Map()
++
++    constructor() {
++        super()
++    }
++
++    private addHook<T>(name: string, callback: (initial: T, ...args: any[]) => T | Promise<T>, priority: number): void {
++        // Check if priority is a positive integer
++        if (!Number.isInteger(priority) || priority < 0) {
++            throw new Error('Priority must be a positive integer.')
++        }
++
++        const newHandler: PriorityCallback<T> = { callback, priority }
++        const handlers = this.callbacks.get(name) ?? []
++
++        // Remove all existing callbacks from EventEmitter listeners with for the event name
++        for (const { callback } of handlers) {
++            this.removeListener(name, callback)
++        }
++
++        // Add and sort PriorityCallback by priority
++        handlers.push(newHandler)
++        handlers.sort((a, b) => a.priority - b.priority)
++        this.callbacks.set(name, handlers)
++
++        // Synchronize with EventEmitter's listener array
++        for (const { callback } of handlers) {
++            this.addListener(name, callback)
++        }
++    }
++
++    /**
++     * Wrapper for EventEmitter.on
++     *
++     * @param name will be used as the event name
++     * @param callback will be used as the listener function
++     * @param priority will be used as the priority
++     */
++    public addAction<T>(name: string, callback: (...args: any[]) => T | Promise<T>, priority: number = 10): this {
++        this.addHook(name, callback, priority)
++        return this
++    }
++    public on = this.addAction
++
++    /**
++     * Async alternative to EventEmitter.emit that collects all return values of the callbacks.
++     *
++     * @param name will be used as the event name
++     * @param callback will be used as the listener function
++     */
++    public async callActions<T>(name: string, ...args: any[]): Promise<T[]> {
++        let results = []
++        const actions = this.listeners(name)
++        for (const action of actions) {
++            const result = await action(...args)
++            if (result != null) {
++                results.push(result)
++            }
++        }
++        return results
++    }
++
++    /**
++     * Wrapper for EventEmitter.on
++     *
++     * @param name will be used as the event name
++     * @param callback will be used as the listener function, which uses the first argument as the initial.
++     * @param priority will be used as the priority
++     */
++    public addFilter<T>(name: string, callback: (initial: T, ...args: any[]) => T | Promise<T>, priority: number = 10): this {
++        this.addHook(name, callback, priority)
++        return this
++    }
++
++    /**
++     * Calls all filter callbacks and returns the manipulated value.
++     *
++     * @param name will be used as the event name
++     * @param initial initial value, that can be manipulated by the filter callbacks by returning it
++     * @param args additional arguments that will be passed to the filter callbacks
++     * @returns manipulated value or null
++     */
++    public async applyFilters<T>(name: string, initial: T, ...args: any[]): Promise<T> {
++        let result = initial
++        const filters = this.listeners(name)
++        for (const filter of filters) {
++            const newResult = await filter(result, ...args)
++            if (newResult != null) {
++                result = newResult
++            }
++        }
++        return result
++    }
++
++    public call = this.callActions
++    public filter = this.applyFilters
++}
++
++// Singleton Instance
++export const hooks = new Hooks()
+
+From d1130967fc399412d8718987d895c91d5280f2a5 Mon Sep 17 00:00:00 2001
+From: matthias <matthias@engarde.net>
+Date: Sun, 15 Oct 2023 23:01:37 +0200
+Subject: [PATCH 2/5] Load Plugins - load nodes and credentials within plugins
+ - introduced PLUGIN_DIR .env - Added hooks to NodesPool
+
+---
+ package.json                          |  6 ++--
+ packages/server/nodemon.json          | 17 ++++++++--
+ packages/server/package.json          |  2 +-
+ packages/server/src/NodesPool.ts      | 49 ++++++++++++++++++++++++++-
+ packages/server/src/Plugin.ts         |  6 ++--
+ packages/server/src/commands/start.ts |  6 +++-
+ packages/server/src/index.ts          |  7 ++++
+ 7 files changed, 82 insertions(+), 11 deletions(-)
+
+diff --git a/package.json b/package.json
+index 13db19d14f8..11e195fe834 100644
+--- a/package.json
++++ b/package.json
+@@ -7,10 +7,12 @@
+         "packages/*",
+         "flowise",
+         "ui",
+-        "components"
++        "components",
++        "plugins/*"
+     ],
+     "scripts": {
+         "build": "turbo run build",
++        "build-nocache": "turbo --no-cache run build",
+         "build-force": "turbo run build --force",
+         "dev": "turbo run dev --parallel",
+         "start": "run-script-os",
+@@ -54,4 +56,4 @@
+     "engines": {
+         "node": ">=18.15.0"
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/packages/server/nodemon.json b/packages/server/nodemon.json
+index bf25eb00497..e74f8d10642 100644
+--- a/packages/server/nodemon.json
++++ b/packages/server/nodemon.json
+@@ -1,6 +1,17 @@
+ {
+-    "ignore": ["**/*.spec.ts", ".git", "node_modules"],
+-    "watch": ["commands", "index.ts", "src", "../components/nodes", "../components/src"],
++    "ignore": [
++        "**/*.spec.ts",
++        ".git",
++        "node_modules"
++    ],
++    "watch": [
++        "commands",
++        "index.ts",
++        "src",
++        "../components/nodes",
++        "../components/src",
++        "../../plugins"
++    ],
+     "exec": "yarn oclif-dev",
+     "ext": "ts"
+-}
++}
+\ No newline at end of file
+diff --git a/packages/server/package.json b/packages/server/package.json
+index eadedea073c..f3d38480728 100644
+--- a/packages/server/package.json
++++ b/packages/server/package.json
+@@ -78,4 +78,4 @@
+         "ts-node": "^10.7.0",
+         "typescript": "^4.8.4"
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/packages/server/src/NodesPool.ts b/packages/server/src/NodesPool.ts
+index f4681d4ab8e..7f419ad5b6e 100644
+--- a/packages/server/src/NodesPool.ts
++++ b/packages/server/src/NodesPool.ts
+@@ -4,18 +4,47 @@ import { Dirent } from 'fs'
+ import { getNodeModulesPackagePath } from './utils'
+ import { promises } from 'fs'
+ import { ICommonObject } from 'flowise-components'
++import { hooks } from './utils/hooks'
++
++/**
++ * Available hooks for NodesPool
++ */
++export enum NodesPoolHooks {
++    /**
++     * Action after nodes pool is initialized.
++     * @param {NodesPool} nodesPool
++     */
++    OnInitialize = 'flowise:on-initialize-nodes-pool',
++
++    /**
++     * Allows to add an additional (components) nodes path.
++     * Typically within a plugin
++     * @returns {string}
++     */
++    GetAdditionalNodesPath = 'flowise:get-additional-nodes-path',
++
++    /**
++     * Allows to add an additional credentials path.
++     * Typically within a plugin
++     * @returns {string}
++     */
++    GetAdditionalCredentialsPath = 'flowise:get-additional-credentials-path'
++}
+ 
+ export class NodesPool {
+     componentNodes: IComponentNodes = {}
+     componentCredentials: IComponentCredentials = {}
+     private credentialIconPath: ICommonObject = {}
+ 
++    constructor() {}
++
+     /**
+      * Initialize to get all nodes & credentials
+      */
+     async initialize() {
+         await this.initializeNodes()
+         await this.initializeCredentials()
++        hooks.emit(NodesPoolHooks.OnInitialize, this)
+     }
+ 
+     /**
+@@ -24,7 +53,15 @@ export class NodesPool {
+     private async initializeNodes() {
+         const packagePath = getNodeModulesPackagePath('flowise-components')
+         const nodesPath = path.join(packagePath, 'dist', 'nodes')
+-        const nodeFiles = await this.getFiles(nodesPath)
++        let nodeFiles = await this.getFiles(nodesPath)
++
++        // Load additional nodes via hook (usually from within plugins)
++        const additionalNodesPathes = await hooks.call(NodesPoolHooks.GetAdditionalNodesPath)
++        for (const additionalNodesPath of additionalNodesPathes) {
++            const _nodeFiles = await this.getFiles(additionalNodesPath as string)
++            nodeFiles.push(..._nodeFiles)
++        }
++
+         return Promise.all(
+             nodeFiles.map(async (file) => {
+                 if (file.endsWith('.js')) {
+@@ -64,6 +101,8 @@ export class NodesPool {
+         )
+     }
+ 
++    public async addNode() {}
++
+     /**
+      * Initialize credentials
+      */
+@@ -71,6 +110,14 @@ export class NodesPool {
+         const packagePath = getNodeModulesPackagePath('flowise-components')
+         const nodesPath = path.join(packagePath, 'dist', 'credentials')
+         const nodeFiles = await this.getFiles(nodesPath)
++
++        // Load additional nodes via hook (usually from within plugins)
++        const additionalCredentialsPathes = await hooks.call(NodesPoolHooks.GetAdditionalCredentialsPath)
++        for (const additionalCredentialsPath of additionalCredentialsPathes) {
++            const _nodeFiles = await this.getFiles(additionalCredentialsPath as string)
++            nodeFiles.push(..._nodeFiles)
++        }
++
+         return Promise.all(
+             nodeFiles.map(async (file) => {
+                 if (file.endsWith('.credential.js')) {
+diff --git a/packages/server/src/Plugin.ts b/packages/server/src/Plugin.ts
+index 549f0fee88d..72183fc83d5 100644
+--- a/packages/server/src/Plugin.ts
++++ b/packages/server/src/Plugin.ts
+@@ -41,12 +41,12 @@ class PluginManager {
+     /**
+      * Load plugins from the plugin directory without initializing them.
+      *
+-     * @uses process.env.PLUGIN_DIR to specify the plugin directory
++     * @uses process.env.PLUGIN_PATH to specify the plugin directory
+      * @returns {Promise<void>}
+      */
+     async loadPlugins() {
+-        const pluginDir = process.env.PLUGIN_DIR
+-            ? path.join(__dirname, process.env.PLUGIN_DIR)
++        const pluginDir = process.env.PLUGIN_PATH
++            ? path.join(__dirname, process.env.PLUGIN_PATH)
+             : path.join(__dirname, '..', '..', '..', 'plugins')
+ 
+         const pluginFolders = fs.readdirSync(pluginDir)
+diff --git a/packages/server/src/commands/start.ts b/packages/server/src/commands/start.ts
+index 6bf7d6993b4..21a8eb5d002 100644
+--- a/packages/server/src/commands/start.ts
++++ b/packages/server/src/commands/start.ts
+@@ -38,7 +38,8 @@ export default class Start extends Command {
+         LANGCHAIN_TRACING_V2: Flags.string(),
+         LANGCHAIN_ENDPOINT: Flags.string(),
+         LANGCHAIN_API_KEY: Flags.string(),
+-        LANGCHAIN_PROJECT: Flags.string()
++        LANGCHAIN_PROJECT: Flags.string(),
++        PLUGIN_PATH: Flags.string()
+     }
+ 
+     async stopProcess() {
+@@ -107,6 +108,9 @@ export default class Start extends Command {
+         if (flags.LANGCHAIN_API_KEY) process.env.LANGCHAIN_API_KEY = flags.LANGCHAIN_API_KEY
+         if (flags.LANGCHAIN_PROJECT) process.env.LANGCHAIN_PROJECT = flags.LANGCHAIN_PROJECT
+ 
++        // Plugin config
++        if (flags.PLUGIN_PATH) process.env.PLUGIN_PATH = flags.PLUGIN_PATH
++
+         await (async () => {
+             try {
+                 logger.info('Starting Flowise...')
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index 9d3f7052400..96542574cf0 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -6,6 +6,7 @@ import http from 'http'
+ import * as fs from 'fs'
+ import basicAuth from 'express-basic-auth'
+ import { Server } from 'socket.io'
++import { loadPlugins } from './Plugin'
+ import logger from './utils/logger'
+ import { expressRequestLogger } from './utils/logger'
+ 
+@@ -207,11 +208,15 @@ export class App {
+ 
+         // Returns specific component node icon via name
+         this.app.get('/api/v1/node-icon/:name', (req: Request, res: Response) => {
++            logger.info(`Node ${req.params.name} icon requested`)
+             if (Object.prototype.hasOwnProperty.call(this.nodesPool.componentNodes, req.params.name)) {
++                logger.info(`Node ${req.params.name} found`)
+                 const nodeInstance = this.nodesPool.componentNodes[req.params.name]
+                 if (nodeInstance.icon === undefined) {
+                     throw new Error(`Node ${req.params.name} icon not found`)
+                 }
++                logger.info(`Node ${req.params.name} icon found`)
++                logger.info(`Node ${req.params.name} icon path: ${nodeInstance.icon}`)
+ 
+                 if (nodeInstance.icon.endsWith('.svg') || nodeInstance.icon.endsWith('.png') || nodeInstance.icon.endsWith('.jpg')) {
+                     const filepath = nodeInstance.icon
+@@ -1051,8 +1056,10 @@ export async function start(): Promise<void> {
+         }
+     })
+ 
++    const plugins = await loadPlugins()
+     await serverApp.initDatabase()
+     await serverApp.config(io)
++    plugins.initialize()
+ 
+     server.listen(port, () => {
+         logger.info(`⚡️ [server]: Flowise Server is listening at ${port}`)
+
+From 3f68c26610856b4a0d65ec87fd42f8db9d277e16 Mon Sep 17 00:00:00 2001
+From: matthias <matthias@engarde.net>
+Date: Sun, 15 Oct 2023 22:02:34 +0200
+Subject: [PATCH 3/5] Lint --fix
+
+---
+ package.json                 |  2 +-
+ packages/server/nodemon.json | 17 +++--------------
+ packages/server/package.json |  2 +-
+ 3 files changed, 5 insertions(+), 16 deletions(-)
+
+diff --git a/package.json b/package.json
+index 11e195fe834..31d02269a00 100644
+--- a/package.json
++++ b/package.json
+@@ -56,4 +56,4 @@
+     "engines": {
+         "node": ">=18.15.0"
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/packages/server/nodemon.json b/packages/server/nodemon.json
+index e74f8d10642..55a4cc8ed67 100644
+--- a/packages/server/nodemon.json
++++ b/packages/server/nodemon.json
+@@ -1,17 +1,6 @@
+ {
+-    "ignore": [
+-        "**/*.spec.ts",
+-        ".git",
+-        "node_modules"
+-    ],
+-    "watch": [
+-        "commands",
+-        "index.ts",
+-        "src",
+-        "../components/nodes",
+-        "../components/src",
+-        "../../plugins"
+-    ],
++    "ignore": ["**/*.spec.ts", ".git", "node_modules"],
++    "watch": ["commands", "index.ts", "src", "../components/nodes", "../components/src", "../../plugins"],
+     "exec": "yarn oclif-dev",
+     "ext": "ts"
+-}
+\ No newline at end of file
++}
+diff --git a/packages/server/package.json b/packages/server/package.json
+index f3d38480728..eadedea073c 100644
+--- a/packages/server/package.json
++++ b/packages/server/package.json
+@@ -78,4 +78,4 @@
+         "ts-node": "^10.7.0",
+         "typescript": "^4.8.4"
+     }
+-}
+\ No newline at end of file
++}
+
+From 22692598b0859e25f94ef9b4b56c198e80b90fc7 Mon Sep 17 00:00:00 2001
+From: matthias <matthias@engarde.net>
+Date: Sun, 15 Oct 2023 22:03:03 +0200
+Subject: [PATCH 4/5] Added PLUGIN_PATH .env & documentation
+
+---
+ CONTRIBUTING.md              | 46 +++++++++++++++++-------------------
+ docker/docker-compose.yml    |  1 +
+ packages/server/.env.example |  1 +
+ 3 files changed, 24 insertions(+), 24 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index db4301dac5f..d73f8f767da 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -12,7 +12,7 @@ Star and share the [Github Repo](https://github.com/FlowiseAI/Flowise).
+ 
+ ## 🙋 Q&A
+ 
+-Search up for any questions in [Q&A section](https://github.com/FlowiseAI/Flowise/discussions/categories/q-a), if you can't find one, don't hesitate to create one. It might helps others that have similar question.
++Search up for any questions in [Q&amp;A section](https://github.com/FlowiseAI/Flowise/discussions/categories/q-a), if you can't find one, don't hesitate to create one. It might helps others that have similar question.
+ 
+ ## 🙌 Share Chatflow
+ 
+@@ -52,16 +52,13 @@ Flowise has 3 different modules in a single mono repository.
+ #### Step by step
+ 
+ 1. Fork the official [Flowise Github Repository](https://github.com/FlowiseAI/Flowise).
+-
+ 2. Clone your forked repository.
+-
+ 3. Create a new branch, see [guide](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-and-deleting-branches-within-your-repository). Naming conventions:
+ 
+     - For feature branch: `feature/<Your New Feature>`
+     - For bug fix branch: `bugfix/<Your New Bugfix>`.
+ 
+ 4. Switch to the newly created branch.
+-
+ 5. Go into repository folder
+ 
+     ```bash
+@@ -120,26 +117,27 @@ Flowise has 3 different modules in a single mono repository.
+ 
+ Flowise support different environment variables to configure your instance. You can specify the following variables in the `.env` file inside `packages/server` folder. Read [more](https://docs.flowiseai.com/environment-variables)
+ 
+-| Variable                    | Description                                                                  | Type                                             | Default                             |
+-| --------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------- | --- |
+-| PORT                        | The HTTP port Flowise runs on                                                | Number                                           | 3000                                |
+-| FLOWISE_USERNAME            | Username to login                                                            | String                                           |                                     |
+-| FLOWISE_PASSWORD            | Password to login                                                            | String                                           |                                     |
+-| DEBUG                       | Print logs from components                                                   | Boolean                                          |                                     |
+-| LOG_PATH                    | Location where log files are stored                                          | String                                           | `your-path/Flowise/logs`            |
+-| LOG_LEVEL                   | Different levels of logs                                                     | Enum String: `error`, `info`, `verbose`, `debug` | `info`                              |
+-| APIKEY_PATH                 | Location where api keys are saved                                            | String                                           | `your-path/Flowise/packages/server` |
+-| TOOL_FUNCTION_BUILTIN_DEP   | NodeJS built-in modules to be used for Tool Function                         | String                                           |                                     |
+-| TOOL_FUNCTION_EXTERNAL_DEP  | External modules to be used for Tool Function                                | String                                           |                                     |     |
+-| DATABASE_TYPE               | Type of database to store the flowise data                                   | Enum String: `sqlite`, `mysql`, `postgres`       | `sqlite`                            |
+-| DATABASE_PATH               | Location where database is saved (When DATABASE_TYPE is sqlite)              | String                                           | `your-home-dir/.flowise`            |
+-| DATABASE_HOST               | Host URL or IP address (When DATABASE_TYPE is not sqlite)                    | String                                           |                                     |
+-| DATABASE_PORT               | Database port (When DATABASE_TYPE is not sqlite)                             | String                                           |                                     |
+-| DATABASE_USER               | Database username (When DATABASE_TYPE is not sqlite)                         | String                                           |                                     |
+-| DATABASE_PASSWORD           | Database password (When DATABASE_TYPE is not sqlite)                         | String                                           |                                     |
+-| DATABASE_NAME               | Database name (When DATABASE_TYPE is not sqlite)                             | String                                           |                                     |
+-| SECRETKEY_PATH              | Location where encryption key (used to encrypt/decrypt credentials) is saved | String                                           | `your-path/Flowise/packages/server` |
+-| FLOWISE_SECRETKEY_OVERWRITE | Encryption key to be used instead of the key stored in SECRETKEY_PATH        | String                                           |
++| Variable                    | Description                                                                  | Type                                            | Default                             |     |
++| --------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------- | --- |
++| PORT                        | The HTTP port Flowise runs on                                                | Number                                          | 3000                                |     |
++| FLOWISE_USERNAME            | Username to login                                                            | String                                          |                                     |     |
++| FLOWISE_PASSWORD            | Password to login                                                            | String                                          |                                     |     |
++| DEBUG                       | Print logs from components                                                   | Boolean                                         |                                     |     |
++| LOG_PATH                    | Location where log files are stored                                          | String                                          | `your-path/Flowise/logs`            |     |
++| LOG_LEVEL                   | Different levels of logs                                                     | Enum String:`error`, `info`, `verbose`, `debug` | `info`                              |     |
++| APIKEY_PATH                 | Location where api keys are saved                                            | String                                          | `your-path/Flowise/packages/server` |     |
++| TOOL_FUNCTION_BUILTIN_DEP   | NodeJS built-in modules to be used for Tool Function                         | String                                          |                                     |     |
++| TOOL_FUNCTION_EXTERNAL_DEP  | External modules to be used for Tool Function                                | String                                          |                                     |     |
++| DATABASE_TYPE               | Type of database to store the flowise data                                   | Enum String:`sqlite`, `mysql`, `postgres`       | `sqlite`                            |     |
++| DATABASE_PATH               | Location where database is saved (When DATABASE_TYPE is sqlite)              | String                                          | `your-home-dir/.flowise`            |     |
++| DATABASE_HOST               | Host URL or IP address (When DATABASE_TYPE is not sqlite)                    | String                                          |                                     |     |
++| DATABASE_PORT               | Database port (When DATABASE_TYPE is not sqlite)                             | String                                          |                                     |     |
++| DATABASE_USER               | Database username (When DATABASE_TYPE is not sqlite)                         | String                                          |                                     |     |
++| DATABASE_PASSWORD           | Database password (When DATABASE_TYPE is not sqlite)                         | String                                          |                                     |     |
++| DATABASE_NAME               | Database name (When DATABASE_TYPE is not sqlite)                             | String                                          |                                     |     |
++| SECRETKEY_PATH              | Location where encryption key (used to encrypt/decrypt credentials) is saved | String                                          | `your-path/Flowise/packages/server` |     |
++| FLOWISE_SECRETKEY_OVERWRITE | Encryption key to be used instead of the key stored in SECRETKEY_PATH        | String                                          |                                     |     |
++| PLUGIN_PATH                 | Location where plugins are loaded from.                                      | String                                          |                                     |     |
+ 
+ You can also specify the env variables when using `npx`. For example:
+ 
+diff --git a/docker/docker-compose.yml b/docker/docker-compose.yml
+index 137b118331c..f4da4d0d70d 100644
+--- a/docker/docker-compose.yml
++++ b/docker/docker-compose.yml
+@@ -15,6 +15,7 @@ services:
+             - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE}
+             - LOG_LEVEL=${LOG_LEVEL}
+             - LOG_PATH=${LOG_PATH}
++            - PLUGIN_PATH=${PLUGIN_PATH}
+         ports:
+             - '${PORT}:${PORT}'
+         volumes:
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 0ad11f3f7f3..5c609cb64a3 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -3,6 +3,7 @@ PORT=3000
+ # APIKEY_PATH=/your_api_key_path/.flowise
+ # SECRETKEY_PATH=/your_api_key_path/.flowise
+ # LOG_PATH=/your_log_path/.flowise/logs
++# PLUGIN_PATH=/your_plugin_path/.flowise/plugins
+ 
+ # NUMBER_OF_PROXIES= 1
+ 
+
+From 1bb0d912bc23207423a1e613b90438942d16da1d Mon Sep 17 00:00:00 2001
+From: matthias <matthias@engarde.net>
+Date: Sun, 15 Oct 2023 22:03:18 +0200
+Subject: [PATCH 5/5] Added demo plugin
+
+---
+ plugins/my-plugin/gulpfile.ts                 |   9 +
+ plugins/my-plugin/index.ts                    |  20 +++
+ .../my-plugin/nodes/MyCheerio/MyCheerio.ts    | 164 ++++++++++++++++++
+ plugins/my-plugin/nodes/MyCheerio/cheerio.svg |   5 +
+ plugins/my-plugin/package.json                |  23 +++
+ plugins/my-plugin/tsconfig.json               |  20 +++
+ 6 files changed, 241 insertions(+)
+ create mode 100644 plugins/my-plugin/gulpfile.ts
+ create mode 100644 plugins/my-plugin/index.ts
+ create mode 100644 plugins/my-plugin/nodes/MyCheerio/MyCheerio.ts
+ create mode 100644 plugins/my-plugin/nodes/MyCheerio/cheerio.svg
+ create mode 100644 plugins/my-plugin/package.json
+ create mode 100644 plugins/my-plugin/tsconfig.json
+
+diff --git a/plugins/my-plugin/gulpfile.ts b/plugins/my-plugin/gulpfile.ts
+new file mode 100644
+index 00000000000..c4d2d35354e
+--- /dev/null
++++ b/plugins/my-plugin/gulpfile.ts
+@@ -0,0 +1,9 @@
++import gulp from 'gulp'
++
++const { src, dest } = gulp
++
++function copyIcons() {
++    return src(['nodes/**/*.{jpg,png,svg}']).pipe(dest('dist/nodes'))
++}
++
++exports.default = copyIcons
+diff --git a/plugins/my-plugin/index.ts b/plugins/my-plugin/index.ts
+new file mode 100644
+index 00000000000..82473d9d070
+--- /dev/null
++++ b/plugins/my-plugin/index.ts
+@@ -0,0 +1,20 @@
++import path from 'path'
++import { FlowisePlugin } from 'flowise/dist/Plugin'
++
++class MyPlugin extends FlowisePlugin {
++    name = 'MyFirstPlugin'
++    dirname = __dirname
++    nodesPath = path.join(this.dirname, 'nodes')
++
++    constructor() {
++        super()
++        this.logger.debug('### MyPlugin loaded successfully ###')
++    }
++
++    initialize() {
++        super.initialize()
++        this.logger.debug(`### ${this.name} initialized ###`)
++    }
++}
++
++export default MyPlugin
+diff --git a/plugins/my-plugin/nodes/MyCheerio/MyCheerio.ts b/plugins/my-plugin/nodes/MyCheerio/MyCheerio.ts
+new file mode 100644
+index 00000000000..76e092cd6d8
+--- /dev/null
++++ b/plugins/my-plugin/nodes/MyCheerio/MyCheerio.ts
+@@ -0,0 +1,164 @@
++import { INode, INodeData, INodeParams } from 'flowise-components'
++import { TextSplitter } from 'langchain/text_splitter'
++import { CheerioWebBaseLoader, WebBaseLoaderParams } from 'langchain/document_loaders/web/cheerio'
++import { test } from 'linkifyjs'
++import { parse } from 'css-what'
++import { webCrawl, xmlScrape } from 'flowise-components'
++import { SelectorType } from 'cheerio'
++
++/**
++ * This is basically a copy of the original Cheerio Web Scraper node, for demo purpose with slight changes in the UI / description.
++ */
++
++class MyCheerio_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'My Cheerio Web Scraper'
++        this.name = 'myCheerioWebScraper'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'cheerio.svg'
++        this.category = 'Custom'
++        this.description = `Customized load data from webpages`
++        this.baseClasses = [this.type]
++        this.inputs = [
++            {
++                label: 'URL',
++                name: 'url',
++                type: 'string'
++            },
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Get Relative Links Method',
++                name: 'relativeLinksMethod',
++                type: 'options',
++                description: 'Select a method to retrieve relative links',
++                options: [
++                    {
++                        label: 'Web Crawl',
++                        name: 'webCrawl',
++                        description: 'Crawl relative links from HTML URL'
++                    },
++                    {
++                        label: 'Scrape XML Sitemap',
++                        name: 'scrapeXMLSitemap',
++                        description: 'Scrape relative links from XML sitemap URL'
++                    }
++                ],
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Get Relative Links Limit',
++                name: 'limit',
++                type: 'number',
++                optional: true,
++                additionalParams: true,
++                description:
++                    'Only used when "Get Relative Links Method" is selected. Set 0 to retrieve all relative links, default limit is 10.',
++                warning: `Retrieving all links might take long time, and all links will be upserted again if the flow's state changed (eg: different URL, chunk size, etc)`
++            },
++            {
++                label: 'Selector (CSS)',
++                name: 'selector',
++                type: 'string',
++                description: 'Specify a CSS selector to select the content to be extracted',
++                optional: true
++            },
++            {
++                label: 'Metadata',
++                name: 'metadata',
++                type: 'json',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData): Promise<any> {
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const metadata = nodeData.inputs?.metadata
++        const relativeLinksMethod = nodeData.inputs?.relativeLinksMethod as string
++        let limit = nodeData.inputs?.limit as string
++
++        let url = nodeData.inputs?.url as string
++        url = url.trim()
++        if (!test(url)) {
++            throw new Error('Invalid URL')
++        }
++
++        const selector: SelectorType = nodeData.inputs?.selector as SelectorType
++
++        let params: WebBaseLoaderParams = {}
++        if (selector) {
++            parse(selector) // comes with cheerio - will throw error if invalid
++            params['selector'] = selector
++        }
++
++        async function cheerioLoader(url: string): Promise<any> {
++            try {
++                let docs = []
++                const loader = new CheerioWebBaseLoader(url, params)
++                if (textSplitter) {
++                    docs = await loader.loadAndSplit(textSplitter)
++                } else {
++                    docs = await loader.load()
++                }
++                return docs
++            } catch (err) {
++                if (process.env.DEBUG === 'true') console.error(`error in CheerioWebBaseLoader: ${err.message}, on page: ${url}`)
++            }
++        }
++
++        let docs = []
++        if (relativeLinksMethod) {
++            if (process.env.DEBUG === 'true') console.info(`Start ${relativeLinksMethod}`)
++            if (!limit) limit = '10'
++            else if (parseInt(limit) < 0) throw new Error('Limit cannot be less than 0')
++            const pages: string[] =
++                relativeLinksMethod === 'webCrawl' ? await webCrawl(url, parseInt(limit)) : await xmlScrape(url, parseInt(limit))
++            if (process.env.DEBUG === 'true') console.info(`pages: ${JSON.stringify(pages)}, length: ${pages.length}`)
++            if (!pages || pages.length === 0) throw new Error('No relative links found')
++            for (const page of pages) {
++                docs.push(...(await cheerioLoader(page)))
++            }
++            if (process.env.DEBUG === 'true') console.info(`Finish ${relativeLinksMethod}`)
++        } else {
++            docs = await cheerioLoader(url)
++        }
++
++        if (metadata) {
++            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            let finaldocs = []
++            for (const doc of docs) {
++                const newdoc = {
++                    ...doc,
++                    metadata: {
++                        ...doc.metadata,
++                        ...parsedMetadata
++                    }
++                }
++                finaldocs.push(newdoc)
++            }
++            return finaldocs
++        }
++
++        return docs
++    }
++}
++
++module.exports = { nodeClass: MyCheerio_DocumentLoaders }
+diff --git a/plugins/my-plugin/nodes/MyCheerio/cheerio.svg b/plugins/my-plugin/nodes/MyCheerio/cheerio.svg
+new file mode 100644
+index 00000000000..8e3334b9fd7
+--- /dev/null
++++ b/plugins/my-plugin/nodes/MyCheerio/cheerio.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-circle-letter-c" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
++   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
++   <path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path>
++   <path d="M14 10a2 2 0 1 0 -4 0v4a2 2 0 1 0 4 0"></path>
++</svg>
+\ No newline at end of file
+diff --git a/plugins/my-plugin/package.json b/plugins/my-plugin/package.json
+new file mode 100644
+index 00000000000..13b33dc8f3f
+--- /dev/null
++++ b/plugins/my-plugin/package.json
+@@ -0,0 +1,23 @@
++{
++    "name": "my-plugin",
++    "version": "1.0.0",
++    "description": "My First Plugin",
++    "license": "MIT",
++    "main": "dist/index.js",
++    "types": "dist/src/index.d.ts",
++    "scripts": {
++        "test": "echo \"Error: no test specified\" && exit 1",
++        "build": "tsc && gulp",
++        "dev": "tsc --watch"
++    },
++    "author": "Matthias Platzer @engarde.net",
++    "dependencies": {
++        "flowise": "*",
++        "flowise-components": "*",
++        "winston": "^3.11.0"
++    },
++    "devDependencies": {
++        "@types/winston": "^2.4.4",
++        "typescript": "^4.8.4"
++    }
++}
+diff --git a/plugins/my-plugin/tsconfig.json b/plugins/my-plugin/tsconfig.json
+new file mode 100644
+index 00000000000..873f08f65ed
+--- /dev/null
++++ b/plugins/my-plugin/tsconfig.json
+@@ -0,0 +1,20 @@
++{
++    "compilerOptions": {
++        "lib": ["ES2020", "ES2021.String"],
++        "experimentalDecorators": true /* Enable experimental support for TC39 stage 2 draft decorators. */,
++        "emitDecoratorMetadata": true /* Emit design-type metadata for decorated declarations in source files. */,
++        "target": "ES2020", // or higher
++        "outDir": "./dist/",
++        "resolveJsonModule": true,
++        "esModuleInterop": true /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */,
++        "forceConsistentCasingInFileNames": true /* Ensure that casing is correct in imports. */,
++        "strict": true /* Enable all strict type-checking options. */,
++        "skipLibCheck": true /* Skip type checking all .d.ts files. */,
++        "sourceMap": true,
++        "strictPropertyInitialization": false,
++        "useUnknownInCatchVariables": false,
++        "declaration": true,
++        "module": "commonjs"
++    },
++    "include": ["*.ts", "src", "nodes", "credentials"]
++}

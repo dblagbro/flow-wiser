@@ -1,0 +1,133 @@
+From 3157d0feaa4af4e29131e93e7fa4bf81a931aedc Mon Sep 17 00:00:00 2001
+From: pragnyanramtha <pragnyanramtha@gmail.com>
+Date: Wed, 20 May 2026 17:42:59 +0000
+Subject: [PATCH 1/2] fix(chatmodels): add newer Azure OpenAI models
+
+---
+ packages/components/models.json               | 36 +++++++++++++++++++
+ packages/components/src/modelRegistry.test.ts | 32 +++++++++++++++++
+ 2 files changed, 68 insertions(+)
+ create mode 100644 packages/components/src/modelRegistry.test.ts
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..81a2b96aa75 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -700,6 +700,42 @@
+         {
+             "name": "azureChatOpenAI",
+             "models": [
++                {
++                    "label": "gpt-5.5",
++                    "name": "gpt-5.5",
++                    "input_cost": 0.000005,
++                    "output_cost": 0.00003
++                },
++                {
++                    "label": "gpt-5.5-pro",
++                    "name": "gpt-5.5-pro",
++                    "input_cost": 0.00003,
++                    "output_cost": 0.00018
++                },
++                {
++                    "label": "gpt-5.4",
++                    "name": "gpt-5.4",
++                    "input_cost": 0.0000025,
++                    "output_cost": 0.000015
++                },
++                {
++                    "label": "gpt-5.4-pro",
++                    "name": "gpt-5.4-pro",
++                    "input_cost": 0.00003,
++                    "output_cost": 0.00018
++                },
++                {
++                    "label": "gpt-5.4-mini",
++                    "name": "gpt-5.4-mini",
++                    "input_cost": 0.00000075,
++                    "output_cost": 0.0000045
++                },
++                {
++                    "label": "gpt-5.4-nano",
++                    "name": "gpt-5.4-nano",
++                    "input_cost": 0.0000002,
++                    "output_cost": 0.00000125
++                },
+                 {
+                     "label": "gpt-5.2",
+                     "name": "gpt-5.2",
+diff --git a/packages/components/src/modelRegistry.test.ts b/packages/components/src/modelRegistry.test.ts
+new file mode 100644
+index 00000000000..d691b5f2a22
+--- /dev/null
++++ b/packages/components/src/modelRegistry.test.ts
+@@ -0,0 +1,32 @@
++import models from '../models.json'
++
++type ModelEntry = {
++    label: string
++    name: string
++    input_cost: number
++    output_cost: number
++}
++
++type ProviderEntry = {
++    name: string
++    models: ModelEntry[]
++}
++
++const getChatProvider = (name: string): ProviderEntry => {
++    const provider = (models.chat as ProviderEntry[]).find((entry) => entry.name === name)
++    if (!provider) throw new Error(`Missing chat provider ${name}`)
++    return provider
++}
++
++describe('models.json Azure ChatOpenAI registry', () => {
++    it('keeps newer GPT-5.x Azure ChatOpenAI options aligned with ChatOpenAI', () => {
++        const chatOpenAI = getChatProvider('chatOpenAI')
++        const azureChatOpenAI = getChatProvider('azureChatOpenAI')
++
++        for (const modelName of ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano']) {
++            const openAIModel = chatOpenAI.models.find((model) => model.name === modelName)
++            expect(openAIModel).toBeDefined()
++            expect(azureChatOpenAI.models.find((model) => model.name === modelName)).toEqual(openAIModel)
++        }
++    })
++})
+
+From 6e14aa1446a56b0ef1f1e50dc9917cb8e237a5a3 Mon Sep 17 00:00:00 2001
+From: pragnyanramtha <pragnyanramtha@gmail.com>
+Date: Wed, 20 May 2026 18:14:10 +0000
+Subject: [PATCH 2/2] test(chatmodels): report Azure model drift per model
+
+---
+ packages/components/src/modelRegistry.test.ts | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/src/modelRegistry.test.ts b/packages/components/src/modelRegistry.test.ts
+index d691b5f2a22..4296eaabcd2 100644
+--- a/packages/components/src/modelRegistry.test.ts
++++ b/packages/components/src/modelRegistry.test.ts
+@@ -19,14 +19,16 @@ const getChatProvider = (name: string): ProviderEntry => {
+ }
+ 
+ describe('models.json Azure ChatOpenAI registry', () => {
+-    it('keeps newer GPT-5.x Azure ChatOpenAI options aligned with ChatOpenAI', () => {
++    const newerGpt5Models = ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano']
++
++    it.each(newerGpt5Models)('keeps %s Azure ChatOpenAI aligned with ChatOpenAI', (modelName) => {
+         const chatOpenAI = getChatProvider('chatOpenAI')
+         const azureChatOpenAI = getChatProvider('azureChatOpenAI')
++        const openAIModel = chatOpenAI.models.find((model) => model.name === modelName)
++        const azureModel = azureChatOpenAI.models.find((model) => model.name === modelName)
+ 
+-        for (const modelName of ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano']) {
+-            const openAIModel = chatOpenAI.models.find((model) => model.name === modelName)
+-            expect(openAIModel).toBeDefined()
+-            expect(azureChatOpenAI.models.find((model) => model.name === modelName)).toEqual(openAIModel)
+-        }
++        expect(openAIModel).toBeDefined()
++        expect(azureModel).toBeDefined()
++        expect(azureModel).toEqual(openAIModel)
+     })
+ })

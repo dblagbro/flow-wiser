@@ -1,0 +1,24 @@
+From aa029de5f3a731d052d21814f991e244af027ae0 Mon Sep 17 00:00:00 2001
+From: Yuhang <2312744987@qq.com>
+Date: Wed, 24 Jan 2024 12:54:37 +0800
+Subject: [PATCH] add deploy to Zeabur as another self host option
+
+---
+ README.md | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/README.md b/README.md
+index 3e6b7e5610c..b1dbc591e2c 100644
+--- a/README.md
++++ b/README.md
+@@ -178,6 +178,10 @@ Deploy Flowise self-hosted in your existing infrastructure, we support various [
+ 
+         [![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploy.png)](https://repocloud.io/details/?app_id=29)
+ 
++    -   [Zeabur](https://zeabur.com/templates/2JYZTR)
++       
++        [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/2JYZTR)
++
+       </details>
+ 
+ ## 💻 Cloud Hosted

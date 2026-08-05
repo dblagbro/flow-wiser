@@ -1,0 +1,50 @@
+From 01ddd9797b7d34db068eb6bb7c4e2c075501ece3 Mon Sep 17 00:00:00 2001
+From: Sahil Kamble <syk2448@gmail.com>
+Date: Sun, 24 May 2026 13:53:57 +0530
+Subject: [PATCH] fix(server): harden tools and chatmessage route contracts
+
+---
+ packages/server/src/routes/chat-messages/index.ts | 6 +++---
+ packages/server/src/routes/tools/index.ts         | 6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/packages/server/src/routes/chat-messages/index.ts b/packages/server/src/routes/chat-messages/index.ts
+index efea8da9cca..f31e2050785 100644
+--- a/packages/server/src/routes/chat-messages/index.ts
++++ b/packages/server/src/routes/chat-messages/index.ts
+@@ -7,12 +7,12 @@ const router = express.Router()
+ // router.post(['/', '/:id'], chatMessageController.createChatMessage)
+ 
+ // READ
+-router.get(['/', '/:id'], chatMessageController.getAllChatMessages)
++router.get('/:id', chatMessageController.getAllChatMessages)
+ 
+ // UPDATE
+-router.put(['/abort/', '/abort/:chatflowid/:chatid'], chatMessageController.abortChatMessage)
++router.put('/abort/:chatflowid/:chatid', chatMessageController.abortChatMessage)
+ 
+ // DELETE
+-router.delete(['/', '/:id'], chatMessageController.removeAllChatMessages)
++router.delete('/:id', chatMessageController.removeAllChatMessages)
+ 
+ export default router
+diff --git a/packages/server/src/routes/tools/index.ts b/packages/server/src/routes/tools/index.ts
+index 81ff9029242..b47cda65585 100644
+--- a/packages/server/src/routes/tools/index.ts
++++ b/packages/server/src/routes/tools/index.ts
+@@ -9,12 +9,12 @@ router.post('/', checkPermission('tools:create'), toolsController.createTool)
+ 
+ // READ
+ router.get('/', checkPermission('tools:view'), toolsController.getAllTools)
+-router.get(['/', '/:id'], checkAnyPermission('tools:view'), toolsController.getToolById)
++router.get('/:id', checkAnyPermission('tools:view'), toolsController.getToolById)
+ 
+ // UPDATE
+-router.put(['/', '/:id'], checkAnyPermission('tools:update,tools:create'), toolsController.updateTool)
++router.put('/:id', checkAnyPermission('tools:update,tools:create'), toolsController.updateTool)
+ 
+ // DELETE
+-router.delete(['/', '/:id'], checkPermission('tools:delete'), toolsController.deleteTool)
++router.delete('/:id', checkPermission('tools:delete'), toolsController.deleteTool)
+ 
+ export default router

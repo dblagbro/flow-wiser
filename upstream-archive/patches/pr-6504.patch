@@ -1,0 +1,202 @@
+From 32fdc8b4067f241a68188c507f400e1f2d0c2e25 Mon Sep 17 00:00:00 2001
+From: cuidong233 <cuidong111@gmail.com>
+Date: Thu, 11 Jun 2026 18:14:47 +0800
+Subject: [PATCH] fix(chatopenai): honor proxy URL
+
+---
+ .../chatmodels/ChatOpenAI/ChatOpenAI.test.ts  | 91 +++++++++++++++++++
+ .../nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts | 32 ++++++-
+ packages/components/package.json              |  1 +
+ pnpm-lock.yaml                                |  3 +
+ 4 files changed, 125 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.test.ts
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.test.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.test.ts
+new file mode 100644
+index 00000000000..e10e1148c0e
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.test.ts
+@@ -0,0 +1,91 @@
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn(),
++    ChatOpenAIFields: {}
++}))
++
++jest.mock('undici', () => ({
++    ProxyAgent: jest.fn().mockImplementation((url) => ({ proxyUrl: url }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn(),
++    isReasoningModelOpenAI: jest.fn().mockReturnValue(false)
++}))
++
++jest.mock('../../../src/modelLoader', () => ({
++    MODEL_TYPE: { CHAT: 'chat' },
++    getModels: jest.fn()
++}))
++
++jest.mock('./FlowiseChatOpenAI', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((id, fields) => ({
++        id,
++        fields,
++        setMultiModalOption: jest.fn()
++    }))
++}))
++
++import { ProxyAgent } from 'undici'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { ChatOpenAI } = require('./FlowiseChatOpenAI')
++const { nodeClass: ChatOpenAINode } = require('./ChatOpenAI')
++
++describe('ChatOpenAI node', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('passes proxyUrl to the OpenAI client fetch dispatcher', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ openAIApiKey: 'sk-test' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOpenAINode()
++        const nodeData = {
++            credential: 'cred-1',
++            inputs: {
++                modelName: 'gpt-4o-mini',
++                temperature: '0.2',
++                proxyUrl: 'http://corporate-proxy.example.com:3128',
++                baseOptions: {
++                    'OpenAI-Beta': 'assistants=v2'
++                }
++            }
++        }
++
++        await node.init(
++            {
++                ...nodeData,
++                id: 'chatOpenAI_0'
++            },
++            '',
++            {}
++        )
++        await node.init(
++            {
++                ...nodeData,
++                id: 'chatOpenAI_1'
++            },
++            '',
++            {}
++        )
++
++        expect(ProxyAgent).toHaveBeenCalledWith('http://corporate-proxy.example.com:3128')
++        expect(ProxyAgent).toHaveBeenCalledTimes(1)
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            'chatOpenAI_0',
++            expect.objectContaining({
++                configuration: {
++                    defaultHeaders: {
++                        'OpenAI-Beta': 'assistants=v2'
++                    },
++                    fetchOptions: {
++                        dispatcher: { proxyUrl: 'http://corporate-proxy.example.com:3128' }
++                    }
++                }
++            })
++        )
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index 03c13fee9b0..4756a937a83 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -5,6 +5,18 @@ import { getBaseClasses, getCredentialData, getCredentialParam, isReasoningModel
+ import { ChatOpenAI } from './FlowiseChatOpenAI'
+ import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
+ import { OpenAI as OpenAIClient } from 'openai'
++import { ProxyAgent } from 'undici'
++
++const proxyAgents = new Map<string, ProxyAgent>()
++
++const getProxyAgent = (proxyUrl: string): ProxyAgent => {
++    let proxyAgent = proxyAgents.get(proxyUrl)
++    if (!proxyAgent) {
++        proxyAgent = new ProxyAgent(proxyUrl)
++        proxyAgents.set(proxyUrl, proxyAgent)
++    }
++    return proxyAgent
++}
+ 
+ class ChatOpenAI_ChatModels implements INode {
+     label: string
+@@ -200,6 +212,14 @@ class ChatOpenAI_ChatModels implements INode {
+                 description: 'Override the default base URL for the API, e.g., "https://api.example.com/v2/',
+                 additionalParams: true
+             },
++            {
++                label: 'Proxy Url',
++                name: 'proxyUrl',
++                type: 'string',
++                optional: true,
++                description: 'Proxy URL to use for OpenAI API requests, e.g., "http://proxy.example.com:3128"',
++                additionalParams: true
++            },
+             {
+                 label: 'Base Options',
+                 name: 'baseOptions',
+@@ -230,6 +250,7 @@ class ChatOpenAI_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const strictToolCalling = nodeData.inputs?.strictToolCalling as boolean
+         const basePath = nodeData.inputs?.basepath as string
++        const proxyUrl = nodeData.inputs?.proxyUrl as string
+         const baseOptions = nodeData.inputs?.baseOptions
+         const reasoningEffort = nodeData.inputs?.reasoningEffort as OpenAIClient.ReasoningEffort | null
+         const reasoningSummary = nodeData.inputs?.reasoningSummary as 'auto' | 'concise' | 'detailed' | null
+@@ -286,10 +307,17 @@ class ChatOpenAI_ChatModels implements INode {
+             }
+         }
+ 
+-        if (basePath || parsedBaseOptions) {
++        if (basePath || parsedBaseOptions || proxyUrl) {
+             obj.configuration = {
+                 baseURL: basePath,
+-                defaultHeaders: parsedBaseOptions
++                defaultHeaders: parsedBaseOptions,
++                ...(proxyUrl
++                    ? {
++                          fetchOptions: {
++                              dispatcher: getProxyAgent(proxyUrl)
++                          }
++                      }
++                    : {})
+             }
+         }
+ 
+diff --git a/packages/components/package.json b/packages/components/package.json
+index f712fb1804b..616b483182a 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -179,6 +179,7 @@
+         "srt-parser-2": "^1.2.3",
+         "supergateway": "3.0.1",
+         "typeorm": "^0.3.6",
++        "undici": "6.23.0",
+         "uuid": "^10.0.0",
+         "vm2": "3.11.2",
+         "weaviate-client": "3.12.0",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 2e2d110c151..f6f3db0e9e3 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -729,6 +729,9 @@ importers:
+       typeorm:
+         specifier: ^0.3.6
+         version: 0.3.20(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6)(@types/node@22.16.3)(typescript@5.5.2))
++      undici:
++        specifier: 6.23.0
++        version: 6.23.0
+       uuid:
+         specifier: ^10.0.0
+         version: 10.0.0

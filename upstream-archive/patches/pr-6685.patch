@@ -1,0 +1,166 @@
+From c103ca77b81c737902129624eee25687f4c21606 Mon Sep 17 00:00:00 2001
+From: xowjd258 <xowjd2585@naver.com>
+Date: Thu, 30 Jul 2026 10:24:36 +0900
+Subject: [PATCH 1/2] feat: add AWS Bedrock API Key (Bearer Token)
+ authentication support
+
+Add support for AWS Bedrock API Key (Bearer Token) authentication,
+enabling users to authenticate without IAM credentials.
+
+Changes:
+- New credential type: 'AWS Bedrock API Key' (awsBedrockApiKey)
+- Bedrock Chat Model node now supports both IAM and API Key credentials
+- Bearer token injected via BedrockRuntimeClient middleware
+- Backward compatible: existing IAM flows unchanged
+
+Auth flow:
+1. Create 'AWS Bedrock API Key' credential with your bearer token
+2. Select it in the Bedrock node's credential dropdown
+3. Token is injected as 'Authorization: Bearer <token>' header
+
+Also supports direct input via node-level 'Bedrock API Key' field
+for quick testing, and the AWS_BEARER_TOKEN_BEDROCK environment
+variable as an additional fallback.
+---
+ .../AWSBedrockApiKey.credential.ts            | 30 +++++++++++++++
+ .../chatmodels/AWSBedrock/AWSChatBedrock.ts   | 38 ++++++++++++++++++-
+ 2 files changed, 66 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/credentials/AWSBedrockApiKey.credential.ts
+
+diff --git a/packages/components/credentials/AWSBedrockApiKey.credential.ts b/packages/components/credentials/AWSBedrockApiKey.credential.ts
+new file mode 100644
+index 00000000000..659bfd4f099
+--- /dev/null
++++ b/packages/components/credentials/AWSBedrockApiKey.credential.ts
+@@ -0,0 +1,30 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class AWSBedrockApiKey implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'AWS Bedrock API Key'
++        this.name = 'awsBedrockApiKey'
++        this.version = 1.0
++        this.description =
++            'AWS Bedrock API Key for bearer token authentication. ' +
++            'Use this instead of IAM credentials when you have a Bedrock API Key. ' +
++            'Also configurable via the AWS_BEARER_TOKEN_BEDROCK environment variable.'
++        this.inputs = [
++            {
++                label: 'Bedrock API Key (Bearer Token)',
++                name: 'bedrockBearerToken',
++                type: 'password',
++                placeholder: '<YOUR_BEDROCK_API_KEY>',
++                description: 'The API Key for AWS Bedrock bearer token authentication.'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: AWSBedrockApiKey }
+diff --git a/packages/components/nodes/chatmodels/AWSBedrock/AWSChatBedrock.ts b/packages/components/nodes/chatmodels/AWSBedrock/AWSChatBedrock.ts
+index c48f09ec6b7..77eedd48228 100644
+--- a/packages/components/nodes/chatmodels/AWSBedrock/AWSChatBedrock.ts
++++ b/packages/components/nodes/chatmodels/AWSBedrock/AWSChatBedrock.ts
+@@ -1,6 +1,6 @@
+ import { BaseCache } from '@langchain/core/caches'
+ import { ICommonObject, IMultiModalOption, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { getModels, getRegions, MODEL_TYPE } from '../../../src/modelLoader'
+ import { getAWSCredentialConfig } from '../../../src/awsToolsUtils'
+ import { ChatBedrockConverseInput, ChatBedrockConverse } from '@langchain/aws'
+@@ -35,7 +35,7 @@ class AWSChatBedrock_ChatModels implements INode {
+             label: 'AWS Credential',
+             name: 'credential',
+             type: 'credential',
+-            credentialNames: ['awsApi'],
++            credentialNames: ['awsApi', 'awsBedrockApiKey'],
+             optional: true
+         }
+         this.inputs = [
+@@ -84,6 +84,17 @@ class AWSChatBedrock_ChatModels implements INode {
+                 optional: true,
+                 additionalParams: true
+             },
++            {
++                label: 'Bedrock API Key (Bearer Token)',
++                name: 'bedrockBearerToken',
++                type: 'password',
++                description:
++                    'AWS Bedrock API Key for bearer token authentication. ' +
++                    'When provided, this is used instead of IAM credentials. ' +
++                    'Also configurable via the AWS_BEARER_TOKEN_BEDROCK environment variable.',
++                optional: true,
++                additionalParams: true
++            },
+             {
+                 label: 'Streaming',
+                 name: 'streaming',
+@@ -280,6 +291,29 @@ class AWSChatBedrock_ChatModels implements INode {
+         if (credentialConfig.credentials) {
+             obj.credentials = credentialConfig.credentials
+         }
++
++        // Resolve Bearer Token from credential (awsBedrockApiKey) or node-level input field.
++        // Credential takes precedence over the node-level field.
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const bearerTokenFromCredential = getCredentialParam('bedrockBearerToken', credentialData, nodeData)
++        const bearerTokenFromInput = nodeData.inputs?.bedrockBearerToken as string
++        const bedrockBearerToken = bearerTokenFromCredential || bearerTokenFromInput
++
++        if (bedrockBearerToken) {
++            const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime')
++            const client = new BedrockRuntimeClient({
++                region: iRegion
++            })
++            client.middlewareStack.add(
++                (next) => async (args) => {
++                    ;(args.request as any).headers['authorization'] = `Bearer ${bedrockBearerToken}`
++                    return next(args)
++                },
++                { step: 'build', name: 'bedrockBearerToken' }
++            )
++            obj.client = client
++        }
++
+         if (cache) obj.cache = cache
+ 
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
+
+From 6769c41283ed4b921e0ca25e2e55b032aba364b1 Mon Sep 17 00:00:00 2001
+From: xowjd258 <xowjd2585@naver.com>
+Date: Wed, 5 Aug 2026 11:13:32 +0900
+Subject: [PATCH 2/2] feat: add Claude 3.5 Sonnet v2 to AWS Bedrock model
+ catalog
+
+Add anthropic.claude-3-5-sonnet-20241022-v2:0 as (Legacy) model
+with standard inference profile geos (us, eu, apac).
+---
+ packages/components/models.json | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..52557393419 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -495,6 +495,14 @@
+                     "output_cost": 0.000004,
+                     "inference_profile_geos": ["us"]
+                 },
++                {
++                    "label": "anthropic.claude-3-5-sonnet-20241022-v2:0 (Legacy)",
++                    "name": "anthropic.claude-3-5-sonnet-20241022-v2:0",
++                    "description": "Claude 3.5 Sonnet v2 - Legacy",
++                    "input_cost": 0.000003,
++                    "output_cost": 0.000015,
++                    "inference_profile_geos": ["us", "eu", "apac"]
++                },
+                 {
+                     "label": "cohere.command-r-v1:0 (Legacy)",
+                     "name": "cohere.command-r-v1:0",

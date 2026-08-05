@@ -1,0 +1,433 @@
+From 3d522fee079929706342c990d4f6e7e96f4d7734 Mon Sep 17 00:00:00 2001
+From: Alex Schneider <alexanderschneider@me.com>
+Date: Mon, 20 Jul 2026 12:50:58 +0200
+Subject: [PATCH 1/2] feat(components): add Adanos market sentiment tool
+
+---
+ .../credentials/AdanosApi.credential.ts       |  26 +++
+ .../AdanosMarketSentiment.test.ts             |  96 ++++++++++
+ .../AdanosMarketSentiment.ts                  | 168 ++++++++++++++++++
+ .../tools/AdanosMarketSentiment/adanos.svg    |  14 ++
+ 4 files changed, 304 insertions(+)
+ create mode 100644 packages/components/credentials/AdanosApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
+ create mode 100644 packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
+ create mode 100644 packages/components/nodes/tools/AdanosMarketSentiment/adanos.svg
+
+diff --git a/packages/components/credentials/AdanosApi.credential.ts b/packages/components/credentials/AdanosApi.credential.ts
+new file mode 100644
+index 00000000000..55b03bd9213
+--- /dev/null
++++ b/packages/components/credentials/AdanosApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class AdanosApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Adanos API'
++        this.name = 'adanosApi'
++        this.version = 1.0
++        this.description =
++            'Create an API key on the <a target="_blank" href="https://adanos.org/register">Adanos registration page</a>. Requests use your Adanos account and plan limits.'
++        this.inputs = [
++            {
++                label: 'Adanos API Key',
++                name: 'adanosApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: AdanosApi }
+diff --git a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
+new file mode 100644
+index 00000000000..c2e4cec61ef
+--- /dev/null
++++ b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
+@@ -0,0 +1,96 @@
++const mockGet = jest.fn()
++const mockIsAxiosError = jest.fn()
++
++jest.mock('axios', () => ({
++    __esModule: true,
++    default: {
++        get: mockGet,
++        isAxiosError: mockIsAxiosError
++    }
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn(() => ['Tool', 'StructuredTool']),
++    getCredentialData: jest.fn(async () => ({ adanosApiKey: process.env.PATH ?? '' })),
++    getCredentialParam: jest.fn((name: string, data: Record<string, string>) => data[name])
++}))
++
++describe('AdanosMarketSentiment', () => {
++    let NodeClass: any
++
++    beforeEach(async () => {
++        jest.clearAllMocks()
++        mockIsAxiosError.mockReturnValue(false)
++        mockGet.mockResolvedValue({ data: { sentiment: 0.42 } })
++        const module = (await import('./AdanosMarketSentiment')) as any
++        NodeClass = module.nodeClass
++    })
++
++    async function createTool() {
++        const node = new NodeClass()
++        return node.init({ credential: process.env.PATH ?? '', inputs: {} }, '', {})
++    }
++
++    it('declares the expected Flowise node and protected credential', () => {
++        const node = new NodeClass()
++        expect(node.name).toBe('adanosMarketSentiment')
++        expect(node.credential.credentialNames).toEqual(['adanosApi'])
++        expect(node.baseClasses).toContain('StructuredTool')
++    })
++
++    it.each([
++        [
++            { operation: 'stock_sentiment', symbol: '$aapl', source: 'news', from: '2026-06-01', to: '2026-06-30' },
++            'https://api.adanos.org/news/stocks/v1/stock/AAPL',
++            { from: '2026-06-01', to: '2026-06-30' }
++        ],
++        [{ operation: 'crypto_sentiment', symbol: 'btc' }, 'https://api.adanos.org/reddit/crypto/v1/token/BTC', {}],
++        [{ operation: 'trending', assetType: 'stock', source: 'x', limit: 7 }, 'https://api.adanos.org/x/stocks/v1/trending', { limit: 7 }],
++        [{ operation: 'market_sentiment', assetType: 'crypto' }, 'https://api.adanos.org/reddit/crypto/v1/market-sentiment', {}]
++    ])('builds the documented request for %#', async (input, expectedUrl, expectedParams) => {
++        const tool = await createTool()
++        await tool.invoke(input)
++
++        expect(mockGet).toHaveBeenCalledWith(expectedUrl, {
++            headers: {
++                Accept: 'application/json',
++                'X-API-Key': process.env.PATH ?? ''
++            },
++            params: expectedParams,
++            timeout: 15_000
++        })
++    })
++
++    it.each([
++        [{ operation: 'stock_sentiment' }, /symbol is required/],
++        [{ operation: 'crypto_sentiment', symbol: 'BTC/USD' }, /Invalid crypto symbol/],
++        [{ operation: 'trending', from: '2026-02-30' }, /YYYY-MM-DD/],
++        [{ operation: 'trending', from: '2026-07-01', to: '2026-06-30' }, /from must not be after to/],
++        [{ operation: 'trending', limit: 1.5 }, /integer/]
++    ])('rejects invalid input %#', async (input, expectedError) => {
++        const tool = await createTool()
++        await expect(tool.invoke(input)).rejects.toThrow(expectedError)
++        expect(mockGet).not.toHaveBeenCalled()
++    })
++
++    it('returns JSON for agent consumption', async () => {
++        mockGet.mockResolvedValueOnce({ data: [{ ticker: 'AAPL', buzz_score: 88 }] })
++        const tool = await createTool()
++        await expect(tool.invoke({ operation: 'trending' })).resolves.toBe('[{"ticker":"AAPL","buzz_score":88}]')
++    })
++
++    it('reports upstream errors without exposing the request configuration', async () => {
++        const upstreamError = {
++            message: 'Request failed',
++            response: { status: 401, data: { detail: 'Invalid API key' } },
++            config: { marker: 'private request metadata' }
++        }
++        mockIsAxiosError.mockReturnValueOnce(true)
++        mockGet.mockRejectedValueOnce(upstreamError)
++
++        const tool = await createTool()
++        const message = await tool.invoke({ operation: 'trending' }).catch((error: Error) => error.message)
++        expect(message).toBe('Adanos request failed: HTTP 401: Invalid API key')
++        expect(message).not.toContain('private request metadata')
++    })
++})
+diff --git a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
+new file mode 100644
+index 00000000000..f11ab8314e7
+--- /dev/null
++++ b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
+@@ -0,0 +1,168 @@
++import axios from 'axios'
++import { StructuredTool } from '@langchain/core/tools'
++import { z } from 'zod/v3'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const BASE_URL = 'https://api.adanos.org'
++const REQUEST_TIMEOUT_MS = 15_000
++const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
++const STOCK_PATTERN = /^\$?[A-Z0-9][A-Z0-9.-]{0,19}$/i
++const CRYPTO_PATTERN = /^\$?[A-Z0-9]{1,20}$/i
++
++const operationSchema = z.enum(['stock_sentiment', 'crypto_sentiment', 'trending', 'market_sentiment'])
++const assetTypeSchema = z.enum(['stock', 'crypto'])
++const stockSourceSchema = z.enum(['reddit', 'x', 'news', 'polymarket'])
++
++function isValidDate(value: string): boolean {
++    if (!DATE_PATTERN.test(value)) return false
++    const date = new Date(`${value}T00:00:00Z`)
++    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
++}
++
++const adanosInputSchema = z
++    .object({
++        operation: operationSchema.describe('The Adanos operation to perform'),
++        symbol: z.string().optional().describe('Required for stock_sentiment and crypto_sentiment. Examples: AAPL, BRK.A, BTC.'),
++        assetType: assetTypeSchema.default('stock').describe('Asset type used by trending and market_sentiment'),
++        source: stockSourceSchema.default('reddit').describe('Stock source. Crypto sentiment currently uses Reddit.'),
++        from: z.string().refine(isValidDate, 'from must use YYYY-MM-DD format').optional(),
++        to: z.string().refine(isValidDate, 'to must use YYYY-MM-DD format').optional(),
++        limit: z.number().int().min(1).max(100).default(20).describe('Maximum results for trending')
++    })
++    .superRefine((input, context) => {
++        if ((input.operation === 'stock_sentiment' || input.operation === 'crypto_sentiment') && !input.symbol?.trim()) {
++            context.addIssue({
++                code: z.ZodIssueCode.custom,
++                message: `symbol is required for ${input.operation}`,
++                path: ['symbol']
++            })
++        }
++        if (input.from && input.to && input.from > input.to) {
++            context.addIssue({
++                code: z.ZodIssueCode.custom,
++                message: 'from must not be after to',
++                path: ['from']
++            })
++        }
++    })
++
++type AdanosInput = z.infer<typeof adanosInputSchema>
++
++function normalizeSymbol(value: string, crypto: boolean): string {
++    const normalized = value.trim().toUpperCase()
++    const pattern = crypto ? CRYPTO_PATTERN : STOCK_PATTERN
++    if (!pattern.test(normalized)) {
++        throw new Error(`Invalid ${crypto ? 'crypto symbol' : 'stock ticker'}`)
++    }
++    return normalized.replace(/^\$/, '')
++}
++
++function buildRequest(input: AdanosInput): { path: string; params: Record<string, string | number> } {
++    const params: Record<string, string | number> = {}
++    if (input.from) params.from = input.from
++    if (input.to) params.to = input.to
++
++    switch (input.operation) {
++        case 'stock_sentiment':
++            return {
++                path: `/${input.source}/stocks/v1/stock/${normalizeSymbol(input.symbol ?? '', false)}`,
++                params
++            }
++        case 'crypto_sentiment':
++            return {
++                path: `/reddit/crypto/v1/token/${normalizeSymbol(input.symbol ?? '', true)}`,
++                params
++            }
++        case 'trending':
++            return {
++                path: input.assetType === 'crypto' ? '/reddit/crypto/v1/trending' : `/${input.source}/stocks/v1/trending`,
++                params: { ...params, limit: input.limit }
++            }
++        case 'market_sentiment':
++            return {
++                path: input.assetType === 'crypto' ? '/reddit/crypto/v1/market-sentiment' : `/${input.source}/stocks/v1/market-sentiment`,
++                params
++            }
++    }
++    throw new Error('Unsupported Adanos operation')
++}
++
++function getErrorMessage(error: unknown): string {
++    if (!axios.isAxiosError(error)) return error instanceof Error ? error.message : 'Unknown error'
++
++    const status = error.response?.status
++    const data = error.response?.data
++    const detail = typeof data === 'object' && data !== null && 'detail' in data ? data.detail : undefined
++    const message = typeof detail === 'string' ? detail : error.message
++    return status ? `HTTP ${status}: ${message}` : message
++}
++
++class AdanosMarketSentimentTool extends StructuredTool {
++    name = 'adanos_market_sentiment'
++    description =
++        'Get structured market sentiment for stocks or crypto from Adanos. Supports per-asset sentiment, trending assets, and aggregate market sentiment using Reddit, X / FinTwit, financial news, or Polymarket data.'
++    schema = adanosInputSchema
++
++    constructor(private readonly apiKey: string) {
++        super()
++    }
++
++    async _call(input: AdanosInput): Promise<string> {
++        const request = buildRequest(input)
++        try {
++            const response = await axios.get(`${BASE_URL}${request.path}`, {
++                headers: {
++                    Accept: 'application/json',
++                    'X-API-Key': this.apiKey
++                },
++                params: request.params,
++                timeout: REQUEST_TIMEOUT_MS
++            })
++            return JSON.stringify(response.data)
++        } catch (error) {
++            throw new Error(`Adanos request failed: ${getErrorMessage(error)}`)
++        }
++    }
++}
++
++class AdanosMarketSentiment_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Adanos Market Sentiment'
++        this.name = 'adanosMarketSentiment'
++        this.version = 1.0
++        this.type = 'AdanosMarketSentiment'
++        this.icon = 'adanos.svg'
++        this.category = 'Tools'
++        this.description = 'Stock and crypto sentiment from Reddit, X / FinTwit, financial news, and Polymarket'
++        this.inputs = []
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['adanosApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(AdanosMarketSentimentTool)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<AdanosMarketSentimentTool> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const credentialValue = getCredentialParam('adanosApiKey', credentialData, nodeData)
++        if (typeof credentialValue !== 'string' || !credentialValue.trim()) throw new Error('Adanos API key is required')
++        return new AdanosMarketSentimentTool(credentialValue.trim())
++    }
++}
++
++export { AdanosMarketSentimentTool, adanosInputSchema, buildRequest }
++module.exports = { nodeClass: AdanosMarketSentiment_Tools }
+diff --git a/packages/components/nodes/tools/AdanosMarketSentiment/adanos.svg b/packages/components/nodes/tools/AdanosMarketSentiment/adanos.svg
+new file mode 100644
+index 00000000000..e2bf5e1307f
+--- /dev/null
++++ b/packages/components/nodes/tools/AdanosMarketSentiment/adanos.svg
+@@ -0,0 +1,14 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 336 336">
++  <defs>
++    <linearGradient id="a" x1="168" y1="302" x2="168" y2="-194" gradientUnits="userSpaceOnUse">
++      <stop offset="0" stop-color="#c76745"/>
++      <stop offset=".55" stop-color="#e5b86f"/>
++      <stop offset=".84" stop-color="#f8dda1"/>
++      <stop offset="1" stop-color="#f8ddd9"/>
++    </linearGradient>
++  </defs>
++  <path fill="#c7c7c7" d="m328 248-38-16-102 43a48 48 0 0 1-40 0L46 232 7 248a13 13 0 0 0 0 24l142 59a44 44 0 0 0 38 0l141-59a13 13 0 0 0 0-24Z"/>
++  <path fill="#727f87" d="m328 187-38-16-102 42a48 48 0 0 1-40 0L46 171 7 187a13 13 0 0 0 0 23l142 60a44 44 0 0 0 38 0l141-60a13 13 0 0 0 0-23Z"/>
++  <path fill="#454e54" d="m328 125-38-16-102 43a48 48 0 0 1-40 0L46 109 7 125a13 13 0 0 0 0 24l142 59a44 44 0 0 0 38 0l141-59a13 13 0 0 0 0-24Z"/>
++  <path fill="url(#a)" d="M328 64 187 4a44 44 0 0 0-38 0L7 64a13 13 0 0 0 0 23l142 60a44 44 0 0 0 38 0l141-60a13 13 0 0 0 0-23Z"/>
++</svg>
+
+From 5142681785c8c6efd0df97f0d820f88a4f92e5a1 Mon Sep 17 00:00:00 2001
+From: Alex Schneider <alexanderschneider@me.com>
+Date: Thu, 23 Jul 2026 12:52:32 +0200
+Subject: [PATCH 2/2] fix(components): validate Adanos symbols in schema
+
+---
+ .../AdanosMarketSentiment.test.ts             |  1 +
+ .../AdanosMarketSentiment.ts                  | 37 +++++++++++--------
+ 2 files changed, 23 insertions(+), 15 deletions(-)
+
+diff --git a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
+index c2e4cec61ef..b35beea5078 100644
+--- a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
++++ b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.test.ts
+@@ -63,6 +63,7 @@ describe('AdanosMarketSentiment', () => {
+ 
+     it.each([
+         [{ operation: 'stock_sentiment' }, /symbol is required/],
++        [{ operation: 'stock_sentiment', symbol: 'AAPL/USD' }, /Invalid stock ticker/],
+         [{ operation: 'crypto_sentiment', symbol: 'BTC/USD' }, /Invalid crypto symbol/],
+         [{ operation: 'trending', from: '2026-02-30' }, /YYYY-MM-DD/],
+         [{ operation: 'trending', from: '2026-07-01', to: '2026-06-30' }, /from must not be after to/],
+diff --git a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
+index f11ab8314e7..a9715a05e12 100644
+--- a/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
++++ b/packages/components/nodes/tools/AdanosMarketSentiment/AdanosMarketSentiment.ts
+@@ -31,12 +31,24 @@ const adanosInputSchema = z
+         limit: z.number().int().min(1).max(100).default(20).describe('Maximum results for trending')
+     })
+     .superRefine((input, context) => {
+-        if ((input.operation === 'stock_sentiment' || input.operation === 'crypto_sentiment') && !input.symbol?.trim()) {
+-            context.addIssue({
+-                code: z.ZodIssueCode.custom,
+-                message: `symbol is required for ${input.operation}`,
+-                path: ['symbol']
+-            })
++        if (input.operation === 'stock_sentiment' || input.operation === 'crypto_sentiment') {
++            if (!input.symbol?.trim()) {
++                context.addIssue({
++                    code: z.ZodIssueCode.custom,
++                    message: `symbol is required for ${input.operation}`,
++                    path: ['symbol']
++                })
++            } else {
++                const crypto = input.operation === 'crypto_sentiment'
++                const pattern = crypto ? CRYPTO_PATTERN : STOCK_PATTERN
++                if (!pattern.test(input.symbol.trim())) {
++                    context.addIssue({
++                        code: z.ZodIssueCode.custom,
++                        message: `Invalid ${crypto ? 'crypto symbol' : 'stock ticker'}`,
++                        path: ['symbol']
++                    })
++                }
++            }
+         }
+         if (input.from && input.to && input.from > input.to) {
+             context.addIssue({
+@@ -49,13 +61,8 @@ const adanosInputSchema = z
+ 
+ type AdanosInput = z.infer<typeof adanosInputSchema>
+ 
+-function normalizeSymbol(value: string, crypto: boolean): string {
+-    const normalized = value.trim().toUpperCase()
+-    const pattern = crypto ? CRYPTO_PATTERN : STOCK_PATTERN
+-    if (!pattern.test(normalized)) {
+-        throw new Error(`Invalid ${crypto ? 'crypto symbol' : 'stock ticker'}`)
+-    }
+-    return normalized.replace(/^\$/, '')
++function normalizeSymbol(value: string): string {
++    return value.trim().toUpperCase().replace(/^\$/, '')
+ }
+ 
+ function buildRequest(input: AdanosInput): { path: string; params: Record<string, string | number> } {
+@@ -66,12 +73,12 @@ function buildRequest(input: AdanosInput): { path: string; params: Record<string
+     switch (input.operation) {
+         case 'stock_sentiment':
+             return {
+-                path: `/${input.source}/stocks/v1/stock/${normalizeSymbol(input.symbol ?? '', false)}`,
++                path: `/${input.source}/stocks/v1/stock/${normalizeSymbol(input.symbol ?? '')}`,
+                 params
+             }
+         case 'crypto_sentiment':
+             return {
+-                path: `/reddit/crypto/v1/token/${normalizeSymbol(input.symbol ?? '', true)}`,
++                path: `/reddit/crypto/v1/token/${normalizeSymbol(input.symbol ?? '')}`,
+                 params
+             }
+         case 'trending':

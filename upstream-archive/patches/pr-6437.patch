@@ -1,0 +1,256 @@
+From 99c274307630d7fc6c3b351b8a26f01999adf41d Mon Sep 17 00:00:00 2001
+From: Ritwij Aryan Parmar <ritwij.aryan.parmar@gmail.com>
+Date: Tue, 26 May 2026 13:39:32 -0400
+Subject: [PATCH 1/2] feat: add MCP tool trust verifier hook
+
+---
+ .../components/nodes/tools/MCP/core.test.ts   | 72 +++++++++++++++++++
+ packages/components/nodes/tools/MCP/core.ts   | 47 ++++++++++++
+ 2 files changed, 119 insertions(+)
+
+diff --git a/packages/components/nodes/tools/MCP/core.test.ts b/packages/components/nodes/tools/MCP/core.test.ts
+index 2810ee9a75d..dd0bc484c56 100644
+--- a/packages/components/nodes/tools/MCP/core.test.ts
++++ b/packages/components/nodes/tools/MCP/core.test.ts
+@@ -1,4 +1,6 @@
+ import {
++    MCPTool,
++    MCPToolkit,
+     validateCommandFlags,
+     validateCommandInjection,
+     validateArgsForLocalFileAccess,
+@@ -6,6 +8,76 @@ import {
+     validateMCPServerConfig
+ } from './core'
+ 
++describe('MCP tool trust verifier', () => {
++    const createToolkit = () => {
++        const toolkit = new MCPToolkit({ url: 'https://mcp.example.com', headers: { authorization: 'Bearer static' } }, 'http')
++        const request = jest.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
++        const close = jest.fn().mockResolvedValue(undefined)
++        const createClient = jest.fn().mockResolvedValue({ request, close })
++        toolkit.createClient = createClient as any
++
++        return { toolkit, request, close, createClient }
++    }
++
++    it('passes MCP call context to the verifier before dispatching the tool call', async () => {
++        const { toolkit, request } = createToolkit()
++        toolkit.trustVerifier = jest.fn().mockReturnValue({ action: 'allow', reason: 'trusted test server' })
++
++        const mcpTool = await MCPTool({
++            toolkit,
++            name: 'list_records',
++            description: 'List records',
++            argsSchema: { type: 'object', properties: {} }
++        })
++
++        await mcpTool.invoke({ limit: 5 })
++
++        expect(toolkit.trustVerifier).toHaveBeenCalledWith({
++            transportType: 'http',
++            serverParams: { url: 'https://mcp.example.com', headers: { authorization: 'Bearer static' } },
++            serverUrl: 'https://mcp.example.com',
++            toolName: 'list_records',
++            input: { limit: 5 }
++        })
++        expect(request).toHaveBeenCalledWith(
++            { method: 'tools/call', params: { name: 'list_records', arguments: { limit: 5 } } },
++            expect.anything()
++        )
++    })
++
++    it('blocks denied MCP tool calls before creating a client', async () => {
++        const { toolkit, createClient } = createToolkit()
++        toolkit.trustVerifier = jest.fn().mockReturnValue({ action: 'deny', reason: 'untrusted server' })
++
++        const mcpTool = await MCPTool({
++            toolkit,
++            name: 'delete_records',
++            description: 'Delete records',
++            argsSchema: { type: 'object', properties: {} }
++        })
++
++        await expect(mcpTool.invoke({ ids: ['1'] })).rejects.toThrow(
++            'MCP tool call blocked by trust verifier for "delete_records": untrusted server'
++        )
++        expect(createClient).not.toHaveBeenCalled()
++    })
++
++    it('supports boolean verifier decisions', async () => {
++        const { toolkit, createClient } = createToolkit()
++        toolkit.trustVerifier = jest.fn().mockResolvedValue(false)
++
++        const mcpTool = await MCPTool({
++            toolkit,
++            name: 'export_data',
++            description: 'Export data',
++            argsSchema: { type: 'object', properties: {} }
++        })
++
++        await expect(mcpTool.invoke({})).rejects.toThrow('MCP tool call blocked by trust verifier for "export_data"')
++        expect(createClient).not.toHaveBeenCalled()
++    })
++})
++
+ describe('MCP Security Validations', () => {
+     describe('validateCommandFlags', () => {
+         describe('npx command', () => {
+diff --git a/packages/components/nodes/tools/MCP/core.ts b/packages/components/nodes/tools/MCP/core.ts
+index 5cd552a3f8a..45e6abb48aa 100644
+--- a/packages/components/nodes/tools/MCP/core.ts
++++ b/packages/components/nodes/tools/MCP/core.ts
+@@ -6,6 +6,20 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
+ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+ import { checkDenyList, secureFetch } from '../../../src/httpSecurity'
+ 
++export type MCPTrustVerifierContext = {
++    transportType: 'stdio' | 'sse' | 'http'
++    serverParams: StdioServerParameters | any
++    serverUrl?: string
++    toolName: string
++    input: unknown
++}
++
++export type MCPTrustVerifierDecision =
++    | boolean
++    | { allowed?: boolean; action?: 'allow' | 'warn' | 'deny'; reason?: string; metadata?: unknown }
++
++export type MCPTrustVerifier = (context: MCPTrustVerifierContext) => MCPTrustVerifierDecision | Promise<MCPTrustVerifierDecision>
++
+ export class MCPToolkit extends BaseToolkit {
+     tools: Tool[] = []
+     _tools: ListToolsResult | null = null
+@@ -16,6 +30,8 @@ export class MCPToolkit extends BaseToolkit {
+     transportType: 'stdio' | 'sse' | 'http'
+     /** Per-invocation HTTP headers injected at tools/call time; overrides static toolkit headers for the same names. */
+     getToolCallHeaders?: () => Promise<Record<string, string>>
++    /** Optional policy hook that can allow, warn, or deny an MCP tool call before dispatch. */
++    trustVerifier?: MCPTrustVerifier
+     constructor(serverParams: StdioServerParameters | any, transportType: 'stdio' | 'sse' | 'http') {
+         super()
+         this.serverParams = serverParams
+@@ -142,6 +158,35 @@ export class MCPToolkit extends BaseToolkit {
+     }
+ }
+ 
++const assertMCPToolCallTrusted = async (toolkit: MCPToolkit, toolName: string, input: unknown): Promise<void> => {
++    if (!toolkit.trustVerifier) return
++
++    const decision = await toolkit.trustVerifier({
++        transportType: toolkit.transportType,
++        serverParams: toolkit.serverParams,
++        serverUrl: toolkit.serverParams?.url,
++        toolName,
++        input
++    })
++
++    const action =
++        typeof decision === 'boolean' ? (decision ? 'allow' : 'deny') : decision.action ?? (decision.allowed === false ? 'deny' : 'allow')
++
++    if (action === 'warn') {
++        console.warn(
++            `MCP trust verifier warning for tool "${toolName}"${
++                typeof decision === 'object' && decision.reason ? `: ${decision.reason}` : ''
++            }`
++        )
++        return
++    }
++
++    if (action === 'deny') {
++        const reason = typeof decision === 'object' && decision.reason ? `: ${decision.reason}` : ''
++        throw new Error(`MCP tool call blocked by trust verifier for "${toolName}"${reason}`)
++    }
++}
++
+ export async function MCPTool({
+     toolkit,
+     name,
+@@ -155,6 +200,8 @@ export async function MCPTool({
+ }): Promise<Tool> {
+     return tool(
+         async (input): Promise<string> => {
++            await assertMCPToolCallTrusted(toolkit, name, input)
++
+             // Create a new client for this request
+             const toolCallHeaders = await toolkit.getToolCallHeaders?.()
+             const client = await toolkit.createClient(toolCallHeaders)
+
+From 4a59a6edbab507f27786a32f9043a88a6695b5ed Mon Sep 17 00:00:00 2001
+From: Ritwij Aryan Parmar <ritwij.aryan.parmar@gmail.com>
+Date: Tue, 26 May 2026 16:38:24 -0400
+Subject: [PATCH 2/2] Guard MCP trust verifier nullish decisions
+
+---
+ packages/components/nodes/tools/MCP/core.test.ts | 15 +++++++++++++++
+ packages/components/nodes/tools/MCP/core.ts      | 14 +++++++++++---
+ 2 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/core.test.ts b/packages/components/nodes/tools/MCP/core.test.ts
+index dd0bc484c56..893fb382b81 100644
+--- a/packages/components/nodes/tools/MCP/core.test.ts
++++ b/packages/components/nodes/tools/MCP/core.test.ts
+@@ -76,6 +76,21 @@ describe('MCP tool trust verifier', () => {
+         await expect(mcpTool.invoke({})).rejects.toThrow('MCP tool call blocked by trust verifier for "export_data"')
+         expect(createClient).not.toHaveBeenCalled()
+     })
++
++    it('fails securely when the verifier returns nullish decisions', async () => {
++        const { toolkit, createClient } = createToolkit()
++        toolkit.trustVerifier = jest.fn().mockResolvedValue(null)
++
++        const mcpTool = await MCPTool({
++            toolkit,
++            name: 'transfer_funds',
++            description: 'Transfer funds',
++            argsSchema: { type: 'object', properties: {} }
++        })
++
++        await expect(mcpTool.invoke({ amount: 100 })).rejects.toThrow('MCP tool call blocked by trust verifier for "transfer_funds"')
++        expect(createClient).not.toHaveBeenCalled()
++    })
+ })
+ 
+ describe('MCP Security Validations', () => {
+diff --git a/packages/components/nodes/tools/MCP/core.ts b/packages/components/nodes/tools/MCP/core.ts
+index 45e6abb48aa..ba24e479154 100644
+--- a/packages/components/nodes/tools/MCP/core.ts
++++ b/packages/components/nodes/tools/MCP/core.ts
+@@ -17,6 +17,8 @@ export type MCPTrustVerifierContext = {
+ export type MCPTrustVerifierDecision =
+     | boolean
+     | { allowed?: boolean; action?: 'allow' | 'warn' | 'deny'; reason?: string; metadata?: unknown }
++    | null
++    | undefined
+ 
+ export type MCPTrustVerifier = (context: MCPTrustVerifierContext) => MCPTrustVerifierDecision | Promise<MCPTrustVerifierDecision>
+ 
+@@ -170,19 +172,25 @@ const assertMCPToolCallTrusted = async (toolkit: MCPToolkit, toolName: string, i
+     })
+ 
+     const action =
+-        typeof decision === 'boolean' ? (decision ? 'allow' : 'deny') : decision.action ?? (decision.allowed === false ? 'deny' : 'allow')
++        typeof decision === 'boolean'
++            ? decision
++                ? 'allow'
++                : 'deny'
++            : decision == null
++              ? 'deny'
++              : decision.action ?? (decision.allowed === false ? 'deny' : 'allow')
+ 
+     if (action === 'warn') {
+         console.warn(
+             `MCP trust verifier warning for tool "${toolName}"${
+-                typeof decision === 'object' && decision.reason ? `: ${decision.reason}` : ''
++                typeof decision === 'object' && decision != null && decision.reason ? `: ${decision.reason}` : ''
+             }`
+         )
+         return
+     }
+ 
+     if (action === 'deny') {
+-        const reason = typeof decision === 'object' && decision.reason ? `: ${decision.reason}` : ''
++        const reason = typeof decision === 'object' && decision != null && decision.reason ? `: ${decision.reason}` : ''
+         throw new Error(`MCP tool call blocked by trust verifier for "${toolName}"${reason}`)
+     }
+ }

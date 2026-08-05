@@ -1,0 +1,363 @@
+From 38cb6f9883c2f0ec12af1d09fe79e2a2e48fe481 Mon Sep 17 00:00:00 2001
+From: Adam Dalloul <47503782+Adam-Dalloul@users.noreply.github.com>
+Date: Fri, 12 Jun 2026 20:20:21 -0700
+Subject: [PATCH 1/2] feat: add EmpirioLabs integration with ChatEmpirioLabs
+ node
+
+---
+ .../credentials/EmpirioLabsApi.credential.ts  |  27 ++
+ .../ChatEmpirioLabs/ChatEmpirioLabs.ts        | 233 ++++++++++++++++++
+ .../ChatEmpirioLabs/empiriolabs.svg           |  10 +
+ packages/server/src/utils/index.ts            |   3 +-
+ 4 files changed, 272 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/credentials/EmpirioLabsApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatEmpirioLabs/empiriolabs.svg
+
+diff --git a/packages/components/credentials/EmpirioLabsApi.credential.ts b/packages/components/credentials/EmpirioLabsApi.credential.ts
+new file mode 100644
+index 00000000000..a34899f245b
+--- /dev/null
++++ b/packages/components/credentials/EmpirioLabsApi.credential.ts
+@@ -0,0 +1,27 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class EmpirioLabsApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'EmpirioLabs API'
++        this.name = 'empirioLabsApi'
++        this.version = 1.0
++        this.description =
++            'Create an API key from your <a target="_blank" href="https://platform.empiriolabs.ai/dashboard/api-keys">EmpirioLabs dashboard</a>.'
++        this.inputs = [
++            {
++                label: 'EmpirioLabs API Key',
++                name: 'empirioLabsApiKey',
++                type: 'password',
++                description: 'Get your API key from https://platform.empiriolabs.ai/dashboard/api-keys'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: EmpirioLabsApi }
+diff --git a/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts b/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
+new file mode 100644
+index 00000000000..a8deee4fe87
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
+@@ -0,0 +1,233 @@
++import axios from 'axios'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { BaseCache } from '@langchain/core/caches'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const DEFAULT_BASE_URL = 'https://api.empiriolabs.ai/v1'
++
++// Fallback chat models used when the live catalog cannot be reached
++const FALLBACK_MODELS: INodeOptionsValue[] = [
++    { label: 'Qwen3.7 Plus', name: 'qwen3-7-plus' },
++    { label: 'Qwen3.7 Max', name: 'qwen3-7-max' },
++    { label: 'DeepSeek V4 Pro', name: 'deepseek-v4-pro' },
++    { label: 'DeepSeek V4 Flash', name: 'deepseek-v4-flash' },
++    { label: 'GLM-5.1', name: 'glm-5-1' },
++    { label: 'Kimi K2.7 Code', name: 'kimi-k2-7-code' },
++    { label: 'MiniMax M3', name: 'minimax-m3' }
++]
++
++class ChatEmpirioLabs_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatEmpirioLabs'
++        this.name = 'chatEmpirioLabs'
++        this.version = 1.0
++        this.type = 'ChatEmpirioLabs'
++        this.icon = 'empiriolabs.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around EmpirioLabs chat models that use the OpenAI compatible Chat endpoint'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['empirioLabsApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'qwen3-7-plus'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Path',
++                name: 'basepath',
++                type: 'string',
++                optional: true,
++                default: DEFAULT_BASE_URL,
++                description: 'Override the default base URL for the API, e.g., "https://api.example.com/v1"',
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                description: 'Default headers to include with every request to the API.',
++                additionalParams: true
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(_: INodeData, __?: ICommonObject): Promise<INodeOptionsValue[]> {
++            try {
++                const response = await axios.get(`${DEFAULT_BASE_URL}/models`)
++                const models = response?.data?.data
++                if (!Array.isArray(models) || models.length === 0) {
++                    return FALLBACK_MODELS
++                }
++                const chatModels = models
++                    .filter((model: ICommonObject) => {
++                        const endpoints = model?.supported_endpoints
++                        if (!Array.isArray(endpoints) || endpoints.length === 0) {
++                            return true
++                        }
++                        return endpoints.some(
++                            (endpoint: string) => typeof endpoint === 'string' && endpoint.includes('/v1/chat/completions')
++                        )
++                    })
++                    .map((model: ICommonObject) => ({
++                        label: (model?.display_name as string) || (model?.id as string),
++                        name: model?.id as string,
++                        description: model?.description as string
++                    }))
++                    .filter((option: INodeOptionsValue) => Boolean(option.name))
++                return chatModels.length > 0 ? chatModels : FALLBACK_MODELS
++            } catch (exception) {
++                return FALLBACK_MODELS
++            }
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const basePath = (nodeData.inputs?.basepath as string) || DEFAULT_BASE_URL
++        const baseOptions = nodeData.inputs?.baseOptions
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const empirioLabsApiKey = getCredentialParam('empirioLabsApiKey', credentialData, nodeData)
++
++        if (!empirioLabsApiKey || empirioLabsApiKey.trim() === '') {
++            throw new Error(
++                'EmpirioLabs API Key is missing or empty. Please provide a valid EmpirioLabs API key in the credential configuration.'
++            )
++        }
++
++        if (!modelName || modelName.trim() === '') {
++            throw new Error('Model Name is required. Please select or enter a valid model name (e.g., qwen3-7-plus).')
++        }
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            model: modelName,
++            apiKey: empirioLabsApiKey,
++            openAIApiKey: empirioLabsApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                if (parsedBaseOptions.baseURL) {
++                    console.warn("The 'baseURL' parameter is not allowed in Base Options when using the ChatEmpirioLabs node.")
++                    parsedBaseOptions.baseURL = undefined
++                }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatEmpirioLabs's BaseOptions: " + exception)
++            }
++        }
++
++        obj.configuration = {
++            baseURL: basePath,
++            defaultHeaders: parsedBaseOptions
++        }
++
++        const model = new ChatOpenAI(obj)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatEmpirioLabs_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatEmpirioLabs/empiriolabs.svg b/packages/components/nodes/chatmodels/ChatEmpirioLabs/empiriolabs.svg
+new file mode 100644
+index 00000000000..3de1bf8dd3b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatEmpirioLabs/empiriolabs.svg
+@@ -0,0 +1,10 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
++  <defs>
++    <linearGradient id="empiriolabs-fill" x1="50%" x2="60%" y1="0%" y2="100%">
++      <stop offset="0%" stop-color="#7AD7F2"/>
++      <stop offset="48%" stop-color="#1186F5"/>
++      <stop offset="100%" stop-color="#0A2E8C"/>
++    </linearGradient>
++  </defs>
++  <path d="M11.61 0.0L1.65 6.26L1.65 17.79L12.05 24.0L21.56 18.18L19.74 16.8L12.37 21.39L12.32 15.25L10.52 16.21L10.5 20.77L4.63 17.17L22.35 6.36ZM3.57 7.42L10.23 11.53L3.6 15.57ZM11.68 2.51L18.31 6.63L12.1 10.37L5.47 6.51Z" fill="url(#empiriolabs-fill)" fill-rule="evenodd" clip-rule="evenodd"/>
++</svg>
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 2eeeb5b0eb6..1f3253aa692 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -1492,7 +1492,8 @@ export const isFlowValidForStream = (reactFlowNodes: IReactFlowNode[], endingNod
+             'chatFireworks',
+             'ChatSambanova',
+             'chatBaiduWenxin',
+-            'chatCometAPI'
++            'chatCometAPI',
++            'chatEmpirioLabs'
+         ],
+         LLMs: ['azureOpenAI', 'openAI', 'ollama']
+     }
+
+From a404c88d3a02772fdbbc645dab0f45340cab70d6 Mon Sep 17 00:00:00 2001
+From: Adam Dalloul <47503782+Adam-Dalloul@users.noreply.github.com>
+Date: Tue, 30 Jun 2026 13:33:02 -0700
+Subject: [PATCH 2/2] Use EmpirioLabs AI as the provider display name
+
+---
+ packages/components/credentials/EmpirioLabsApi.credential.ts  | 4 ++--
+ .../nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts       | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/credentials/EmpirioLabsApi.credential.ts b/packages/components/credentials/EmpirioLabsApi.credential.ts
+index a34899f245b..259c38f870a 100644
+--- a/packages/components/credentials/EmpirioLabsApi.credential.ts
++++ b/packages/components/credentials/EmpirioLabsApi.credential.ts
+@@ -8,14 +8,14 @@ class EmpirioLabsApi implements INodeCredential {
+     inputs: INodeParams[]
+ 
+     constructor() {
+-        this.label = 'EmpirioLabs API'
++        this.label = 'EmpirioLabs AI API'
+         this.name = 'empirioLabsApi'
+         this.version = 1.0
+         this.description =
+             'Create an API key from your <a target="_blank" href="https://platform.empiriolabs.ai/dashboard/api-keys">EmpirioLabs dashboard</a>.'
+         this.inputs = [
+             {
+-                label: 'EmpirioLabs API Key',
++                label: 'EmpirioLabs AI API Key',
+                 name: 'empirioLabsApiKey',
+                 type: 'password',
+                 description: 'Get your API key from https://platform.empiriolabs.ai/dashboard/api-keys'
+diff --git a/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts b/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
+index a8deee4fe87..cf00ac788c4 100644
+--- a/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
++++ b/packages/components/nodes/chatmodels/ChatEmpirioLabs/ChatEmpirioLabs.ts
+@@ -36,7 +36,7 @@ class ChatEmpirioLabs_ChatModels implements INode {
+         this.type = 'ChatEmpirioLabs'
+         this.icon = 'empiriolabs.svg'
+         this.category = 'Chat Models'
+-        this.description = 'Wrapper around EmpirioLabs chat models that use the OpenAI compatible Chat endpoint'
++        this.description = 'Wrapper around EmpirioLabs AI chat models that use the OpenAI compatible Chat endpoint'
+         this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
+         this.credential = {
+             label: 'Connect Credential',

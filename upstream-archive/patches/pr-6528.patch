@@ -1,0 +1,331 @@
+From da1fdaecc500385abc41f431d2e9a7270eb4de24 Mon Sep 17 00:00:00 2001
+From: Ralph <rforgeon@gmail.com>
+Date: Wed, 17 Jun 2026 09:27:41 +0100
+Subject: [PATCH 1/3] Add agent plugin with evals
+
+---
+ .../.claude-plugin/plugin.json                | 29 ++++++++++
+ .../.codex-plugin/plugin.json                 | 29 ++++++++++
+ plugins/flowise-agent-flow-operator/README.md | 46 ++++++++++++++++
+ .../flowise-agent-flow-operator/README.md     | 12 ++++
+ .../flowise-agent-flow-operator/cases.jsonl   |  3 +
+ .../flowise-agent-flow-operator/SKILL.md      | 55 +++++++++++++++++++
+ 6 files changed, 174 insertions(+)
+ create mode 100644 plugins/flowise-agent-flow-operator/.claude-plugin/plugin.json
+ create mode 100644 plugins/flowise-agent-flow-operator/.codex-plugin/plugin.json
+ create mode 100644 plugins/flowise-agent-flow-operator/README.md
+ create mode 100644 plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
+ create mode 100644 plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/cases.jsonl
+ create mode 100644 plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+
+diff --git a/plugins/flowise-agent-flow-operator/.claude-plugin/plugin.json b/plugins/flowise-agent-flow-operator/.claude-plugin/plugin.json
+new file mode 100644
+index 00000000000..c7275633244
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/.claude-plugin/plugin.json
+@@ -0,0 +1,29 @@
++{
++  "name": "flowise-agent-flow-operator",
++  "version": "0.1.0",
++  "description": "Design, inspect, and regression-test Flowise agent flows.",
++  "author": {
++    "name": "Flowise contributors"
++  },
++  "skills": "./skills/",
++  "repository": "https://github.com/FlowiseAI/Flowise",
++  "keywords": [
++    "agent-plugin",
++    "evals",
++    "flowise"
++  ],
++  "interface": {
++    "displayName": "Flowise Agent Flow Operator",
++    "shortDescription": "Design, inspect, and regression-test Flowise agent flows.",
++    "longDescription": "Help agents review Flowise flows for tool wiring, retrieval behavior, credential boundaries, deployment readiness, and plugin-level regression checks.",
++    "developerName": "Flowise contributors",
++    "category": "Developer Tools",
++    "capabilities": [
++      "flow design",
++      "tool wiring review",
++      "retrieval QA",
++      "deployment checks"
++    ],
++    "defaultPrompt": "Use the Flowise plugin to plan the workflow, identify verification checks, and produce plugin eval metadata."
++  }
++}
+diff --git a/plugins/flowise-agent-flow-operator/.codex-plugin/plugin.json b/plugins/flowise-agent-flow-operator/.codex-plugin/plugin.json
+new file mode 100644
+index 00000000000..c7275633244
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/.codex-plugin/plugin.json
+@@ -0,0 +1,29 @@
++{
++  "name": "flowise-agent-flow-operator",
++  "version": "0.1.0",
++  "description": "Design, inspect, and regression-test Flowise agent flows.",
++  "author": {
++    "name": "Flowise contributors"
++  },
++  "skills": "./skills/",
++  "repository": "https://github.com/FlowiseAI/Flowise",
++  "keywords": [
++    "agent-plugin",
++    "evals",
++    "flowise"
++  ],
++  "interface": {
++    "displayName": "Flowise Agent Flow Operator",
++    "shortDescription": "Design, inspect, and regression-test Flowise agent flows.",
++    "longDescription": "Help agents review Flowise flows for tool wiring, retrieval behavior, credential boundaries, deployment readiness, and plugin-level regression checks.",
++    "developerName": "Flowise contributors",
++    "category": "Developer Tools",
++    "capabilities": [
++      "flow design",
++      "tool wiring review",
++      "retrieval QA",
++      "deployment checks"
++    ],
++    "defaultPrompt": "Use the Flowise plugin to plan the workflow, identify verification checks, and produce plugin eval metadata."
++  }
++}
+diff --git a/plugins/flowise-agent-flow-operator/README.md b/plugins/flowise-agent-flow-operator/README.md
+new file mode 100644
+index 00000000000..5da104fe501
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/README.md
+@@ -0,0 +1,46 @@
++# Flowise Agent Plugin
++
++This plugin packages a focused agent workflow for Flowise maintainers and users. It is designed to be useful in Codex, Claude Code, Claude Cowork, Copilot-style coworkers, and other `SKILL.md`-compatible harnesses.
++
++The plugin does not add a runtime dependency to Flowise. It gives agents a precise operating procedure, expected outputs, and plugin evals so maintainers can decide whether agent-produced work is good enough to accept.
++
++## What It Includes
++
++- Codex and Claude plugin manifests.
++- A Flowise-specific skill at `skills/flowise-agent-flow-operator/SKILL.md`.
++- Plugin eval cases in `evals/flowise-agent-flow-operator/cases.jsonl`.
++- Privacy-safe measurement guidance for teams that want production plugin metrics.
++
++## Primary Workflows
++
++- Flow design review.
++- Tool and credential audit.
++- Retrieval regression plan.
++- Deployed-flow smoke test.
++
++## Eval Cases
++
++- `flow-review`: Review a Flowise customer-support flow before deployment.
++- `retrieval-eval`: Create plugin evals for a Flowise RAG flow over product docs.
++- `tool-failure`: Triage a Flowise tool node that returns an auth failure.
++
++## Install In An Agent Harness
++
++Use this plugin directory directly from the repository when your harness supports local or Git-backed plugin sources. The plugin root is:
++
++```text
++plugins/flowise-agent-flow-operator
++```
++
++For Telvine-backed distribution and metrics:
++
++```bash
++npm i -g telvine
++telvine login
++telvine publish ./plugins/flowise-agent-flow-operator
++telvine plugins metrics
++```
++
++## Telemetry Boundary
++
++The plugin should only record metadata about plugin execution and eval outcomes. Do not record prompts, source files, request bodies, connector payloads, credentials, model outputs, or production user data.
+diff --git a/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
+new file mode 100644
+index 00000000000..8d251d1627e
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
+@@ -0,0 +1,12 @@
++# Flowise Plugin Evals
++
++These eval cases check the behavior of the `flowise-agent-flow-operator` agent plugin, not Flowise itself. They are meant to verify that the plugin produces useful plans, safe boundaries, and concrete acceptance checks for common Flowise workflows.
++
++Each JSONL row contains:
++
++- `id`: stable eval identifier.
++- `skill`: plugin skill under test.
++- `prompt`: the user request to run through the plugin.
++- `expected.must_include`: concepts the plugin output should cover.
++- `expected.must_not_include`: sensitive data classes the plugin must avoid.
++- `metadata.safe_events`: metadata-only events that can be tracked if a team uses Telvine or another plugin telemetry sink.
+diff --git a/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/cases.jsonl b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/cases.jsonl
+new file mode 100644
+index 00000000000..725f5c24bbe
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/cases.jsonl
+@@ -0,0 +1,3 @@
++{"id":"flow-review","skill":"flowise-agent-flow-operator","prompt":"Review a Flowise customer-support flow before deployment.","expected":{"must_include":["node inventory","tool wiring","credential boundary","smoke test"],"must_not_include":["raw credentials","API tokens","production user data","full prompt transcript","model output dump"]},"metadata":{"safe_events":["plugin.component.invoked","plugin.component.error"],"component":"flowise-agent-flow-operator","harnesses":["codex","claude-code","claude-cowork","copilot-cowork"]}}
++{"id":"retrieval-eval","skill":"flowise-agent-flow-operator","prompt":"Create plugin evals for a Flowise RAG flow over product docs.","expected":{"must_include":["grounded answer","unknown answer","citation expectation","chunk boundary"],"must_not_include":["raw credentials","API tokens","production user data","full prompt transcript","model output dump"]},"metadata":{"safe_events":["plugin.component.invoked","plugin.component.error"],"component":"flowise-agent-flow-operator","harnesses":["codex","claude-code","claude-cowork","copilot-cowork"]}}
++{"id":"tool-failure","skill":"flowise-agent-flow-operator","prompt":"Triage a Flowise tool node that returns an auth failure.","expected":{"must_include":["failing node","auth scope","safe remediation","no secret values"],"must_not_include":["raw credentials","API tokens","production user data","full prompt transcript","model output dump"]},"metadata":{"safe_events":["plugin.component.invoked","plugin.component.error"],"component":"flowise-agent-flow-operator","harnesses":["codex","claude-code","claude-cowork","copilot-cowork"]}}
+diff --git a/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+new file mode 100644
+index 00000000000..1f439a93e69
+--- /dev/null
++++ b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+@@ -0,0 +1,55 @@
++---
++name: flowise-agent-flow-operator
++description: Design, inspect, and regression-test Flowise agent flows. Use this skill when an agent is asked to plan, build, review, or verify Flowise workflows and needs plugin-specific acceptance criteria.
++---
++
++# Flowise Agent Plugin
++
++This skill turns a broad agent request into a Flowise-specific workflow with explicit verification evidence. It is intentionally operational: it should produce a plan, the expected artifacts, and plugin eval metadata that another maintainer can review.
++
++## Capabilities
++
++- Flow design.
++- Tool wiring review.
++- Retrieval qa.
++- Deployment checks.
++
++## Workflow
++
++1. Flow design review.
++2. Tool and credential audit.
++3. Retrieval regression plan.
++4. Deployed-flow smoke test.
++
++## Required Output
++
++Return a concise implementation or review note with these sections:
++
++- `Scope`: the exact Flowise workflow, repository area, and user-facing outcome.
++- `Inputs`: non-secret configuration, sample IDs, file paths, docs, or local commands needed to proceed.
++- `Plan`: ordered steps the agent should take, including where human approval is required.
++- `Verification`: commands, UI checks, fixtures, screenshots, traces, or logs that prove the plugin workflow behaved correctly.
++- `Plugin Eval Metadata`: the eval case id, expected pass criteria, and any safe metadata events to record.
++- `Risks`: unresolved assumptions, missing credentials, destructive operations, or compatibility concerns.
++
++## Acceptance Checks
++
++- Identifies nodes, tools, and inputs.
++- Does not expose credentials or connector payloads.
++- Defines expected answer boundaries.
++- Requires a smoke test against the deployed flow.
++
++## Privacy And Telemetry Boundary
++
++Only emit metadata about plugin behavior, such as component name, outcome, duration bucket, harness name, and sanitized error class. Do not emit prompts, file contents, connector payloads, API tokens, request bodies, model outputs, user data, or production identifiers.
++
++## Optional Telvine Measurement
++
++Teams that publish this plugin through Telvine can measure adoption and eval outcomes without changing Flowise runtime code:
++
++```bash
++npm i -g telvine
++telvine login
++telvine publish ./plugins/flowise-agent-flow-operator
++telvine plugins metrics
++```
+
+From 65dc83e0a66c1a2e03ae323634a181f55318bd3d Mon Sep 17 00:00:00 2001
+From: Ralph <rforgeon@gmail.com>
+Date: Wed, 17 Jun 2026 09:45:35 +0100
+Subject: [PATCH 2/3] Clarify plugin manifest and telemetry docs
+
+---
+ plugins/flowise-agent-flow-operator/README.md               | 6 +++++-
+ .../evals/flowise-agent-flow-operator/README.md             | 2 ++
+ .../skills/flowise-agent-flow-operator/SKILL.md             | 6 +++++-
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/flowise-agent-flow-operator/README.md b/plugins/flowise-agent-flow-operator/README.md
+index 5da104fe501..5f56981c27e 100644
+--- a/plugins/flowise-agent-flow-operator/README.md
++++ b/plugins/flowise-agent-flow-operator/README.md
+@@ -11,6 +11,10 @@ The plugin does not add a runtime dependency to Flowise. It gives agents a preci
+ - Plugin eval cases in `evals/flowise-agent-flow-operator/cases.jsonl`.
+ - Privacy-safe measurement guidance for teams that want production plugin metrics.
+ 
++## Manifest Compatibility
++
++The Codex and Claude manifests use `skills: ./skills/`, which is resolved from the plugin root by the plugin manifest contract. The Codex manifest validates with the local plugin validator used for this contribution.
++
+ ## Primary Workflows
+ 
+ - Flow design review.
+@@ -32,7 +36,7 @@ Use this plugin directory directly from the repository when your harness support
+ plugins/flowise-agent-flow-operator
+ ```
+ 
+-For Telvine-backed distribution and metrics:
++For Telvine-backed distribution and metrics, the Telvine CLI is published as [`telvine` on npm](https://www.npmjs.com/package/telvine):
+ 
+ ```bash
+ npm i -g telvine
+diff --git a/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
+index 8d251d1627e..7e5c6452451 100644
+--- a/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
++++ b/plugins/flowise-agent-flow-operator/evals/flowise-agent-flow-operator/README.md
+@@ -10,3 +10,5 @@ Each JSONL row contains:
+ - `expected.must_include`: concepts the plugin output should cover.
+ - `expected.must_not_include`: sensitive data classes the plugin must avoid.
+ - `metadata.safe_events`: metadata-only events that can be tracked if a team uses Telvine or another plugin telemetry sink.
++- `metadata.component`: the plugin component or skill under test.
++- `metadata.harnesses`: agent harnesses the plugin is intended to support.
+diff --git a/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+index 1f439a93e69..c8555371a91 100644
+--- a/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
++++ b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+@@ -45,7 +45,7 @@ Only emit metadata about plugin behavior, such as component name, outcome, durat
+ 
+ ## Optional Telvine Measurement
+ 
+-Teams that publish this plugin through Telvine can measure adoption and eval outcomes without changing Flowise runtime code:
++Teams that publish this plugin through Telvine can measure adoption and eval outcomes without changing Flowise runtime code. The CLI package is published as `telvine` on npm: https://www.npmjs.com/package/telvine
+ 
+ ```bash
+ npm i -g telvine
+@@ -53,3 +53,7 @@ telvine login
+ telvine publish ./plugins/flowise-agent-flow-operator
+ telvine plugins metrics
+ ```
++
++## Manifest Path Note
++
++The plugin manifests use `skills: ./skills/` because the supported plugin manifest contract resolves that path from the plugin root, not from the hidden manifest directory.
+
+From 12087195e0fb0a8cd8fa5c5bf9bd7cc5a712389c Mon Sep 17 00:00:00 2001
+From: Ralph <rforgeon@gmail.com>
+Date: Wed, 17 Jun 2026 09:47:05 +0100
+Subject: [PATCH 3/3] Align Flowise plugin display name
+
+---
+ plugins/flowise-agent-flow-operator/README.md                   | 2 +-
+ .../skills/flowise-agent-flow-operator/SKILL.md                 | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/flowise-agent-flow-operator/README.md b/plugins/flowise-agent-flow-operator/README.md
+index 5f56981c27e..e09ea438dbd 100644
+--- a/plugins/flowise-agent-flow-operator/README.md
++++ b/plugins/flowise-agent-flow-operator/README.md
+@@ -1,4 +1,4 @@
+-# Flowise Agent Plugin
++# Flowise Agent Flow Operator
+ 
+ This plugin packages a focused agent workflow for Flowise maintainers and users. It is designed to be useful in Codex, Claude Code, Claude Cowork, Copilot-style coworkers, and other `SKILL.md`-compatible harnesses.
+ 
+diff --git a/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+index c8555371a91..5d9c282d9dd 100644
+--- a/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
++++ b/plugins/flowise-agent-flow-operator/skills/flowise-agent-flow-operator/SKILL.md
+@@ -3,7 +3,7 @@ name: flowise-agent-flow-operator
+ description: Design, inspect, and regression-test Flowise agent flows. Use this skill when an agent is asked to plan, build, review, or verify Flowise workflows and needs plugin-specific acceptance criteria.
+ ---
+ 
+-# Flowise Agent Plugin
++# Flowise Agent Flow Operator
+ 
+ This skill turns a broad agent request into a Flowise-specific workflow with explicit verification evidence. It is intentionally operational: it should produce a plan, the expected artifacts, and plugin eval metadata that another maintainer can review.
+ 

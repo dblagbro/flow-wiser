@@ -1,0 +1,4135 @@
+From 58c1e2b0821aab5174dd77882c082461863948b7 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:13 +0400
+Subject: [PATCH 001/103] Add Pubrio API credential
+
+---
+ .../credentials/PubrioApi.credential.ts       | 26 +++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+ create mode 100644 packages/components/credentials/PubrioApi.credential.ts
+
+diff --git a/packages/components/credentials/PubrioApi.credential.ts b/packages/components/credentials/PubrioApi.credential.ts
+new file mode 100644
+index 00000000000..13715e86489
+--- /dev/null
++++ b/packages/components/credentials/PubrioApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeParams, INodeCredential } from '../../../src/Interface'
++
++class PubrioApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio API'
++        this.name = 'pubrioApi'
++        this.version = 1.0
++        this.description =
++            'Get your API key from <a target="_blank" href="https://dashboard.pubrio.com">dashboard.pubrio.com</a>'
++        this.inputs = [
++            {
++                label: 'Pubrio API Key',
++                name: 'pubrioApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: PubrioApi }
+
+From 5155b77ad32874425d4607b8b7ec249191a96d2b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:20 +0400
+Subject: [PATCH 002/103] Add Pubrio icon
+
+---
+ packages/components/nodes/tools/Pubrio/pubrio.svg | 4 ++++
+ 1 file changed, 4 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/pubrio.svg
+
+diff --git a/packages/components/nodes/tools/Pubrio/pubrio.svg b/packages/components/nodes/tools/Pubrio/pubrio.svg
+new file mode 100644
+index 00000000000..033f8889f99
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/pubrio.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
++  <circle cx="32" cy="32" r="30" fill="#1a73e8" stroke="#1557b0" stroke-width="2"/>
++  <text x="32" y="42" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="bold" fill="white" text-anchor="middle">P</text>
++</svg>
+
+From 2625cf7c053f312b93c3e77230f0e3fe94a830de Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:28 +0400
+Subject: [PATCH 003/103] Add Pubrio tool: PubrioAdLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioAdLookup.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
+new file mode 100644
+index 00000000000..446d1f55e4e
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioAdLookup } from '@pubrio/langchain-tools'
++
++class PubrioAdLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup Advertisement'
++        this.name = 'pubrioAdLookup'
++        this.version = 1.0
++        this.type = 'PubrioAdLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up detailed information about a specific advertisement'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioAdLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioAdLookup_Tools }
+
+From 52217e71027abc854be05b753274b01958245011 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:28 +0400
+Subject: [PATCH 004/103] Add Pubrio tool: PubrioAdSearch.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioAdSearch.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
+new file mode 100644
+index 00000000000..76731f1cef7
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioAdSearch } from '@pubrio/langchain-tools'
++
++class PubrioAdSearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Ads'
++        this.name = 'pubrioAdSearch'
++        this.version = 1.0
++        this.type = 'PubrioAdSearch'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search company advertisements by keyword, headline, and target location'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioAdSearch({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioAdSearch_Tools }
+
+From ac2e86334570c24ff7310de7ab86fc01fd18efce Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:29 +0400
+Subject: [PATCH 005/103] Add Pubrio tool: PubrioBatchRedeemContacts.ts
+
+---
+ .../tools/Pubrio/PubrioBatchRedeemContacts.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts b/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
+new file mode 100644
+index 00000000000..16017c39b0b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioBatchRedeemContacts } from '@pubrio/langchain-tools'
++
++class PubrioBatchRedeemContacts_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Batch Redeem Contacts'
++        this.name = 'pubrioBatchRedeemContacts'
++        this.version = 1.0
++        this.type = 'PubrioBatchRedeemContacts'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Batch reveal contacts for multiple people at once (uses credits)'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioBatchRedeemContacts({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioBatchRedeemContacts_Tools }
+
+From 0d78ee4e404f2984cf4bd48ceada9645faba17cc Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:30 +0400
+Subject: [PATCH 006/103] Add Pubrio tool: PubrioCompanyEnrich.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioCompanyEnrich.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
+new file mode 100644
+index 00000000000..bec781a4e44
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioCompanyEnrich } from '@pubrio/langchain-tools'
++
++class PubrioCompanyEnrich_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Enrich Company'
++        this.name = 'pubrioCompanyEnrich'
++        this.version = 1.0
++        this.type = 'PubrioCompanyEnrich'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Enrich a company with full firmographic data (uses credits)'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioCompanyEnrich({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioCompanyEnrich_Tools }
+
+From 0b20fadc29447143b09e177f04f2c859834a8f6b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:31 +0400
+Subject: [PATCH 007/103] Add Pubrio tool: PubrioCompanyLinkedInLookup.ts
+
+---
+ .../Pubrio/PubrioCompanyLinkedInLookup.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
+new file mode 100644
+index 00000000000..b8368500015
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioCompanyLinkedInLookup } from '@pubrio/langchain-tools'
++
++class PubrioCompanyLinkedInLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio LinkedIn Company Lookup'
++        this.name = 'pubrioCompanyLinkedInLookup'
++        this.version = 1.0
++        this.type = 'PubrioCompanyLinkedInLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up a company by its LinkedIn URL'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioCompanyLinkedInLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioCompanyLinkedInLookup_Tools }
+
+From 71657f6d72665c38cc696ca1e150a5920835875b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:32 +0400
+Subject: [PATCH 008/103] Add Pubrio tool: PubrioCompanyLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioCompanyLookup.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
+new file mode 100644
+index 00000000000..bea4607fa5b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioCompanyLookup } from '@pubrio/langchain-tools'
++
++class PubrioCompanyLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup Company'
++        this.name = 'pubrioCompanyLookup'
++        this.version = 1.0
++        this.type = 'PubrioCompanyLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up detailed company information by domain, LinkedIn URL, or ID'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioCompanyLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioCompanyLookup_Tools }
+
+From 100e05b13720c1bb21f223e8efda4392ce268b7a Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:33 +0400
+Subject: [PATCH 009/103] Add Pubrio tool: PubrioCreateMonitor.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioCreateMonitor.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
+new file mode 100644
+index 00000000000..ffbaff9470b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioCreateMonitor } from '@pubrio/langchain-tools'
++
++class PubrioCreateMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Create Monitor'
++        this.name = 'pubrioCreateMonitor'
++        this.version = 1.0
++        this.type = 'PubrioCreateMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Create a new signal monitor for jobs, news, or advertisements'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioCreateMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioCreateMonitor_Tools }
+
+From 03610605a4ed3c8e7b9c8e51e91c1a698bfb4e06 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:34 +0400
+Subject: [PATCH 010/103] Add Pubrio tool: PubrioDeleteMonitor.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioDeleteMonitor.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
+new file mode 100644
+index 00000000000..63a41f65735
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioDeleteMonitor } from '@pubrio/langchain-tools'
++
++class PubrioDeleteMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Delete Monitor'
++        this.name = 'pubrioDeleteMonitor'
++        this.version = 1.0
++        this.type = 'PubrioDeleteMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Delete a monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioDeleteMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioDeleteMonitor_Tools }
+
+From bdeeb12642bee0dbf7336b673d497cb9ab6e2a07 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:35 +0400
+Subject: [PATCH 011/103] Add Pubrio tool: PubrioDuplicateMonitor.ts
+
+---
+ .../tools/Pubrio/PubrioDuplicateMonitor.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
+new file mode 100644
+index 00000000000..007cb79b541
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioDuplicateMonitor } from '@pubrio/langchain-tools'
++
++class PubrioDuplicateMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Duplicate Monitor'
++        this.name = 'pubrioDuplicateMonitor'
++        this.version = 1.0
++        this.type = 'PubrioDuplicateMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Duplicate an existing monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioDuplicateMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioDuplicateMonitor_Tools }
+
+From adaa4292e44b6317860c7e7e3d39314ec7d6a019 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:35 +0400
+Subject: [PATCH 012/103] Add Pubrio tool: PubrioFindSimilarCompanies.ts
+
+---
+ .../Pubrio/PubrioFindSimilarCompanies.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts b/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
+new file mode 100644
+index 00000000000..4d74016abb4
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioFindSimilarCompanies } from '@pubrio/langchain-tools'
++
++class PubrioFindSimilarCompanies_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Find Similar Companies'
++        this.name = 'pubrioFindSimilarCompanies'
++        this.version = 1.0
++        this.type = 'PubrioFindSimilarCompanies'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Find lookalike companies similar to a given company'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioFindSimilarCompanies({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioFindSimilarCompanies_Tools }
+
+From a663a187f8eec30229352c4a47963b2e840a5eba Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:36 +0400
+Subject: [PATCH 013/103] Add Pubrio tool: PubrioGetCompanySizes.ts
+
+---
+ .../tools/Pubrio/PubrioGetCompanySizes.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts b/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
+new file mode 100644
+index 00000000000..51087446f6b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetCompanySizes } from '@pubrio/langchain-tools'
++
++class PubrioGetCompanySizes_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Company Sizes'
++        this.name = 'pubrioGetCompanySizes'
++        this.version = 1.0
++        this.type = 'PubrioGetCompanySizes'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all company size range codes for search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetCompanySizes({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetCompanySizes_Tools }
+
+From fca4d619b40d1933074ae11e774fb661010255b1 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:37 +0400
+Subject: [PATCH 014/103] Add Pubrio tool: PubrioGetDepartmentFunctions.ts
+
+---
+ .../Pubrio/PubrioGetDepartmentFunctions.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts b/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
+new file mode 100644
+index 00000000000..fce495dca4c
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetDepartmentFunctions } from '@pubrio/langchain-tools'
++
++class PubrioGetDepartmentFunctions_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Department Functions'
++        this.name = 'pubrioGetDepartmentFunctions'
++        this.version = 1.0
++        this.type = 'PubrioGetDepartmentFunctions'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all department function codes for people search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetDepartmentFunctions({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetDepartmentFunctions_Tools }
+
+From 5144195afdb46e7c5dc418a32405aa64d6a9d68e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:38 +0400
+Subject: [PATCH 015/103] Add Pubrio tool: PubrioGetDepartments.ts
+
+---
+ .../tools/Pubrio/PubrioGetDepartments.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts b/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
+new file mode 100644
+index 00000000000..e2ee63243d2
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetDepartments } from '@pubrio/langchain-tools'
++
++class PubrioGetDepartments_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Departments'
++        this.name = 'pubrioGetDepartments'
++        this.version = 1.0
++        this.type = 'PubrioGetDepartments'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all department title codes for people search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetDepartments({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetDepartments_Tools }
+
+From 1ba3a05da0c0b98dc3942371718c3b024ff44d38 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:39 +0400
+Subject: [PATCH 016/103] Add Pubrio tool: PubrioGetLocations.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetLocations.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts b/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
+new file mode 100644
+index 00000000000..ad1123f260a
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetLocations } from '@pubrio/langchain-tools'
++
++class PubrioGetLocations_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Locations'
++        this.name = 'pubrioGetLocations'
++        this.version = 1.0
++        this.type = 'PubrioGetLocations'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all available location codes for search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetLocations({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetLocations_Tools }
+
+From 3a516c01ef2ec1e75d08e134cfeb28755165b86a Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:40 +0400
+Subject: [PATCH 017/103] Add Pubrio tool: PubrioGetManagementLevels.ts
+
+---
+ .../tools/Pubrio/PubrioGetManagementLevels.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts b/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
+new file mode 100644
+index 00000000000..cc343d4e9ff
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetManagementLevels } from '@pubrio/langchain-tools'
++
++class PubrioGetManagementLevels_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Management Levels'
++        this.name = 'pubrioGetManagementLevels'
++        this.version = 1.0
++        this.type = 'PubrioGetManagementLevels'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all management/seniority level codes for people search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetManagementLevels({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetManagementLevels_Tools }
+
+From 5de87eb6af8d2f1a42b25a27d64651ffbf2f97e0 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:41 +0400
+Subject: [PATCH 018/103] Add Pubrio tool: PubrioGetMonitor.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetMonitor.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
+new file mode 100644
+index 00000000000..6cf447373c6
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetMonitor } from '@pubrio/langchain-tools'
++
++class PubrioGetMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Monitor'
++        this.name = 'pubrioGetMonitor'
++        this.version = 1.0
++        this.type = 'PubrioGetMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get details of a specific monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetMonitor_Tools }
+
+From 8acb5ea55500b48ef2947b6bec4559844a87eca1 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:41 +0400
+Subject: [PATCH 019/103] Add Pubrio tool: PubrioGetMonitorChart.ts
+
+---
+ .../tools/Pubrio/PubrioGetMonitorChart.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
+new file mode 100644
+index 00000000000..b52ae52d607
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetMonitorChart } from '@pubrio/langchain-tools'
++
++class PubrioGetMonitorChart_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Monitor Chart'
++        this.name = 'pubrioGetMonitorChart'
++        this.version = 1.0
++        this.type = 'PubrioGetMonitorChart'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get daily trigger chart data for a monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetMonitorChart({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetMonitorChart_Tools }
+
+From 36aadf45d6b3c7d6760ac16086282a64356cfbea Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:42 +0400
+Subject: [PATCH 020/103] Add Pubrio tool: PubrioGetMonitorLogDetail.ts
+
+---
+ .../tools/Pubrio/PubrioGetMonitorLogDetail.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
+new file mode 100644
+index 00000000000..f8bc59e22a7
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetMonitorLogDetail } from '@pubrio/langchain-tools'
++
++class PubrioGetMonitorLogDetail_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Monitor Log Detail'
++        this.name = 'pubrioGetMonitorLogDetail'
++        this.version = 1.0
++        this.type = 'PubrioGetMonitorLogDetail'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get details of a specific log entry'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetMonitorLogDetail({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetMonitorLogDetail_Tools }
+
+From 869e67b1099251b1dea93104ff320a2ada2fb32b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:43 +0400
+Subject: [PATCH 021/103] Add Pubrio tool: PubrioGetMonitorLogs.ts
+
+---
+ .../tools/Pubrio/PubrioGetMonitorLogs.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
+new file mode 100644
+index 00000000000..2af4b0b87e6
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetMonitorLogs } from '@pubrio/langchain-tools'
++
++class PubrioGetMonitorLogs_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Monitor Logs'
++        this.name = 'pubrioGetMonitorLogs'
++        this.version = 1.0
++        this.type = 'PubrioGetMonitorLogs'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get trigger logs for a monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetMonitorLogs({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetMonitorLogs_Tools }
+
+From 7d6638645eba10c4a9f307e550913bddccde390d Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:44 +0400
+Subject: [PATCH 022/103] Add Pubrio tool: PubrioGetMonitorStats.ts
+
+---
+ .../tools/Pubrio/PubrioGetMonitorStats.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
+new file mode 100644
+index 00000000000..344d4c46fc9
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetMonitorStats } from '@pubrio/langchain-tools'
++
++class PubrioGetMonitorStats_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Monitor Stats'
++        this.name = 'pubrioGetMonitorStats'
++        this.version = 1.0
++        this.type = 'PubrioGetMonitorStats'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get aggregate statistics across monitors'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetMonitorStats({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetMonitorStats_Tools }
+
+From 14861011d33d57513736a94df65c54b179c9b404 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:45 +0400
+Subject: [PATCH 023/103] Add Pubrio tool: PubrioGetNewsCategories.ts
+
+---
+ .../tools/Pubrio/PubrioGetNewsCategories.ts   | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
+new file mode 100644
+index 00000000000..7d6f6c7ab02
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetNewsCategories } from '@pubrio/langchain-tools'
++
++class PubrioGetNewsCategories_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get News Categories'
++        this.name = 'pubrioGetNewsCategories'
++        this.version = 1.0
++        this.type = 'PubrioGetNewsCategories'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all news category codes for news search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetNewsCategories({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetNewsCategories_Tools }
+
+From ab1d3fcc5abde38461e11c9c2516759507ca0ca3 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:46 +0400
+Subject: [PATCH 024/103] Add Pubrio tool: PubrioGetNewsGalleries.ts
+
+---
+ .../tools/Pubrio/PubrioGetNewsGalleries.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
+new file mode 100644
+index 00000000000..4eb4f301b6f
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetNewsGalleries } from '@pubrio/langchain-tools'
++
++class PubrioGetNewsGalleries_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get News Galleries'
++        this.name = 'pubrioGetNewsGalleries'
++        this.version = 1.0
++        this.type = 'PubrioGetNewsGalleries'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all news gallery codes for news search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetNewsGalleries({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetNewsGalleries_Tools }
+
+From da75a6440951df93bf67b59bd0ef8967788b8f5e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:47 +0400
+Subject: [PATCH 025/103] Add Pubrio tool: PubrioGetNewsLanguages.ts
+
+---
+ .../tools/Pubrio/PubrioGetNewsLanguages.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
+new file mode 100644
+index 00000000000..9d0834b4724
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetNewsLanguages } from '@pubrio/langchain-tools'
++
++class PubrioGetNewsLanguages_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get News Languages'
++        this.name = 'pubrioGetNewsLanguages'
++        this.version = 1.0
++        this.type = 'PubrioGetNewsLanguages'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all news language codes for news search filters'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetNewsLanguages({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetNewsLanguages_Tools }
+
+From a6ba1645fdf54d85fc9a59229e2dc50ab0ed8745 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:48 +0400
+Subject: [PATCH 026/103] Add Pubrio tool: PubrioGetProfile.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetProfile.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts b/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
+new file mode 100644
+index 00000000000..0c3cf4feea4
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetProfile } from '@pubrio/langchain-tools'
++
++class PubrioGetProfile_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Profile'
++        this.name = 'pubrioGetProfile'
++        this.version = 1.0
++        this.type = 'PubrioGetProfile'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get account profile information'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetProfile({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetProfile_Tools }
+
+From 1d96abcab89892bc7014f743a79d6adc40e453d1 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:49 +0400
+Subject: [PATCH 027/103] Add Pubrio tool: PubrioGetTimezones.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetTimezones.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts b/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
+new file mode 100644
+index 00000000000..cb298081e2b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetTimezones } from '@pubrio/langchain-tools'
++
++class PubrioGetTimezones_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Timezones'
++        this.name = 'pubrioGetTimezones'
++        this.version = 1.0
++        this.type = 'PubrioGetTimezones'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get all available timezone codes'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetTimezones({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetTimezones_Tools }
+
+From b3687126ab884dae4332fe2706b14cd82cdfac4a Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:50 +0400
+Subject: [PATCH 028/103] Add Pubrio tool: PubrioGetUsage.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetUsage.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts b/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
+new file mode 100644
+index 00000000000..7d641b60652
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioGetUsage } from '@pubrio/langchain-tools'
++
++class PubrioGetUsage_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Get Usage'
++        this.name = 'pubrioGetUsage'
++        this.version = 1.0
++        this.type = 'PubrioGetUsage'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Get credit usage and subscription info'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioGetUsage({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioGetUsage_Tools }
+
+From 2a317eae3748a180de4f3bc534d61f428fb8a2e2 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:51 +0400
+Subject: [PATCH 029/103] Add Pubrio tool: PubrioJobLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioJobLookup.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
+new file mode 100644
+index 00000000000..895b5837656
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioJobLookup } from '@pubrio/langchain-tools'
++
++class PubrioJobLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup Job'
++        this.name = 'pubrioJobLookup'
++        this.version = 1.0
++        this.type = 'PubrioJobLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up detailed information about a specific job posting'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioJobLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioJobLookup_Tools }
+
+From 55f9f7e6460b2e69631e268eb114e43d2130bcf5 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:52 +0400
+Subject: [PATCH 030/103] Add Pubrio tool: PubrioJobSearch.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioJobSearch.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
+new file mode 100644
+index 00000000000..0ccf1dabd55
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioJobSearch } from '@pubrio/langchain-tools'
++
++class PubrioJobSearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Jobs'
++        this.name = 'pubrioJobSearch'
++        this.version = 1.0
++        this.type = 'PubrioJobSearch'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search job postings by title, location, keyword, company, and date'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioJobSearch({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioJobSearch_Tools }
+
+From 3dea04ff07cc17a0fa5e02cede2c1c8e421b815b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:53 +0400
+Subject: [PATCH 031/103] Add Pubrio tool: PubrioListMonitors.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioListMonitors.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts b/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
+new file mode 100644
+index 00000000000..b9c3b02d9ef
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioListMonitors } from '@pubrio/langchain-tools'
++
++class PubrioListMonitors_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio List Monitors'
++        this.name = 'pubrioListMonitors'
++        this.version = 1.0
++        this.type = 'PubrioListMonitors'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'List all monitors with pagination'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioListMonitors({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioListMonitors_Tools }
+
+From 6d146b3a2c73e08010990b351169784799e1e373 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:54 +0400
+Subject: [PATCH 032/103] Add Pubrio tool: PubrioLookalikeLookup.ts
+
+---
+ .../tools/Pubrio/PubrioLookalikeLookup.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
+new file mode 100644
+index 00000000000..ddef2265780
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioLookalikeLookup } from '@pubrio/langchain-tools'
++
++class PubrioLookalikeLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookalike Lookup'
++        this.name = 'pubrioLookalikeLookup'
++        this.version = 1.0
++        this.type = 'PubrioLookalikeLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up a lookalike company result by ID'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioLookalikeLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioLookalikeLookup_Tools }
+
+From b7c47eb4333901ba9e04bcbd41632a928d7f5d1f Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:55 +0400
+Subject: [PATCH 033/103] Add Pubrio tool: PubrioNewsLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioNewsLookup.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
+new file mode 100644
+index 00000000000..d6ee4779dd5
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioNewsLookup } from '@pubrio/langchain-tools'
++
++class PubrioNewsLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup News'
++        this.name = 'pubrioNewsLookup'
++        this.version = 1.0
++        this.type = 'PubrioNewsLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up detailed information about a specific news article'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioNewsLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioNewsLookup_Tools }
+
+From 378a3925a6a588bb5493126b964994eb9f6bd8a4 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:55 +0400
+Subject: [PATCH 034/103] Add Pubrio tool: PubrioNewsSearch.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioNewsSearch.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
+new file mode 100644
+index 00000000000..424af468df8
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioNewsSearch } from '@pubrio/langchain-tools'
++
++class PubrioNewsSearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search News'
++        this.name = 'pubrioNewsSearch'
++        this.version = 1.0
++        this.type = 'PubrioNewsSearch'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search company news and press releases by category, location, and date'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioNewsSearch({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioNewsSearch_Tools }
+
+From 7713c8d999ae6027ed60f94a5e8d30bb8cc9a4e7 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:56 +0400
+Subject: [PATCH 035/103] Add Pubrio tool: PubrioPersonEnrich.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioPersonEnrich.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
+new file mode 100644
+index 00000000000..4e44787e891
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioPersonEnrich } from '@pubrio/langchain-tools'
++
++class PubrioPersonEnrich_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Enrich Person'
++        this.name = 'pubrioPersonEnrich'
++        this.version = 1.0
++        this.type = 'PubrioPersonEnrich'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Enrich a person with full professional details (uses credits)'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioPersonEnrich({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioPersonEnrich_Tools }
+
+From 8108a4db84a3b88f26d0f39cac225077d3b98843 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:57 +0400
+Subject: [PATCH 036/103] Add Pubrio tool: PubrioPersonLinkedInLookup.ts
+
+---
+ .../Pubrio/PubrioPersonLinkedInLookup.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
+new file mode 100644
+index 00000000000..ed87c5dcee7
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioPersonLinkedInLookup } from '@pubrio/langchain-tools'
++
++class PubrioPersonLinkedInLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio LinkedIn Person Lookup'
++        this.name = 'pubrioPersonLinkedInLookup'
++        this.version = 1.0
++        this.type = 'PubrioPersonLinkedInLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Real-time LinkedIn person lookup by URL'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioPersonLinkedInLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioPersonLinkedInLookup_Tools }
+
+From db6faa5f6d942dc1ce5c5b806f90ea29c732c928 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:58 +0400
+Subject: [PATCH 037/103] Add Pubrio tool: PubrioPersonLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioPersonLookup.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
+new file mode 100644
+index 00000000000..c9c192be70b
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioPersonLookup } from '@pubrio/langchain-tools'
++
++class PubrioPersonLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup Person'
++        this.name = 'pubrioPersonLookup'
++        this.version = 1.0
++        this.type = 'PubrioPersonLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up a person by LinkedIn URL or people search ID'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioPersonLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioPersonLookup_Tools }
+
+From 9aed9bbac960241dc5af27185538b5bc69a90ab3 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:11:59 +0400
+Subject: [PATCH 038/103] Add Pubrio tool: PubrioQueryBatchRedeem.ts
+
+---
+ .../tools/Pubrio/PubrioQueryBatchRedeem.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts b/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
+new file mode 100644
+index 00000000000..3469072541f
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioQueryBatchRedeem } from '@pubrio/langchain-tools'
++
++class PubrioQueryBatchRedeem_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Query Batch Redeem'
++        this.name = 'pubrioQueryBatchRedeem'
++        this.version = 1.0
++        this.type = 'PubrioQueryBatchRedeem'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Check the status and results of a batch contact reveal'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioQueryBatchRedeem({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioQueryBatchRedeem_Tools }
+
+From 02a8f1df12c91b69ecb8be147ebc18594d92b149 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:00 +0400
+Subject: [PATCH 039/103] Add Pubrio tool: PubrioRetryMonitor.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioRetryMonitor.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
+new file mode 100644
+index 00000000000..fc8289992b2
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioRetryMonitor } from '@pubrio/langchain-tools'
++
++class PubrioRetryMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Retry Monitor'
++        this.name = 'pubrioRetryMonitor'
++        this.version = 1.0
++        this.type = 'PubrioRetryMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Retry a failed monitor trigger'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioRetryMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioRetryMonitor_Tools }
+
+From d5a508d9ea42fb6a589f9c179624c8f848bfaf57 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:01 +0400
+Subject: [PATCH 040/103] Add Pubrio tool: PubrioRevealContact.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioRevealContact.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts b/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
+new file mode 100644
+index 00000000000..17b7afb9fc2
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioRevealContact } from '@pubrio/langchain-tools'
++
++class PubrioRevealContact_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Reveal Contact'
++        this.name = 'pubrioRevealContact'
++        this.version = 1.0
++        this.type = 'PubrioRevealContact'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Reveal verified email or phone for a person (uses credits)'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioRevealContact({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioRevealContact_Tools }
+
+From 2481b94711d1d8d0df0c1720856a66949f0c1be7 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:02 +0400
+Subject: [PATCH 041/103] Add Pubrio tool: PubrioRevealMonitorSignature.ts
+
+---
+ .../Pubrio/PubrioRevealMonitorSignature.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts b/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
+new file mode 100644
+index 00000000000..fc94bcc100f
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioRevealMonitorSignature } from '@pubrio/langchain-tools'
++
++class PubrioRevealMonitorSignature_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Reveal Monitor Signature'
++        this.name = 'pubrioRevealMonitorSignature'
++        this.version = 1.0
++        this.type = 'PubrioRevealMonitorSignature'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Reveal webhook signature secret for a monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioRevealMonitorSignature({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioRevealMonitorSignature_Tools }
+
+From 2bdac0eb2ca03083389446880462ae0258ef9592 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:03 +0400
+Subject: [PATCH 042/103] Add Pubrio tool: PubrioSearchCompanies.ts
+
+---
+ .../tools/Pubrio/PubrioSearchCompanies.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
+new file mode 100644
+index 00000000000..3a3afa674f4
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioCompanySearch } from '@pubrio/langchain-tools'
++
++class PubrioSearchCompanies_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Companies'
++        this.name = 'pubrioSearchCompanies'
++        this.version = 1.0
++        this.type = 'PubrioSearchCompanies'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search B2B companies by name, domain, location, industry, technology, headcount, revenue, and more'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioCompanySearch({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchCompanies_Tools }
+
+From 145527bd5884b75f8f8f687a6eb98eed5fec7478 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:04 +0400
+Subject: [PATCH 043/103] Add Pubrio tool: PubrioSearchPeople.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioSearchPeople.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
+new file mode 100644
+index 00000000000..40e19fc56da
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioPersonSearch } from '@pubrio/langchain-tools'
++
++class PubrioSearchPeople_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search People'
++        this.name = 'pubrioSearchPeople'
++        this.version = 1.0
++        this.type = 'PubrioSearchPeople'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search business professionals by name, title, department, seniority, location, and company'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioPersonSearch({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchPeople_Tools }
+
+From 592c1e029e3f5e1d2e8bed1bdd5ce91d882cdad1 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:05 +0400
+Subject: [PATCH 044/103] Add Pubrio tool: PubrioSearchTechnologies.ts
+
+---
+ .../tools/Pubrio/PubrioSearchTechnologies.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
+new file mode 100644
+index 00000000000..10882a7c65e
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioSearchTechnologies } from '@pubrio/langchain-tools'
++
++class PubrioSearchTechnologies_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Technologies'
++        this.name = 'pubrioSearchTechnologies'
++        this.version = 1.0
++        this.type = 'PubrioSearchTechnologies'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search technology names by keyword'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioSearchTechnologies({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchTechnologies_Tools }
+
+From 2763d272332938c820d127aab45189bfbea13f0b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:05 +0400
+Subject: [PATCH 045/103] Add Pubrio tool: PubrioSearchTechnologyCategories.ts
+
+---
+ .../PubrioSearchTechnologyCategories.ts       | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
+new file mode 100644
+index 00000000000..3fafc7ce51e
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioSearchTechnologyCategories } from '@pubrio/langchain-tools'
++
++class PubrioSearchTechnologyCategories_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Technology Categories'
++        this.name = 'pubrioSearchTechnologyCategories'
++        this.version = 1.0
++        this.type = 'PubrioSearchTechnologyCategories'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search technology categories by keyword'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioSearchTechnologyCategories({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchTechnologyCategories_Tools }
+
+From 67ff0f0d9eb747bcceb61ff2f71a0386f356b09e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:06 +0400
+Subject: [PATCH 046/103] Add Pubrio tool: PubrioSearchVerticalCategories.ts
+
+---
+ .../Pubrio/PubrioSearchVerticalCategories.ts  | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
+new file mode 100644
+index 00000000000..454b376e689
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioSearchVerticalCategories } from '@pubrio/langchain-tools'
++
++class PubrioSearchVerticalCategories_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Vertical Categories'
++        this.name = 'pubrioSearchVerticalCategories'
++        this.version = 1.0
++        this.type = 'PubrioSearchVerticalCategories'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search vertical categories by keyword'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioSearchVerticalCategories({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchVerticalCategories_Tools }
+
+From 54917412e8d56ab5c7c47aa54a303a476dde23d9 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:07 +0400
+Subject: [PATCH 047/103] Add Pubrio tool: PubrioSearchVerticalSubCategories.ts
+
+---
+ .../PubrioSearchVerticalSubCategories.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
+new file mode 100644
+index 00000000000..2747888aa0e
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioSearchVerticalSubCategories } from '@pubrio/langchain-tools'
++
++class PubrioSearchVerticalSubCategories_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Vertical Sub-Categories'
++        this.name = 'pubrioSearchVerticalSubCategories'
++        this.version = 1.0
++        this.type = 'PubrioSearchVerticalSubCategories'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search vertical sub-categories by keyword'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioSearchVerticalSubCategories({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchVerticalSubCategories_Tools }
+
+From 4acb738020a4e3c09d247a273c61c9f944c1b603 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:08 +0400
+Subject: [PATCH 048/103] Add Pubrio tool: PubrioSearchVerticals.ts
+
+---
+ .../tools/Pubrio/PubrioSearchVerticals.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
+new file mode 100644
+index 00000000000..3f1ed79e3c0
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioSearchVerticals } from '@pubrio/langchain-tools'
++
++class PubrioSearchVerticals_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Search Verticals'
++        this.name = 'pubrioSearchVerticals'
++        this.version = 1.0
++        this.type = 'PubrioSearchVerticals'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Search industry verticals by keyword'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioSearchVerticals({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioSearchVerticals_Tools }
+
+From c9a09f194b323db4a17e2d3cab0e5c6ad4118dd9 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:09 +0400
+Subject: [PATCH 049/103] Add Pubrio tool: PubrioTechnologyLookup.ts
+
+---
+ .../tools/Pubrio/PubrioTechnologyLookup.ts    | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
+new file mode 100644
+index 00000000000..f708b279231
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioTechnologyLookup } from '@pubrio/langchain-tools'
++
++class PubrioTechnologyLookup_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Lookup Technology'
++        this.name = 'pubrioTechnologyLookup'
++        this.version = 1.0
++        this.type = 'PubrioTechnologyLookup'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Look up technologies used by a company'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioTechnologyLookup({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioTechnologyLookup_Tools }
+
+From 674501500fa00a9629d90b0c9b3ad67f467443be Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:10 +0400
+Subject: [PATCH 050/103] Add Pubrio tool: PubrioTestRunMonitor.ts
+
+---
+ .../tools/Pubrio/PubrioTestRunMonitor.ts      | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
+new file mode 100644
+index 00000000000..06614a3ab19
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioTestRunMonitor } from '@pubrio/langchain-tools'
++
++class PubrioTestRunMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Test Run Monitor'
++        this.name = 'pubrioTestRunMonitor'
++        this.version = 1.0
++        this.type = 'PubrioTestRunMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Execute a test run of a monitor'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioTestRunMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioTestRunMonitor_Tools }
+
+From a7235c0006edb162c5c9bbbd991f761f111dc779 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:11 +0400
+Subject: [PATCH 051/103] Add Pubrio tool: PubrioUpdateMonitor.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioUpdateMonitor.ts | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
+new file mode 100644
+index 00000000000..9eb3ca80c47
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioUpdateMonitor } from '@pubrio/langchain-tools'
++
++class PubrioUpdateMonitor_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Update Monitor'
++        this.name = 'pubrioUpdateMonitor'
++        this.version = 1.0
++        this.type = 'PubrioUpdateMonitor'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Update an existing monitor configuration'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioUpdateMonitor({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioUpdateMonitor_Tools }
+
+From f91cb429370aed4a8d7552f1e03790c961d15c78 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:12:12 +0400
+Subject: [PATCH 052/103] Add Pubrio tool: PubrioValidateWebhook.ts
+
+---
+ .../tools/Pubrio/PubrioValidateWebhook.ts     | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts b/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
+new file mode 100644
+index 00000000000..e2a9f97ee25
+--- /dev/null
++++ b/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
+@@ -0,0 +1,42 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { PubrioValidateWebhook } from '@pubrio/langchain-tools'
++
++class PubrioValidateWebhook_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Pubrio Validate Webhook'
++        this.name = 'pubrioValidateWebhook'
++        this.version = 1.0
++        this.type = 'PubrioValidateWebhook'
++        this.icon = 'pubrio.svg'
++        this.category = 'Tools'
++        this.description = 'Validate a webhook destination URL'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['pubrioApi']
++        }
++        this.inputs = []
++    }
++
++    async init(nodeData: INodeData, _input: string, options?: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++        const apiKey = getCredentialParam('pubrioApiKey', credentialData, nodeData)
++        return new PubrioValidateWebhook({ apiKey })
++    }
++}
++
++module.exports = { nodeClass: PubrioValidateWebhook_Tools }
+
+From 4e4aa3514b10673950960df7ce9a768a27855746 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:20 +0400
+Subject: [PATCH 053/103] Fix credential import path
+
+---
+ packages/components/credentials/PubrioApi.credential.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/credentials/PubrioApi.credential.ts b/packages/components/credentials/PubrioApi.credential.ts
+index 13715e86489..949117f4c76 100644
+--- a/packages/components/credentials/PubrioApi.credential.ts
++++ b/packages/components/credentials/PubrioApi.credential.ts
+@@ -1,4 +1,4 @@
+-import { INodeParams, INodeCredential } from '../../../src/Interface'
++import { INodeParams, INodeCredential } from '../src/Interface'
+ 
+ class PubrioApi implements INodeCredential {
+     label: string
+
+From fbe167e05449ac607ddbb35eb4883a1a316df89e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:32 +0400
+Subject: [PATCH 054/103] Fix import paths in PubrioAdLookup.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
+index 446d1f55e4e..d13d842269c 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioAdLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioAdLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioAdLookup_Tools implements INode {
+
+From 74a39ea05a6f5aaed98573fb19bdfb2dff9e8e35 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:33 +0400
+Subject: [PATCH 055/103] Fix import paths in PubrioAdSearch.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
+index 76731f1cef7..c49b1571c85 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioAdSearch.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioAdSearch } from '@pubrio/langchain-tools'
+ 
+ class PubrioAdSearch_Tools implements INode {
+
+From 4db5553585a9c05cff6cce5c025d974be813defd Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:34 +0400
+Subject: [PATCH 056/103] Fix import paths in PubrioBatchRedeemContacts.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts           | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts b/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
+index 16017c39b0b..88fea402723 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioBatchRedeemContacts.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioBatchRedeemContacts } from '@pubrio/langchain-tools'
+ 
+ class PubrioBatchRedeemContacts_Tools implements INode {
+
+From 500d0a33ad0c7e8bd8f5a10b27ffbb67db8f11fb Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:36 +0400
+Subject: [PATCH 057/103] Fix import paths in PubrioCompanyEnrich.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
+index bec781a4e44..641807ce755 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyEnrich.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioCompanyEnrich } from '@pubrio/langchain-tools'
+ 
+ class PubrioCompanyEnrich_Tools implements INode {
+
+From fa9f84c2175c2972891ee2cae3aff6f506701878 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:37 +0400
+Subject: [PATCH 058/103] Fix import paths in PubrioCompanyLinkedInLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts         | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
+index b8368500015..3b8d42dafd5 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyLinkedInLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioCompanyLinkedInLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioCompanyLinkedInLookup_Tools implements INode {
+
+From 94d57551cc401ee27634d16309cc8ccb49b3240c Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:38 +0400
+Subject: [PATCH 059/103] Fix import paths in PubrioCompanyLookup.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
+index bea4607fa5b..18d320753c2 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioCompanyLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioCompanyLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioCompanyLookup_Tools implements INode {
+
+From f107a2f5d77e38a38563800c1469917b48f6613b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:39 +0400
+Subject: [PATCH 060/103] Fix import paths in PubrioCreateMonitor.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
+index ffbaff9470b..12ea735a29b 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioCreateMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioCreateMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioCreateMonitor_Tools implements INode {
+
+From 474cf94d50fd105a66d86c9e67300dcb244fb265 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:41 +0400
+Subject: [PATCH 061/103] Fix import paths in PubrioDeleteMonitor.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
+index 63a41f65735..303961bcc58 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioDeleteMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioDeleteMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioDeleteMonitor_Tools implements INode {
+
+From 8c82757af22fb99b9f03422156356bbaffb64354 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:42 +0400
+Subject: [PATCH 062/103] Fix import paths in PubrioDuplicateMonitor.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
+index 007cb79b541..5ce6ea31221 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioDuplicateMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioDuplicateMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioDuplicateMonitor_Tools implements INode {
+
+From 5c4e167c8f089895007e03ffe17a591472d68024 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:43 +0400
+Subject: [PATCH 063/103] Fix import paths in PubrioFindSimilarCompanies.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts          | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts b/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
+index 4d74016abb4..7daa8952482 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioFindSimilarCompanies.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioFindSimilarCompanies } from '@pubrio/langchain-tools'
+ 
+ class PubrioFindSimilarCompanies_Tools implements INode {
+
+From 1ba583c53a90847ca3755583f54d647fddb78db7 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:45 +0400
+Subject: [PATCH 064/103] Fix import paths in PubrioGetCompanySizes.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts b/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
+index 51087446f6b..3d3ebcf6807 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetCompanySizes.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetCompanySizes } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetCompanySizes_Tools implements INode {
+
+From b7b82a04ea6f1d68b1a7f5e102660ba6f9876905 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:46 +0400
+Subject: [PATCH 065/103] Fix import paths in PubrioGetDepartmentFunctions.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts        | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts b/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
+index fce495dca4c..a44d049bde2 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetDepartmentFunctions.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetDepartmentFunctions } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetDepartmentFunctions_Tools implements INode {
+
+From c8e2ef82ce9cfef05070234ef7a1a823e019ff49 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:47 +0400
+Subject: [PATCH 066/103] Fix import paths in PubrioGetDepartments.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetDepartments.ts     | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts b/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
+index e2ee63243d2..c82086dd3ae 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetDepartments.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetDepartments } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetDepartments_Tools implements INode {
+
+From fbc07c4c30025ebd9071f7065a580ed5533a79f4 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:48 +0400
+Subject: [PATCH 067/103] Fix import paths in PubrioGetLocations.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts b/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
+index ad1123f260a..94800c42b4b 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetLocations.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetLocations } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetLocations_Tools implements INode {
+
+From 7a158982dd38329b95b8fea408bfd465e908d745 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:50 +0400
+Subject: [PATCH 068/103] Fix import paths in PubrioGetManagementLevels.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetManagementLevels.ts           | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts b/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
+index cc343d4e9ff..f541f8f0706 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetManagementLevels.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetManagementLevels } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetManagementLevels_Tools implements INode {
+
+From 57b005734b5eec49ccb37bae99393e86b5936f4b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:51 +0400
+Subject: [PATCH 069/103] Fix import paths in PubrioGetMonitor.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
+index 6cf447373c6..03437b394f1 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetMonitor_Tools implements INode {
+
+From b15c9555545477199fb689ce9f3d41849050dec3 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:52 +0400
+Subject: [PATCH 070/103] Fix import paths in PubrioGetMonitorChart.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
+index b52ae52d607..00b8868a921 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorChart.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetMonitorChart } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetMonitorChart_Tools implements INode {
+
+From 52af3432ccd703e944821452dc677388bdcc5508 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:54 +0400
+Subject: [PATCH 071/103] Fix import paths in PubrioGetMonitorLogDetail.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts           | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
+index f8bc59e22a7..bf17ccd8482 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogDetail.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetMonitorLogDetail } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetMonitorLogDetail_Tools implements INode {
+
+From f703bbab41619935bedb3595351ccf9df7543007 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:55 +0400
+Subject: [PATCH 072/103] Fix import paths in PubrioGetMonitorLogs.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts     | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
+index 2af4b0b87e6..ebe25d530e6 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorLogs.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetMonitorLogs } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetMonitorLogs_Tools implements INode {
+
+From c04e3b47ead8a8fe9ff95726921d91366674b192 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:56 +0400
+Subject: [PATCH 073/103] Fix import paths in PubrioGetMonitorStats.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
+index 344d4c46fc9..06390b53f0f 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetMonitorStats.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetMonitorStats } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetMonitorStats_Tools implements INode {
+
+From 37720aee16ab46d8271c2289eeb919986d0486a1 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:57 +0400
+Subject: [PATCH 074/103] Fix import paths in PubrioGetNewsCategories.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts  | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
+index 7d6f6c7ab02..a9cc9ade7a1 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsCategories.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetNewsCategories } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetNewsCategories_Tools implements INode {
+
+From 96b3e1dbcf1cc971e98e4c1735913984414e8c65 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:48:59 +0400
+Subject: [PATCH 075/103] Fix import paths in PubrioGetNewsGalleries.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
+index 4eb4f301b6f..c2335289eb1 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsGalleries.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetNewsGalleries } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetNewsGalleries_Tools implements INode {
+
+From bbddbb2fe32789610a282d4895fc8381acf820c4 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:00 +0400
+Subject: [PATCH 076/103] Fix import paths in PubrioGetNewsLanguages.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts b/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
+index 9d0834b4724..88875f946b7 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetNewsLanguages.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetNewsLanguages } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetNewsLanguages_Tools implements INode {
+
+From 6b6478d894506920b5a325977e700b272903b754 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:01 +0400
+Subject: [PATCH 077/103] Fix import paths in PubrioGetProfile.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts b/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
+index 0c3cf4feea4..d46fdbe3a3f 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetProfile.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetProfile } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetProfile_Tools implements INode {
+
+From bef1713b5ee0753d11d20126b040c4282962c6fa Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:03 +0400
+Subject: [PATCH 078/103] Fix import paths in PubrioGetTimezones.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts b/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
+index cb298081e2b..5d1f0c7081a 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetTimezones.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetTimezones } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetTimezones_Tools implements INode {
+
+From 244e11e9c89254194d9a9a706757d4f28e377fde Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:04 +0400
+Subject: [PATCH 079/103] Fix import paths in PubrioGetUsage.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts b/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
+index 7d641b60652..aacbe2b2f17 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioGetUsage.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioGetUsage } from '@pubrio/langchain-tools'
+ 
+ class PubrioGetUsage_Tools implements INode {
+
+From 43ecd40136005a652d7847885cc53461fae2520f Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:05 +0400
+Subject: [PATCH 080/103] Fix import paths in PubrioJobLookup.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
+index 895b5837656..0dce993c766 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioJobLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioJobLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioJobLookup_Tools implements INode {
+
+From e9d6fa7b33cc81f57641e1ecd4df606aa7a8ea38 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:06 +0400
+Subject: [PATCH 081/103] Fix import paths in PubrioJobSearch.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
+index 0ccf1dabd55..e9eca1327f7 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioJobSearch.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioJobSearch } from '@pubrio/langchain-tools'
+ 
+ class PubrioJobSearch_Tools implements INode {
+
+From 1e487647b609bd78c3a880308c602f671e0357ff Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:08 +0400
+Subject: [PATCH 082/103] Fix import paths in PubrioListMonitors.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts b/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
+index b9c3b02d9ef..21a8a24a228 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioListMonitors.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioListMonitors } from '@pubrio/langchain-tools'
+ 
+ class PubrioListMonitors_Tools implements INode {
+
+From 4e658b802a87a7c1fc828d4f6bd3f90e6c259812 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:09 +0400
+Subject: [PATCH 083/103] Fix import paths in PubrioLookalikeLookup.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
+index ddef2265780..f2eb7382668 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioLookalikeLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioLookalikeLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioLookalikeLookup_Tools implements INode {
+
+From afe3560f7530fa10c05fd4303400a44818dad139 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:10 +0400
+Subject: [PATCH 084/103] Fix import paths in PubrioNewsLookup.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
+index d6ee4779dd5..2d607fda9d0 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioNewsLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioNewsLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioNewsLookup_Tools implements INode {
+
+From 8be6ab2a9ef389a4fbc9b72cb717ba7f86cc07c9 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:11 +0400
+Subject: [PATCH 085/103] Fix import paths in PubrioNewsSearch.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts b/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
+index 424af468df8..e8e3749ad93 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioNewsSearch.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioNewsSearch } from '@pubrio/langchain-tools'
+ 
+ class PubrioNewsSearch_Tools implements INode {
+
+From 039bd1678002dba42e28e726570d51b1d370f9a0 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:12 +0400
+Subject: [PATCH 086/103] Fix import paths in PubrioPersonEnrich.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
+index 4e44787e891..e8375623e1d 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonEnrich.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioPersonEnrich } from '@pubrio/langchain-tools'
+ 
+ class PubrioPersonEnrich_Tools implements INode {
+
+From f04a9e5ef7a572897d4c28f0dba8f21fa40c8038 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:14 +0400
+Subject: [PATCH 087/103] Fix import paths in PubrioPersonLinkedInLookup.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts          | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
+index ed87c5dcee7..6b8d8f1b4e6 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonLinkedInLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioPersonLinkedInLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioPersonLinkedInLookup_Tools implements INode {
+
+From bb95296401209252275fed5fd5036bb9528e805e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:15 +0400
+Subject: [PATCH 088/103] Fix import paths in PubrioPersonLookup.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
+index c9c192be70b..54256954ddc 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioPersonLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioPersonLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioPersonLookup_Tools implements INode {
+
+From 0021c8852337a69f8f670637182b3f35fad226e0 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:16 +0400
+Subject: [PATCH 089/103] Fix import paths in PubrioQueryBatchRedeem.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts b/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
+index 3469072541f..171ffc5473c 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioQueryBatchRedeem.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioQueryBatchRedeem } from '@pubrio/langchain-tools'
+ 
+ class PubrioQueryBatchRedeem_Tools implements INode {
+
+From eab1e195a074ccb201ec18d5814a7189336c0fec Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:17 +0400
+Subject: [PATCH 090/103] Fix import paths in PubrioRetryMonitor.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
+index fc8289992b2..4cdb5465c37 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioRetryMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioRetryMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioRetryMonitor_Tools implements INode {
+
+From 0665bfb9f0e9765dc5e650160c89cf25dee43770 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:19 +0400
+Subject: [PATCH 091/103] Fix import paths in PubrioRevealContact.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts b/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
+index 17b7afb9fc2..b8977a65bb0 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioRevealContact.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioRevealContact } from '@pubrio/langchain-tools'
+ 
+ class PubrioRevealContact_Tools implements INode {
+
+From d604abec7ec7e75e65ac7e819a0f0769b4e570b8 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:20 +0400
+Subject: [PATCH 092/103] Fix import paths in PubrioRevealMonitorSignature.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts        | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts b/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
+index fc94bcc100f..923368ecb64 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioRevealMonitorSignature.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioRevealMonitorSignature } from '@pubrio/langchain-tools'
+ 
+ class PubrioRevealMonitorSignature_Tools implements INode {
+
+From 96c93ef1e2a4c4c94cc455dece1e15fc6a4cc03f Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:21 +0400
+Subject: [PATCH 093/103] Fix import paths in PubrioSearchCompanies.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioSearchCompanies.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
+index 3a3afa674f4..24581457d93 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchCompanies.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioCompanySearch } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchCompanies_Tools implements INode {
+
+From 1f4f1893821c1c54b91e4ac007e175e2cd47cf91 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:22 +0400
+Subject: [PATCH 094/103] Fix import paths in PubrioSearchPeople.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
+index 40e19fc56da..0ccc64189a5 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchPeople.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioPersonSearch } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchPeople_Tools implements INode {
+
+From 8d761804c0f30456d208086e4bb4557afdfcf01e Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:23 +0400
+Subject: [PATCH 095/103] Fix import paths in PubrioSearchTechnologies.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
+index 10882a7c65e..0e79877e8fe 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologies.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioSearchTechnologies } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchTechnologies_Tools implements INode {
+
+From 57a8d88d84d4b1094b2f6afdc51c02f05556204b Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:24 +0400
+Subject: [PATCH 096/103] Fix import paths in
+ PubrioSearchTechnologyCategories.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
+index 3fafc7ce51e..cd6ca3f94d1 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchTechnologyCategories.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioSearchTechnologyCategories } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchTechnologyCategories_Tools implements INode {
+
+From 3e6f38c454d37b941364f9f508e8132140b082ef Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:25 +0400
+Subject: [PATCH 097/103] Fix import paths in PubrioSearchVerticalCategories.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts      | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
+index 454b376e689..5413abc7226 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalCategories.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioSearchVerticalCategories } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchVerticalCategories_Tools implements INode {
+
+From 0c7ccf05b485f21effa5b0fddf2f2ce90d917d24 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:27 +0400
+Subject: [PATCH 098/103] Fix import paths in
+ PubrioSearchVerticalSubCategories.ts
+
+---
+ .../nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
+index 2747888aa0e..6c3990925c6 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticalSubCategories.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioSearchVerticalSubCategories } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchVerticalSubCategories_Tools implements INode {
+
+From b250bed59b84e2a829cbf2bb9ffbf812efe59bfc Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:28 +0400
+Subject: [PATCH 099/103] Fix import paths in PubrioSearchVerticals.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioSearchVerticals.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
+index 3f1ed79e3c0..1c1cb1b010d 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioSearchVerticals.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioSearchVerticals } from '@pubrio/langchain-tools'
+ 
+ class PubrioSearchVerticals_Tools implements INode {
+
+From 7167a4939f442c193595ae2ccf26959683553db7 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:29 +0400
+Subject: [PATCH 100/103] Fix import paths in PubrioTechnologyLookup.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts   | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts b/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
+index f708b279231..13fb6ec6d91 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioTechnologyLookup.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioTechnologyLookup } from '@pubrio/langchain-tools'
+ 
+ class PubrioTechnologyLookup_Tools implements INode {
+
+From f8a712c91bd57c4799563333c90af190f619f9f4 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:31 +0400
+Subject: [PATCH 101/103] Fix import paths in PubrioTestRunMonitor.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts     | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
+index 06614a3ab19..6e47a56124d 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioTestRunMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioTestRunMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioTestRunMonitor_Tools implements INode {
+
+From ca0034550be6b12c4cc69593b52527633ad75148 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:32 +0400
+Subject: [PATCH 102/103] Fix import paths in PubrioUpdateMonitor.ts
+
+---
+ packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts b/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
+index 9eb3ca80c47..ffbba63156c 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioUpdateMonitor.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioUpdateMonitor } from '@pubrio/langchain-tools'
+ 
+ class PubrioUpdateMonitor_Tools implements INode {
+
+From 4465d54466ef9ed781e15d7c943fdbadf4cc1d12 Mon Sep 17 00:00:00 2001
+From: King Wa Lai <king_lai@outlook.com>
+Date: Tue, 7 Apr 2026 08:49:33 +0400
+Subject: [PATCH 103/103] Fix import paths in PubrioValidateWebhook.ts
+
+---
+ .../components/nodes/tools/Pubrio/PubrioValidateWebhook.ts    | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts b/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
+index e2a9f97ee25..683ce85e2e0 100644
+--- a/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
++++ b/packages/components/nodes/tools/Pubrio/PubrioValidateWebhook.ts
+@@ -1,5 +1,5 @@
+-import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { PubrioValidateWebhook } from '@pubrio/langchain-tools'
+ 
+ class PubrioValidateWebhook_Tools implements INode {

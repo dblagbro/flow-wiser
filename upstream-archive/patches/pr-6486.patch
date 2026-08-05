@@ -1,0 +1,123 @@
+From 52c827e5fba61d5e88a334e5e7483e8b18e81956 Mon Sep 17 00:00:00 2001
+From: v1nayG <vinay28smg@gmail.com>
+Date: Sat, 6 Jun 2026 21:43:36 +0530
+Subject: [PATCH 1/2] feat(components): add modelKwargs parameter to OpenAI &
+ Custom OpenAI nodes
+
+---
+ .../nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts | 19 +++++++++++++++++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      | 19 +++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index 03c13fee9b0..358b7ee7519 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -207,6 +207,15 @@ class ChatOpenAI_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Model Kwargs',
++                name: 'modelKwargs',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional parameters to pass to the model body, e.g. {"parallel_tool_calls": false} or {"logit_bias": {50256: -100}}',
++                additionalParams: true
+             }
+         ]
+     }
+@@ -234,6 +243,7 @@ class ChatOpenAI_ChatModels implements INode {
+         const reasoningEffort = nodeData.inputs?.reasoningEffort as OpenAIClient.ReasoningEffort | null
+         const reasoningSummary = nodeData.inputs?.reasoningSummary as 'auto' | 'concise' | 'detailed' | null
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++        const modelKwargs = nodeData.inputs?.modelKwargs
+ 
+         if (nodeData.inputs?.credentialId) {
+             nodeData.credential = nodeData.inputs?.credentialId
+@@ -263,6 +273,15 @@ class ChatOpenAI_ChatModels implements INode {
+         }
+         if (strictToolCalling) obj.supportsStrictToolCalling = strictToolCalling
+ 
++        if (modelKwargs) {
++            try {
++                const parsedModelKwargs = typeof modelKwargs === 'object' ? modelKwargs : JSON.parse(modelKwargs)
++                obj.modelKwargs = parsedModelKwargs
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOpenAI's Model Kwargs: " + exception)
++            }
++        }
++
+         if (isReasoningModelOpenAI(modelName)) {
+             delete obj.temperature
+             delete obj.stop
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index faf2ebd8b37..ed3bdbe7956 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -115,6 +115,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Model Kwargs',
++                name: 'modelKwargs',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional parameters to pass to the model body, e.g. {"parallel_tool_calls": false} or {"logit_bias": {50256: -100}}',
++                additionalParams: true
+             }
+         ]
+     }
+@@ -131,6 +140,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
+         const cache = nodeData.inputs?.cache as BaseCache
++        const modelKwargs = nodeData.inputs?.modelKwargs
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const openAIApiKey = getCredentialParam('openAIApiKey', credentialData, nodeData)
+@@ -150,6 +160,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
+ 
++        if (modelKwargs) {
++            try {
++                const parsedModelKwargs = typeof modelKwargs === 'object' ? modelKwargs : JSON.parse(modelKwargs)
++                obj.modelKwargs = parsedModelKwargs
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOpenAI's Model Kwargs: " + exception)
++            }
++        }
++
+         let parsedBaseOptions: any | undefined = undefined
+ 
+         if (baseOptions) {
+
+From c6e8a828d8c06d229233aa7c774f54792a6b72d2 Mon Sep 17 00:00:00 2001
+From: v1nayG <vinay28smg@gmail.com>
+Date: Sat, 6 Jun 2026 21:55:28 +0530
+Subject: [PATCH 2/2] fix(components): correct error message typo in
+ ChatOpenAICustom
+
+---
+ .../nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts       | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index ed3bdbe7956..f23fc4b2fcd 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -165,7 +165,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 const parsedModelKwargs = typeof modelKwargs === 'object' ? modelKwargs : JSON.parse(modelKwargs)
+                 obj.modelKwargs = parsedModelKwargs
+             } catch (exception) {
+-                throw new Error("Invalid JSON in the ChatOpenAI's Model Kwargs: " + exception)
++                throw new Error("Invalid JSON in the ChatOpenAICustom's Model Kwargs: " + exception)
+             }
+         }
+ 

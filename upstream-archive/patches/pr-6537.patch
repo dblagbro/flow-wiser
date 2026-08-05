@@ -1,0 +1,2700 @@
+From 97e7d2ef19d889617f1768c345fb0c8f126427c2 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:51:26 +0530
+Subject: [PATCH 01/18] chore(components): add @aws-sdk/client-polly and
+ @aws-sdk/client-transcribe dependencies
+
+---
+ packages/components/package.json | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/packages/components/package.json b/packages/components/package.json
+index f712fb1804b..dc76f1b3985 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -38,7 +38,9 @@
+         "@aws-sdk/client-bedrock-runtime": "3.966.0",
+         "@aws-sdk/client-dynamodb": "^3.360.0",
+         "@aws-sdk/client-kendra": "^3.750.0",
++        "@aws-sdk/client-polly": "^3.699.0",
+         "@aws-sdk/client-s3": "^3.844.0",
++        "@aws-sdk/client-transcribe": "^3.699.0",
+         "@aws-sdk/client-secrets-manager": "^3.699.0",
+         "@aws-sdk/client-sns": "^3.699.0",
+         "@aws-sdk/client-sts": "^3.699.0",
+
+From 4c21e1aa04c807c0616281b946e91a710c9a4ba6 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:51:55 +0530
+Subject: [PATCH 02/18] feat(ui): add AWS svg icon for provider configuration
+ menus
+
+---
+ packages/ui/src/assets/images/aws.svg | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 packages/ui/src/assets/images/aws.svg
+
+diff --git a/packages/ui/src/assets/images/aws.svg b/packages/ui/src/assets/images/aws.svg
+new file mode 100644
+index 00000000000..94696737fc1
+--- /dev/null
++++ b/packages/ui/src/assets/images/aws.svg
+@@ -0,0 +1 @@
++<svg width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 21c1.67 1.77 5.491 3 9.757 3 2.788 0 5.386-.525 7.317-1.383L25 21.65" stroke="#F90" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m23 20 3 1.074L25.4 24" stroke="#F90" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M24.564 9.44C23.677 8.76 21 8.633 21 10.796c0 2.396 4 .77 4 3.294 0 1.898-2.67 2.501-4 1.264M14 9v7l2-4 2 4V9" stroke="#252F3E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.053 8.597H8.21a2.526 2.526 0 0 1 2.526 2.526v4.842" stroke="#252F3E" stroke-width="2" stroke-linecap="round"/><circle cx="8.632" cy="13.86" stroke="#252F3E" stroke-width="2" r="2.105"/></svg>
+
+From 54d60e3a281cfe65a1791d45ab00b5cd9d8521a4 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:52:32 +0530
+Subject: [PATCH 03/18] feat(server): support amazon polly config routing and
+ add to TTS provider enum
+
+---
+ .../server/src/controllers/text-to-speech/index.ts | 14 +++++++++++---
+ .../server/src/services/text-to-speech/index.ts    |  3 ++-
+ packages/server/src/utils/buildChatflow.ts         |  1 +
+ 3 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/packages/server/src/controllers/text-to-speech/index.ts b/packages/server/src/controllers/text-to-speech/index.ts
+index 6e8bb01baa2..7268088af29 100644
+--- a/packages/server/src/controllers/text-to-speech/index.ts
++++ b/packages/server/src/controllers/text-to-speech/index.ts
+@@ -17,7 +17,9 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
+             provider: bodyProvider,
+             credentialId: bodyCredentialId,
+             voice: bodyVoice,
+-            model: bodyModel
++            model: bodyModel,
++            engine: bodyEngine,
++            region: bodyRegion
+         } = req.body
+ 
+         if (!text) {
+@@ -27,7 +29,7 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
+             )
+         }
+ 
+-        let provider: string, credentialId: string, voice: string, model: string
++        let provider: string, credentialId: string, voice: string, model: string, engine: string, region: string
+ 
+         if (chatflowId) {
+             let workspaceId = req.user?.activeWorkspaceId
+@@ -64,12 +66,16 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
+             credentialId = providerConfig.credentialId
+             voice = providerConfig.voice
+             model = providerConfig.model
++            engine = providerConfig.engine
++            region = providerConfig.region
+         } else {
+             // Use TTS config from request body
+             provider = bodyProvider
+             credentialId = bodyCredentialId
+             voice = bodyVoice
+             model = bodyModel
++            engine = bodyEngine
++            region = bodyRegion
+         }
+ 
+         if (!provider) {
+@@ -103,7 +109,9 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
+             name: provider,
+             credentialId: credentialId,
+             voice: voice,
+-            model: model
++            model: model,
++            engine: engine,
++            region: region
+         }
+ 
+         // Create and store AbortController
+diff --git a/packages/server/src/services/text-to-speech/index.ts b/packages/server/src/services/text-to-speech/index.ts
+index 22a11ede7eb..26a69c565db 100644
+--- a/packages/server/src/services/text-to-speech/index.ts
++++ b/packages/server/src/services/text-to-speech/index.ts
+@@ -7,7 +7,8 @@ import { databaseEntities } from '../../utils'
+ 
+ export enum TextToSpeechProvider {
+     OPENAI = 'openai',
+-    ELEVEN_LABS = 'elevenlabs'
++    ELEVEN_LABS = 'elevenlabs',
++    AMAZON_POLLY = 'amazonPolly'
+ }
+ 
+ export interface TTSRequest {
+diff --git a/packages/server/src/utils/buildChatflow.ts b/packages/server/src/utils/buildChatflow.ts
+index 7ab1a74c0ba..fda217f5896 100644
+--- a/packages/server/src/utils/buildChatflow.ts
++++ b/packages/server/src/utils/buildChatflow.ts
+@@ -108,6 +108,7 @@ const generateTTSForResponseStream = async (
+             const provider = config[providerKey]
+             if (provider && provider.status === true) {
+                 activeProviderConfig = {
++                    ...provider,
+                     name: providerKey,
+                     credentialId: provider.credentialId,
+                     voice: provider.voice,
+
+From 382e2061207d7f4ebb7c171b36f6bec9be517fb1 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:52:40 +0530
+Subject: [PATCH 04/18] feat(components): implement AWS Transcribe STT provider
+ with S3 upload and polling
+
+---
+ packages/components/src/speechToText.ts | 140 +++++++++++++++++++++++-
+ 1 file changed, 139 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index e59368a5eae..d52ac911140 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -5,13 +5,22 @@ import { AssemblyAI } from 'assemblyai'
+ import { getFileFromStorage } from './storageUtils'
+ import axios from 'axios'
+ import Groq from 'groq-sdk'
++import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
++import {
++    TranscribeClient,
++    StartTranscriptionJobCommand,
++    GetTranscriptionJobCommand,
++    TranscriptionJobStatus,
++    MediaFormat
++} from '@aws-sdk/client-transcribe'
+ 
+ const SpeechToTextType = {
+     OPENAI_WHISPER: 'openAIWhisper',
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    AWS_TRANSCRIBE: 'awsTranscribe'
+ }
+ 
+ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfig: ICommonObject, options: ICommonObject) => {
+@@ -125,6 +134,135 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                 }
+                 break
+             }
++            case SpeechToTextType.AWS_TRANSCRIBE: {
++                const region = speechToTextConfig.region || 'us-east-1'
++                const s3BucketName = speechToTextConfig.s3BucketName as string
++                const languageCode = speechToTextConfig.languageCode || 'en-US'
++
++                if (!s3BucketName) {
++                    throw new Error('S3 Bucket Name is required for AWS Transcribe')
++                }
++
++                const awsClientConfig: Record<string, any> = { region }
++                if (credentialData.awsKey && credentialData.awsSecret) {
++                    awsClientConfig.credentials = {
++                        accessKeyId: credentialData.awsKey,
++                        secretAccessKey: credentialData.awsSecret,
++                        ...(credentialData.awsSession && { sessionToken: credentialData.awsSession })
++                    }
++                }
++
++                const s3Client = new S3Client(awsClientConfig)
++                const transcribeClient = new TranscribeClient(awsClientConfig)
++
++                // Generate unique file name and upload to S3
++                const fileExtension = upload.name.split('.').pop() || 'webm'
++                const s3Key = `flowise-stt-temp/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExtension}`
++
++                try {
++                    await s3Client.send(
++                        new PutObjectCommand({
++                            Bucket: s3BucketName,
++                            Key: s3Key,
++                            Body: Buffer.from(audio_file),
++                            ContentType: upload.mime || 'audio/webm'
++                        })
++                    )
++
++                    // Determine media format from file extension
++                    const mediaFormatMap: Record<string, string> = {
++                        webm: 'webm',
++                        mp3: 'mp3',
++                        mp4: 'mp4',
++                        wav: 'wav',
++                        flac: 'flac',
++                        ogg: 'ogg',
++                        amr: 'amr'
++                    }
++                    const mediaFormat = (mediaFormatMap[fileExtension] || 'webm') as MediaFormat
++
++                    // Start transcription job
++                    const jobName = `flowise-${Date.now()}-${Math.random().toString(36).substring(2)}`
++                    await transcribeClient.send(
++                        new StartTranscriptionJobCommand({
++                            TranscriptionJobName: jobName,
++                            LanguageCode: languageCode,
++                            Media: {
++                                MediaFileUri: `s3://${s3BucketName}/${s3Key}`
++                            },
++                            MediaFormat: mediaFormat
++                        })
++                    )
++
++                    // Poll for completion with 60 second timeout
++                    const POLL_INTERVAL_MS = 3000
++                    const TIMEOUT_MS = 60000
++                    const startTime = Date.now()
++
++                    let transcriptText = ''
++                    let jobCompleted = false
++
++                    while (!jobCompleted) {
++                        if (Date.now() - startTime > TIMEOUT_MS) {
++                            throw new Error('AWS Transcribe job timed out after 60 seconds')
++                        }
++
++                        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
++
++                        const jobResult = await transcribeClient.send(
++                            new GetTranscriptionJobCommand({
++                                TranscriptionJobName: jobName
++                            })
++                        )
++
++                        const status = jobResult.TranscriptionJob?.TranscriptionJobStatus
++
++                        if (status === TranscriptionJobStatus.COMPLETED) {
++                            const transcriptUri = jobResult.TranscriptionJob?.Transcript?.TranscriptFileUri
++                            if (transcriptUri) {
++                                const transcriptResponse = await axios.get(transcriptUri)
++                                const transcriptData = transcriptResponse.data
++                                transcriptText = transcriptData?.results?.transcripts?.[0]?.transcript || ''
++                            }
++                            jobCompleted = true
++                        } else if (status === TranscriptionJobStatus.FAILED) {
++                            const failureReason = jobResult.TranscriptionJob?.FailureReason || 'Unknown error'
++                            throw new Error(`AWS Transcribe job failed: ${failureReason}`)
++                        }
++                        // IN_PROGRESS or QUEUED — continue polling
++                    }
++
++                    // Clean up: delete temporary S3 file
++                    try {
++                        await s3Client.send(
++                            new DeleteObjectCommand({
++                                Bucket: s3BucketName,
++                                Key: s3Key
++                            })
++                        )
++                    } catch {
++                        // Non-fatal: log but don't fail if cleanup fails
++                    }
++
++                    if (transcriptText) {
++                        return transcriptText
++                    }
++                } catch (error) {
++                    // Attempt cleanup on error too
++                    try {
++                        await s3Client.send(
++                            new DeleteObjectCommand({
++                                Bucket: s3BucketName,
++                                Key: s3Key
++                            })
++                        )
++                    } catch {
++                        // Non-fatal cleanup error
++                    }
++                    throw error
++                }
++                break
++            }
+         }
+     } else {
+         throw new Error('Speech to text is not selected, but found a recorded audio file. Please fix the chain.')
+
+From 6b80fe67c8630581937ae66be195fd729c405297 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:53:03 +0530
+Subject: [PATCH 05/18] feat(components): implement Amazon Polly TTS provider
+ with rate-limited streaming
+
+---
+ packages/components/src/textToSpeech.ts | 75 ++++++++++++++++++++++++-
+ 1 file changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index c4611806406..54f7632e34a 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -2,12 +2,14 @@ import { ICommonObject } from './Interface'
+ import { getCredentialData } from './utils'
+ import OpenAI from 'openai'
+ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
++import { PollyClient, SynthesizeSpeechCommand, Engine, VoiceId } from '@aws-sdk/client-polly'
+ import { Readable } from 'node:stream'
+ import type { ReadableStream } from 'node:stream/web'
+ 
+ const TextToSpeechType = {
+     OPENAI_TTS: 'openai',
+-    ELEVEN_LABS_TTS: 'elevenlabs'
++    ELEVEN_LABS_TTS: 'elevenlabs',
++    AMAZON_POLLY_TTS: 'amazonPolly'
+ }
+ 
+ export const convertTextToSpeechStream = async (
+@@ -100,6 +102,52 @@ export const convertTextToSpeechStream = async (
+                             })
+                             break
+                         }
++
++                        case TextToSpeechType.AMAZON_POLLY_TTS: {
++                            onStart('mp3')
++
++                            const region = textToSpeechConfig.region || 'us-east-1'
++                            const pollyClientConfig: Record<string, any> = { region }
++
++                            if (credentialData.awsKey && credentialData.awsSecret) {
++                                pollyClientConfig.credentials = {
++                                    accessKeyId: credentialData.awsKey,
++                                    secretAccessKey: credentialData.awsSecret,
++                                    ...(credentialData.awsSession && { sessionToken: credentialData.awsSession })
++                                }
++                            }
++
++                            const pollyClient = new PollyClient(pollyClientConfig)
++
++                            const voiceId = (textToSpeechConfig.voice || 'Joanna') as VoiceId
++                            const engine = (textToSpeechConfig.engine || 'neural') as Engine
++
++                            const command = new SynthesizeSpeechCommand({
++                                Text: text,
++                                OutputFormat: 'mp3',
++                                VoiceId: voiceId,
++                                Engine: engine
++                            })
++
++                            const pollyResponse = await pollyClient.send(command, {
++                                abortSignal: abortController.signal
++                            })
++
++                            if (!pollyResponse.AudioStream) {
++                                throw new Error('Amazon Polly returned no audio stream')
++                            }
++
++                            // AudioStream from Polly is a Readable in Node.js
++                            const pollyStream = pollyResponse.AudioStream as unknown as Readable
++                            const stream = Readable.isReadable(pollyStream)
++                                ? pollyStream
++                                : Readable.fromWeb(pollyStream as unknown as ReadableStream)
++
++                            await processStreamWithRateLimit(stream, onChunk, onEnd, resolve, reject, 640, 20, abortController, () => {
++                                streamDestroyed = true
++                            })
++                            break
++                        }
+                     }
+                 } else {
+                     reject(new Error('Text to speech is not selected. Please configure TTS in the chatflow.'))
+@@ -234,6 +282,31 @@ export const getVoices = async (provider: string, credentialId: string, options:
+             }))
+         }
+ 
++        case TextToSpeechType.AMAZON_POLLY_TTS:
++            return [
++                { id: 'Joanna', name: 'Joanna (Female, US English)' },
++                { id: 'Matthew', name: 'Matthew (Male, US English)' },
++                { id: 'Ruth', name: 'Ruth (Female, US English)' },
++                { id: 'Stephen', name: 'Stephen (Male, US English)' },
++                { id: 'Ivy', name: 'Ivy (Female Child, US English)' },
++                { id: 'Kevin', name: 'Kevin (Male Child, US English)' },
++                { id: 'Kendra', name: 'Kendra (Female, US English)' },
++                { id: 'Kimberly', name: 'Kimberly (Female, US English)' },
++                { id: 'Salli', name: 'Salli (Female, US English)' },
++                { id: 'Joey', name: 'Joey (Male, US English)' },
++                { id: 'Justin', name: 'Justin (Male Child, US English)' },
++                { id: 'Gregory', name: 'Gregory (Male, US English)' },
++                { id: 'Danielle', name: 'Danielle (Female, US English)' },
++                { id: 'Amy', name: 'Amy (Female, British English)' },
++                { id: 'Brian', name: 'Brian (Male, British English)' },
++                { id: 'Emma', name: 'Emma (Female, British English)' },
++                { id: 'Lupe', name: 'Lupe (Female, US Spanish)' },
++                { id: 'Pedro', name: 'Pedro (Male, US Spanish)' },
++                { id: 'Léa', name: 'Léa (Female, French)' },
++                { id: 'Vicki', name: 'Vicki (Female, German)' },
++                { id: 'Daniel', name: 'Daniel (Male, German)' }
++            ]
++
+         default:
+             throw new Error(`Unsupported TTS provider: ${provider}`)
+     }
+
+From 51ec80f665cdcf31eea0c763c62f0376c8cf4019 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:53:13 +0530
+Subject: [PATCH 06/18] feat(ui): register AWS Transcribe and Amazon Polly as
+ first-class STT/TTS providers
+
+---
+ .../ui-component/extended/SpeechToText.jsx    | 42 ++++++++++-
+ .../ui-component/extended/TextToSpeech.jsx    | 75 ++++++++++++++++++-
+ 2 files changed, 112 insertions(+), 5 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index 2ca7fd95c28..8f5cb6deec2 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -20,6 +20,7 @@ import assemblyAIPng from '@/assets/images/assemblyai.png'
+ import localAiPng from '@/assets/images/localai.png'
+ import azureSvg from '@/assets/images/azure_openai.svg'
+ import groqPng from '@/assets/images/groq.png'
++import awsSVG from '@/assets/images/aws.svg'
+ 
+ // store
+ import useNotifier from '@/utils/useNotifier'
+@@ -34,7 +35,8 @@ const SpeechToTextType = {
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    AWS_TRANSCRIBE: 'awsTranscribe'
+ }
+ 
+ // Weird quirk - the key must match the name property value.
+@@ -236,6 +238,44 @@ const speechToTextProviders = {
+                 optional: true
+             }
+         ]
++    },
++    [SpeechToTextType.AWS_TRANSCRIBE]: {
++        label: 'AWS Transcribe',
++        name: SpeechToTextType.AWS_TRANSCRIBE,
++        icon: awsSVG,
++        url: 'https://aws.amazon.com/transcribe/',
++        inputs: [
++            {
++                label: 'Connect Credential',
++                name: 'credential',
++                type: 'credential',
++                credentialNames: ['awsApi']
++            },
++            {
++                label: 'Region',
++                name: 'region',
++                type: 'string',
++                description: 'The AWS region for the Transcribe service (e.g., us-east-1)',
++                placeholder: 'us-east-1',
++                optional: true
++            },
++            {
++                label: 'Language Code',
++                name: 'languageCode',
++                type: 'string',
++                description: 'The language code of the audio (e.g., en-US, es-ES, fr-FR)',
++                placeholder: 'en-US',
++                optional: true
++            },
++            {
++                label: 'S3 Bucket Name',
++                name: 's3BucketName',
++                type: 'string',
++                description:
++                    'The S3 bucket to use for temporary audio storage. AWS Transcribe requires audio files to be in S3. The file is automatically deleted after transcription.',
++                placeholder: 'my-transcribe-bucket'
++            }
++        ]
+     }
+ }
+ 
+diff --git a/packages/ui/src/ui-component/extended/TextToSpeech.jsx b/packages/ui/src/ui-component/extended/TextToSpeech.jsx
+index 8ce171615a4..869b307aba5 100644
+--- a/packages/ui/src/ui-component/extended/TextToSpeech.jsx
++++ b/packages/ui/src/ui-component/extended/TextToSpeech.jsx
+@@ -31,6 +31,7 @@ import { Dropdown } from '@/ui-component/dropdown/Dropdown'
+ import AudioWaveform from '@/ui-component/extended/AudioWaveform'
+ import openAISVG from '@/assets/images/openai.svg'
+ import elevenLabsSVG from '@/assets/images/elevenlabs.svg'
++import awsSVG from '@/assets/images/aws.svg'
+ 
+ // store
+ import useNotifier from '@/utils/useNotifier'
+@@ -41,7 +42,8 @@ import ttsApi from '@/api/tts'
+ 
+ const TextToSpeechType = {
+     OPENAI_TTS: 'openai',
+-    ELEVEN_LABS_TTS: 'elevenlabs'
++    ELEVEN_LABS_TTS: 'elevenlabs',
++    AMAZON_POLLY_TTS: 'amazonPolly'
+ }
+ 
+ // Weird quirk - the key must match the name property value.
+@@ -89,6 +91,63 @@ const textToSpeechProviders = {
+                 optional: true
+             }
+         ]
++    },
++    [TextToSpeechType.AMAZON_POLLY_TTS]: {
++        label: 'Amazon Polly',
++        name: TextToSpeechType.AMAZON_POLLY_TTS,
++        icon: awsSVG,
++        url: 'https://aws.amazon.com/polly/',
++        inputs: [
++            {
++                label: 'Connect Credential',
++                name: 'credential',
++                type: 'credential',
++                credentialNames: ['awsApi']
++            },
++            {
++                label: 'Region',
++                name: 'region',
++                type: 'string',
++                description: 'The AWS region for the Polly service (e.g., us-east-1)',
++                placeholder: 'us-east-1',
++                default: 'us-east-1',
++                optional: true
++            },
++            {
++                label: 'Voice',
++                name: 'voice',
++                type: 'voice_select',
++                description: 'The voice to use when generating the audio',
++                default: 'Joanna',
++                optional: true
++            },
++            {
++                label: 'Engine',
++                name: 'engine',
++                type: 'options',
++                description: 'The engine type for speech synthesis. Neural voices provide more natural-sounding speech.',
++                options: [
++                    {
++                        label: 'Neural',
++                        name: 'neural'
++                    },
++                    {
++                        label: 'Standard',
++                        name: 'standard'
++                    },
++                    {
++                        label: 'Long-form',
++                        name: 'long-form'
++                    },
++                    {
++                        label: 'Generative',
++                        name: 'generative'
++                    }
++                ],
++                default: 'neural',
++                optional: true
++            }
++        ]
+     }
+ }
+ 
+@@ -183,8 +242,14 @@ const TextToSpeech = ({ dialogProps }) => {
+             }
+         }
+ 
+-        // Reset test audio when voice or credential is changed
+-        if ((inputParamName === 'voice' || inputParamName === 'credentialId') && providerName === selectedProvider) {
++        // Reset test audio when voice, credential, engine, or region is changed
++        if (
++            (inputParamName === 'voice' ||
++                inputParamName === 'credentialId' ||
++                inputParamName === 'engine' ||
++                inputParamName === 'region') &&
++            providerName === selectedProvider
++        ) {
+             resetTestAudio()
+         }
+ 
+@@ -248,7 +313,9 @@ const TextToSpeech = ({ dialogProps }) => {
+                 provider: selectedProvider,
+                 credentialId: providerConfig.credentialId,
+                 voice: providerConfig.voice,
+-                model: providerConfig.model
++                model: providerConfig.model,
++                engine: providerConfig.engine,
++                region: providerConfig.region
+             }
+ 
+             const response = await fetch('/api/v1/text-to-speech/generate', {
+
+From cb5a260699a256afe8e521f9f317e920d44cfadb Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 20:53:43 +0530
+Subject: [PATCH 07/18] chore: update dependency lockfile to synchronize
+ package versions
+
+---
+ pnpm-lock.yaml | 419 +++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 369 insertions(+), 50 deletions(-)
+
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 2e2d110c151..77c25c7599d 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -306,6 +306,9 @@ importers:
+       '@aws-sdk/client-kendra':
+         specifier: ^3.750.0
+         version: 3.750.0
++      '@aws-sdk/client-polly':
++        specifier: ^3.699.0
++        version: 3.1073.0
+       '@aws-sdk/client-s3':
+         specifier: ^3.844.0
+         version: 3.844.0
+@@ -318,6 +321,9 @@ importers:
+       '@aws-sdk/client-sts':
+         specifier: ^3.699.0
+         version: 3.726.1
++      '@aws-sdk/client-transcribe':
++        specifier: ^3.699.0
++        version: 3.1073.0
+       '@azure/storage-blob':
+         specifier: ^12.29.0
+         version: 12.31.0
+@@ -389,7 +395,7 @@ importers:
+         version: 1.0.2(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))
+       '@langchain/community':
+         specifier: 1.1.12
+-        version: 1.1.12(72e5206c4d1ed59dcf2c9f2ae0808b12)
++        version: 1.1.12(c8eeafc3275ed85dea8c8c0ccf3b3ee2)
+       '@langchain/core':
+         specifier: 1.1.20
+         version: 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+@@ -446,7 +452,7 @@ importers:
+         version: 1.3.1(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       '@mem0/community':
+         specifier: ^0.0.1
+-        version: 0.0.1(e748aecd5adaef8863109d5a998ca8de)
++        version: 0.0.1(f853550310033a33bb7daafa6c93b73e)
+       '@mendable/firecrawl-js':
+         specifier: ^1.18.2
+         version: 1.25.1
+@@ -1780,6 +1786,10 @@ packages:
+     resolution: {integrity: sha512-OmPr2auM2wwGtlRs0LwQhydvYVRVmZBPq8AcSXk3fKw1WdBMK7FC7kuTuNRf7An/2kLaudiaZYHsoUPDk1Eb4A==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/client-polly@3.1073.0':
++    resolution: {integrity: sha512-AYDuIx68nuHSqEu5VfvcsTpjxGAb348Ei0mAn8IB6vibHc+LnJ+qqSjLNxnq506A0JRHzM4Zv0FakvaiNXTOvA==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/client-s3@3.844.0':
+     resolution: {integrity: sha512-Yhp8+U4KFVQqL6phZ5yrHF5PdCvKWbYtLSS+egAfAW+N5w78amhbZcctervj59uqOZHMGDWXuDBklN+7eVfasg==}
+     engines: {node: '>=18.0.0'}
+@@ -1842,6 +1852,10 @@ packages:
+     resolution: {integrity: sha512-qh9Q9Vu1hrM/wMBOBIaskwnE4GTFaZu26Q6WHwyWNfj7J8a40vBxpW16c2vYXHLBtwRKM1be8uRLkmDwghpiNw==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/client-transcribe@3.1073.0':
++    resolution: {integrity: sha512-DWQ467iGHoFE3iatdDzJVJTymzHEHJBfgQ1BMrHkNdvxy7ehQPIby2hS09xbQsQPKjoE6I64Xv9z04Ylxfllmg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/core@3.529.1':
+     resolution: {integrity: sha512-Sj42sYPfaL9PHvvciMICxhyrDZjqnnvFbPKDmQL5aFKyXy122qx7RdVqUOQERDmMQfvJh6+0W1zQlLnre89q4Q==}
+     engines: {node: '>=14.0.0'}
+@@ -1870,6 +1884,10 @@ packages:
+     resolution: {integrity: sha512-VtgGP0TjbCeyp6DQpiBqJKbemTSIaN2bZc3UbeTDCani3lBCyxn75ouJYD6koSSp0bh7rKLEbUpiFsNCI7tr0w==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/core@3.974.22':
++    resolution: {integrity: sha512-YofH63shc6YRdXjz80BJkpJW+Bkn0Cuu2dn4Rv7s9G2Idt58tgtzQEWxrR2xVljlVfIBeUjPuULnSVYLke3sUQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-cognito-identity@3.972.8':
+     resolution: {integrity: sha512-ATo3JAoPiGFM+m6cW42ntpOAgHY817NnRZOoe3jNRsMDibHKfjkCPFz1azgIjKRwFp3ioY7QNkOZNp4t8XNI2Q==}
+     engines: {node: '>=20.0.0'}
+@@ -1902,6 +1920,10 @@ packages:
+     resolution: {integrity: sha512-RhHQG1lhkWHL4tK1C/KDjaOeis+9U0tAMnWDiwiSVQZMC7CsST9Xin+sK89XywJ5g/tyABtb7TvFePJ4Te5XSQ==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-env@3.972.48':
++    resolution: {integrity: sha512-h6FEC95fbexUd6zxm4PdgS82bTcI2PRtUb2ZwMipb/Xr8bPwtf0G8rBo2jp7NA24Mbx2JA8/WingiYpA9RCCyw==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-http@3.525.0':
+     resolution: {integrity: sha512-RNWQGuSBQZhl3iqklOslUEfQ4br1V3DCPboMpeqFtddUWJV3m2u2extFur9/4Uy+1EHVF120IwZUKtd8dF+ibw==}
+     engines: {node: '>=14.0.0'}
+@@ -1930,6 +1952,10 @@ packages:
+     resolution: {integrity: sha512-b/bDL76p51+yQ+0O9ZDH5nw/ioE0sRYkjwjOwFWAWZXo6it2kQZUOXhVpjohx3ldKyUxt/SwAivjUu1Nr/PWlQ==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-http@3.972.50':
++    resolution: {integrity: sha512-lJO3OLpjvz5m/RSBQmsG/CEUGsvCy5ruxKwPQaOCqxqCMuyYT2BZwQUTDZVVwqQ9LrZKuK24JSa6r31hL/tvkg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-ini@3.529.1':
+     resolution: {integrity: sha512-RjHsuTvHIwXG7a/3ERexemiD3c9riKMCZQzY2/b0Gg0ButEVbBcMfERtUzWmQ0V4ufe/PEZjP68MH1gupcoF9A==}
+     engines: {node: '>=14.0.0'}
+@@ -1960,6 +1986,10 @@ packages:
+     resolution: {integrity: sha512-qWnM+wB8MmU2kKY7f4KowKjOjkwRosaFxrtseEEIefwoXn1SjN+CbHzXBVdTAQxxkbBiqhPgJ/WHiPtES4grRQ==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-ini@3.972.55':
++    resolution: {integrity: sha512-TBoF4buBGYhXjdZAryayY2TrkQj2B2KfE/msG4V53XCt+w0EhEwM2JRjx8p2grJ2C6gtH5++SAwEvGMRdi0yyw==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-login@3.966.0':
+     resolution: {integrity: sha512-wD1KlqLyh23Xfns/ZAPxebwXixoJJCuDbeJHFrLDpP4D4h3vA2S8nSFgBSFR15q9FhgRfHleClycf6g5K4Ww6w==}
+     engines: {node: '>=18.0.0'}
+@@ -1968,6 +1998,10 @@ packages:
+     resolution: {integrity: sha512-x92FJy34/95wgu+qOGD8SHcgh1hZ9Qx2uFtQEGn4m9Ljou8ICIv3Ybq5yxdB7A60S8ZGCQB0mIopmjJwiLbh5g==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-login@3.972.54':
++    resolution: {integrity: sha512-hBWI3wZTdTGiuMfmPts6AWbAjFfRniOQnqx68tc2cQvRKWawFbN9wkLOVPWM1FAOyowZU73mC6Fi+rHSHNyLFw==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-node@3.529.1':
+     resolution: {integrity: sha512-mvY7F3dMmk/0dZOCfl5sUI1bG0osureBjxhELGCF0KkJqhWI0hIzh8UnPkYytSg3vdc97CMv7pTcozxrdA3b0g==}
+     engines: {node: '>=14.0.0'}
+@@ -1996,6 +2030,10 @@ packages:
+     resolution: {integrity: sha512-7mlt14Ee4rPFAFUVgpWE7+0CBhetJJyzVFqfIsMp7sgyOSm9Y/+qHZOWAuK5I4JNc+Y5PltvJ9kssTzRo92iXQ==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-node@3.972.57':
++    resolution: {integrity: sha512-u6dClpzNdWf1HGWz4wwhdXi1wiOofCLniM9S4BQQGlLAN9TW7VB+ld5V533GdKrYMaFeBGFqKnj0JCYvynLqwQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-process@3.523.0':
+     resolution: {integrity: sha512-f0LP9KlFmMvPWdKeUKYlZ6FkQAECUeZMmISsv6NKtvPCI9e4O4cLTeR09telwDK8P0HrgcRuZfXM7E30m8re0Q==}
+     engines: {node: '>=14.0.0'}
+@@ -2024,6 +2062,10 @@ packages:
+     resolution: {integrity: sha512-PrH3iTeD18y/8uJvQD2s/T87BTGhsdS/1KZU7ReWHXsplBwvCqi7AbnnNbML1pFlQwRWCE2RdSZFWDVId3CvkA==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-process@3.972.48':
++    resolution: {integrity: sha512-w6VZwojPt12WnEkAUy6Nu4K6sWCbBmR7QX390b0nE6vRvkXbrYr9Lq9VySGkfjiMjpUA87op+J4EgvRmtWIDoQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-sso@3.529.1':
+     resolution: {integrity: sha512-KFMKkaoTGDgSJG+o9Ii7AglWG5JQeF6IFw9cXLMwDdIrp3KUmRcUIqe0cjOoCqeQEDGy0VHsimHmKKJ3894i/A==}
+     engines: {node: '>=14.0.0'}
+@@ -2052,6 +2094,10 @@ packages:
+     resolution: {integrity: sha512-M/+LBHTPKZxxXckM6m4dnJeR+jlm9NynH9b2YDswN4Zj2St05SK/crdL3Wy3WfJTZootnnhm3oTh87Usl7PS7w==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-sso@3.972.54':
++    resolution: {integrity: sha512-23uZpIpF2SIFDCa1fcWa202tK4gGeyvX6GIIAjiB8WBsvsVRBMnJ/7dCxHzxf7eZT7GToJg837LDIBnZsl/VUg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-provider-web-identity@3.529.1':
+     resolution: {integrity: sha512-AGuZDOKN+AttjwTjrF47WLqzeEut2YynyxjkXZhxZF/xn8i5Y51kUAUdXsXw1bgR25pAeXQIdhsrQlRa1Pm5kw==}
+     engines: {node: '>=14.0.0'}
+@@ -2082,6 +2128,10 @@ packages:
+     resolution: {integrity: sha512-QTH6k93v+UOfFam/ado8zc71tH+enTVyuvLy9uEWXX1x894dN5ovtf/MdBDgFwq3g6c9mbtgVJ4B+yBqDtXvdA==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/credential-provider-web-identity@3.972.54':
++    resolution: {integrity: sha512-0Iv5QttS6wcATlodYKgvQj6B9Db51rx7NU9fqu0PoLeS4BIgdYMc/QK4smwLwpm5RFrs02V/eLyEFp3FklvlNQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/credential-providers@3.1002.0':
+     resolution: {integrity: sha512-D9E3iBWt7kQ3WZ6R6mOy4GDiC/fV+z5lVMVuHNdicryga0fWkuoZBK/dTEdFBEiQBQ3WdDORzEzD+PytYstFBg==}
+     engines: {node: '>=20.0.0'}
+@@ -2094,6 +2144,10 @@ packages:
+     resolution: {integrity: sha512-QriACiXP+/x2xXw8u849BxID+zSUbh/7Gt0Zfaxeye0mIKVeSTid5776rXfrM8wcYhbVXWWZhKd1Du7oPuFwsg==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/eventstream-handler-node@3.972.22':
++    resolution: {integrity: sha512-tqPJv0dz4+O0hWGm1a6YekcMZyPhDFs/zH73Von7icaVT5n0Jqvm86typ3jRrG+qoUdPhALOnboRLTmnWQTlYQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/lib-storage@3.726.1':
+     resolution: {integrity: sha512-WuDxSZ8Bfe1N7gn5eXQ02dhlKWCAwW5qQErpJ4CCddXosF+gLxhGkrP9LkaaP0CpA3PxboHyET6HbWAggOWtqA==}
+     engines: {node: '>=18.0.0'}
+@@ -2112,6 +2166,10 @@ packages:
+     resolution: {integrity: sha512-YVNOPbc3r+gETUY6ufnJYsgIRMaBfoGRM9GzPb+gwtidCPd0BEpLjmZNIVGYawMrGc2kAdlV1kjBzAvmYaMINw==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/middleware-eventstream@3.972.18':
++    resolution: {integrity: sha512-OHpk8YoZi3yexPq8aFt1vN1IxA2zLKvsIR5GpWYylX/ve6kQmY7wxHNSFy/D3t2apMZ16rs76Co4dJWcDyIk3A==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/middleware-expect-continue@3.840.0':
+     resolution: {integrity: sha512-iJg2r6FKsKKvdiU4oCOuCf7Ro/YE0Q2BT/QyEZN3/Rt8Nr4SAZiQOlcBXOCpGvuIKOEAhvDOUnW3aDHL01PdVw==}
+     engines: {node: '>=18.0.0'}
+@@ -2269,6 +2327,10 @@ packages:
+     resolution: {integrity: sha512-zn0WApcULn7Rtl6T+KP2CQTZo/7wOa2YV1yHQnbijTQoi4YXQHM8s21JcJzt33/mqPh8AdvWX1f+83KvKuxlZw==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/nested-clients@3.997.22':
++    resolution: {integrity: sha512-4IwtcYSxEIVw5hcp8ogq0CMbFNZFw7jJUetpfFUhFFeqsa1K8j2Ihg2hnxLyOp3stMZnXda6VzOmPi1AFZQXcg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/region-config-resolver@3.525.0':
+     resolution: {integrity: sha512-8kFqXk6UyKgTMi7N7QlhA6qM4pGPWbiUXqEY2RgUWngtxqNFGeM9JTexZeuavQI+qLLe09VPShPNX71fEDcM6w==}
+     engines: {node: '>=14.0.0'}
+@@ -2301,10 +2363,18 @@ packages:
+     resolution: {integrity: sha512-QC8nocQcZ3Bj7vTnuL47iNhcuUjMC46E2L85mU+sPQo3LN2qBVGSOTF+xSWGvmSFDpkN4ZXUMVeA0cJoJFEDFA==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/signature-v4-multi-region@3.996.35':
++    resolution: {integrity: sha512-6L/VWs+Wch2stHemCGTmUNqKLMzURxQDK5boNG3Jn3kAOp71meDUuS5sbObpEvFxHDq0uWeSLFDNSYsjNt+Dlg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/token-providers@3.1002.0':
+     resolution: {integrity: sha512-x972uKOydFn4Rb0PZJzLdNW59rH0KWC78Q2JbQzZpGlGt0DxjYdDRwBG6F42B1MyaEwHGqO/tkGc4r3/PRFfMw==}
+     engines: {node: '>=20.0.0'}
+ 
++  '@aws-sdk/token-providers@3.1071.0':
++    resolution: {integrity: sha512-4LDW2Qob6LoLFuqYSYZq2AyTE9koSE9+i+n5UZcm10GpmQOK0zRD9L4uYlzItiTKksIWgC/qMFChAi3RvKYtMg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/token-providers@3.529.1':
+     resolution: {integrity: sha512-NpgMjsfpqiugbxrYGXtta914N43Mx/H0niidqv8wKMTgWQEtsJvYtOni+kuLXB+LmpjaMFNlpadooFU/bK4buA==}
+     engines: {node: '>=14.0.0'}
+@@ -2355,6 +2425,10 @@ packages:
+     resolution: {integrity: sha512-jvodoJdMavvg8faN7co58vVJRO5MVep4JFPRzUNCzpJ98BDqWDk/ad045aMJcmxkLzYLS2UAnUmqjJ/tUPNlzQ==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/types@3.973.13':
++    resolution: {integrity: sha512-pEHZqRkAlHfnfAU9tK+WpKv/gBNjGJrHMgA3A0iYRGyswBS2t0pfez+lWlwktb3Bqa0ovh7w/QJTFwp3fDxLNg==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/types@3.973.4':
+     resolution: {integrity: sha512-RW60aH26Bsc016Y9B98hC0Plx6fK5P2v/iQYwMzrSjiDh1qRMUCP6KrXHYEHe3uFvKiOC93Z9zk4BJsUi6Tj1Q==}
+     engines: {node: '>=20.0.0'}
+@@ -2498,6 +2572,10 @@ packages:
+     resolution: {integrity: sha512-Tcod25/BTupraQwtb+Q+GX8bmEZfxIFjjJ/AvkhUZsZlkPeVluzq1uu3Oeqf145DCdMjzLIN6vab5MrykbDP+g==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@aws-sdk/xml-builder@3.972.30':
++    resolution: {integrity: sha512-StElZPEoBquWwNqw1AcfpzEyZqJvFxouG+mpDNYlcH6ZOrqd2CuIryv+8LV8gNHZUOyKyJF3Dq9vxaXEmDR9TQ==}
++    engines: {node: '>=20.0.0'}
++
+   '@aws-sdk/xml-builder@3.972.9':
+     resolution: {integrity: sha512-ItnlMgSqkPrUfJs7EsvU/01zw5UeIb2tNPhD09LBLHbg+g+HDiKibSLwpkuz/ZIlz4F2IMn+5XgE4AK/pfPuog==}
+     engines: {node: '>=20.0.0'}
+@@ -4617,79 +4695,67 @@ packages:
+     resolution: {integrity: sha512-9B+taZ8DlyyqzZQnoeIvDVR/2F4EbMepXMc/NdVbkzsJbzkUjhXv/70GQJ7tdLA4YJgNP25zukcxpX2/SueNrA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-arm@1.0.5':
+     resolution: {integrity: sha512-gvcC4ACAOPRNATg/ov8/MnbxFDJqf/pDePbBnuBDcjsI8PssmjoKMAz4LtLaVi+OnSb5FK/yIOamqDwGmXW32g==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-s390x@1.0.4':
+     resolution: {integrity: sha512-u7Wz6ntiSSgGSGcjZ55im6uvTrOxSIS8/dgoVMoiGE9I6JAfU50yH5BoDlYA1tcuGS7g/QNtetJnxA6QEsCVTA==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-x64@1.0.4':
+     resolution: {integrity: sha512-MmWmQ3iPFZr0Iev+BAgVMb3ZyC4KeFc3jFxnNbEPas60e1cIfevbtuyf9nDGIzOaW9PdnDciJm+wFFaTlj5xYw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linuxmusl-arm64@1.0.4':
+     resolution: {integrity: sha512-9Ti+BbTYDcsbp4wfYib8Ctm1ilkugkA/uscUn6UXK1ldpC1JjiXbLfFZtRlBhjPZ5o1NCLiDbg8fhUPKStHoTA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-libvips-linuxmusl-x64@1.0.4':
+     resolution: {integrity: sha512-viYN1KX9m+/hGkJtvYYp+CCLgnJXwiQB39damAO7WMdKWlIhmYTfHjwSbQeUK/20vY154mwezd9HflVFM1wVSw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linux-arm64@0.33.5':
+     resolution: {integrity: sha512-JMVv+AMRyGOHtO1RFBiJy/MBsgz0x4AWrT6QoEVVTyh1E39TrCUpTRI7mx9VksGX4awWASxqCYLCV4wBZHAYxA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-arm@0.33.5':
+     resolution: {integrity: sha512-JTS1eldqZbJxjvKaAkxhZmBqPRGmxgu+qFKSInv8moZ2AmT5Yib3EQ1c6gp493HvrvV8QgdOXdyaIBrhvFhBMQ==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-s390x@0.33.5':
+     resolution: {integrity: sha512-y/5PCd+mP4CA/sPDKl2961b+C9d+vPAveS33s6Z3zfASk2j5upL6fXVPZi7ztePZ5CuH+1kW8JtvxgbuXHRa4Q==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-x64@0.33.5':
+     resolution: {integrity: sha512-opC+Ok5pRNAzuvq1AG0ar+1owsu842/Ab+4qvU879ippJBHvyY5n2mxF1izXqkPYlGuP/M556uh53jRLJmzTWA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linuxmusl-arm64@0.33.5':
+     resolution: {integrity: sha512-XrHMZwGQGvJg2V/oRSUfSAfjfPxO+4DkiRh6p2AFjLQztWUuY/o8Mq0eMQVIY7HJ1CDQUJlxGGZRw1a5bqmd1g==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linuxmusl-x64@0.33.5':
+     resolution: {integrity: sha512-WT+d/cgqKkkKySYmqoZ8y3pxx7lx9vVejxW/W4DOFMYVSkErR+w7mf2u8m/y4+xHe7yY9DAXQMWQhpnMuFfScw==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-wasm32@0.33.5':
+     resolution: {integrity: sha512-ykUW4LVGaMcU9lu9thv85CbRMAwfeadCJHRsg2GmeRa/cJxsVY9Rbd57JcMxBkKHag5U/x7TSBpScF4U8ElVzg==}
+@@ -6513,35 +6579,30 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-arm64-musl@0.1.73':
+     resolution: {integrity: sha512-lX0z2bNmnk1PGZ+0a9OZwI2lPPvWjRYzPqvEitXX7lspyLFrOzh2kcQiLL7bhyODN23QvfriqwYqp5GreSzVvA==}
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-linux-riscv64-gnu@0.1.73':
+     resolution: {integrity: sha512-QDQgMElwxAoADsSR3UYvdTTQk5XOyD9J5kq15Z8XpGwpZOZsSE0zZ/X1JaOtS2x+HEZL6z1S6MF/1uhZFZb5ig==}
+     engines: {node: '>= 10'}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-gnu@0.1.73':
+     resolution: {integrity: sha512-wbzLJrTalQrpyrU1YRrO6w6pdr5vcebbJa+Aut5QfTaW9eEmMb1WFG6l1V+cCa5LdHmRr8bsvl0nJDU/IYDsmw==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-musl@0.1.73':
+     resolution: {integrity: sha512-xbfhYrUufoTAKvsEx2ZUN4jvACabIF0h1F5Ik1Rk4e/kQq6c+Dwa5QF0bGrfLhceLpzHT0pCMGMDeQKQrcUIyA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-win32-x64-msvc@0.1.73':
+     resolution: {integrity: sha512-YQmHXBufFBdWqhx+ympeTPkMfs3RNxaOgWm59vyjpsub7Us07BwCcmu1N5kildhO8Fm0syoI2kHnzGkJBLSvsg==}
+@@ -6563,6 +6624,9 @@ packages:
+     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+     engines: {node: ^14.21.3 || >=16}
+ 
++  '@nodable/entities@2.2.0':
++    resolution: {integrity: sha512-9uGyhaQavEUMC8AIddIjau4NsnsXhou+j5sBAGojCM1oxmQpVKTWR/9JxABD6UAv12vpIms55fPZKFQEhG6uBg==}
++
+   '@nodelib/fs.scandir@2.1.5':
+     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
+     engines: {node: '>= 8'}
+@@ -7406,67 +7470,56 @@ packages:
+     resolution: {integrity: sha512-hLrmRl53prCcD+YXTfNvXd776HTxNh8wPAMllusQ+amcQmtgo3V5i/nkhPN6FakW+QVLoUUr2AsbtIRPFU3xIA==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm-musleabihf@4.45.0':
+     resolution: {integrity: sha512-XBKGSYcrkdiRRjl+8XvrUR3AosXU0NvF7VuqMsm7s5nRy+nt58ZMB19Jdp1RdqewLcaYnpk8zeVs/4MlLZEJxw==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-arm64-gnu@4.45.0':
+     resolution: {integrity: sha512-fRvZZPUiBz7NztBE/2QnCS5AtqLVhXmUOPj9IHlfGEXkapgImf4W9+FSkL8cWqoAjozyUzqFmSc4zh2ooaeF6g==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm64-musl@4.45.0':
+     resolution: {integrity: sha512-Btv2WRZOcUGi8XU80XwIvzTg4U6+l6D0V6sZTrZx214nrwxw5nAi8hysaXj/mctyClWgesyuxbeLylCBNauimg==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-loongarch64-gnu@4.45.0':
+     resolution: {integrity: sha512-Li0emNnwtUZdLwHjQPBxn4VWztcrw/h7mgLyHiEI5Z0MhpeFGlzaiBHpSNVOMB/xucjXTTcO+dhv469Djr16KA==}
+     cpu: [loong64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-powerpc64le-gnu@4.45.0':
+     resolution: {integrity: sha512-sB8+pfkYx2kvpDCfd63d5ScYT0Fz1LO6jIb2zLZvmK9ob2D8DeVqrmBDE0iDK8KlBVmsTNzrjr3G1xV4eUZhSw==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-gnu@4.45.0':
+     resolution: {integrity: sha512-5GQ6PFhh7E6jQm70p1aW05G2cap5zMOvO0se5JMecHeAdj5ZhWEHbJ4hiKpfi1nnnEdTauDXxPgXae/mqjow9w==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-musl@4.45.0':
+     resolution: {integrity: sha512-N/euLsBd1rekWcuduakTo/dJw6U6sBP3eUq+RXM9RNfPuWTvG2w/WObDkIvJ2KChy6oxZmOSC08Ak2OJA0UiAA==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-s390x-gnu@4.45.0':
+     resolution: {integrity: sha512-2l9sA7d7QdikL0xQwNMO3xURBUNEWyHVHfAsHsUdq+E/pgLTUcCE+gih5PCdmyHmfTDeXUWVhqL0WZzg0nua3g==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-gnu@4.45.0':
+     resolution: {integrity: sha512-XZdD3fEEQcwG2KrJDdEQu7NrHonPxxaV0/w2HpvINBdcqebz1aL+0vM2WFJq4DeiAVT6F5SUQas65HY5JDqoPw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-musl@4.45.0':
+     resolution: {integrity: sha512-7ayfgvtmmWgKWBkCGg5+xTQ0r5V1owVm67zTrsEY1008L5ro7mCyGYORomARt/OquB9KY7LpxVBZes+oSniAAQ==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-win32-arm64-msvc@4.45.0':
+     resolution: {integrity: sha512-B+IJgcBnE2bm93jEW5kHisqvPITs4ddLOROAcOc/diBgrEiQJJ6Qcjby75rFSmH5eMGrqJryUgJDhrfj942apQ==}
+@@ -7609,6 +7662,10 @@ packages:
+     resolution: {integrity: sha512-f7uPeBi7ehmLT4YF2u9j3qx6lSnurG1DLXOsTtJrIRNDF7VXio4BGHQ+SQteN/BrUVudbkuL4v7oOsRCzq4BqA==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/core@3.25.1':
++    resolution: {integrity: sha512-zpDbpXBCBsxfLtG2GEUyfgvHvSFrw5CwDZSNzL0v52gx/c3oPlPbm+7W7num8xs6vyiUBn+bvYPHcQDOXZynCQ==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/core@3.7.0':
+     resolution: {integrity: sha512-7ov8hu/4j0uPZv8b27oeOFtIBtlFmM3ibrPv/Omx1uUdoXvcpJ00U+H/OWWC/keAguLlcqwtyL2/jTlSnApgNQ==}
+     engines: {node: '>=18.0.0'}
+@@ -7637,6 +7694,10 @@ packages:
+     resolution: {integrity: sha512-lBXrS6ku0kTj3xLmsJW0WwqWbGQ6ueooYyp/1L9lkyT0M02C+DWwYwc5aTyXFbRaK38ojALxNixg+LxKSHZc0g==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/credential-provider-imds@4.4.1':
++    resolution: {integrity: sha512-TSAF5NHgxEsllbErYWbK8aLnl5L601NGc5VYJlSPsKnf3YlkhdoBN+geGcaU00oiw2OK3QO5LA3QNXiiWhCidQ==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/eventstream-codec@2.1.4':
+     resolution: {integrity: sha512-UkiieTztP7adg8EuqZvB0Y4LewdleZCJU7Kgt9RDutMsRYqO32fMpWeQHeTHaIMosmzcRZUykMRrhwGJe9mP3A==}
+ 
+@@ -7699,6 +7760,10 @@ packages:
+     resolution: {integrity: sha512-U2Hcfl2s3XaYjikN9cT4mPu8ybDbImV3baXR0PkVlC0TTx808bRP3FaPGAzPtB8OByI+JqJ1kyS+7GEgae7+qQ==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/fetch-http-handler@5.5.1':
++    resolution: {integrity: sha512-96JrD1q71anokymx9Iblb+zKmNQYNstlV/25A9ZYIJ2A0rp1r7/GZAIm0bDWSmVvz3DpNOCZuabzsiL+w0UHhw==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/hash-blob-browser@4.0.4':
+     resolution: {integrity: sha512-WszRiACJiQV3QG6XMV44i5YWlkrlsM5Yxgz4jvsksuu7LDXA6wAtypfPajtNTadzpJy3KyJPoWehYpmZGKUFIQ==}
+     engines: {node: '>=18.0.0'}
+@@ -7903,6 +7968,10 @@ packages:
+     resolution: {integrity: sha512-DamSqaU8nuk0xTJDrYnRzZndHwwRnyj/n/+RqGGCcBKB4qrQem0mSDiWdupaNWdwxzyMU91qxDmHOCazfhtO3A==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/node-http-handler@4.8.1':
++    resolution: {integrity: sha512-emtXvoky671puri18ETf64AFIQUGIEA093F2drXpBgB0OGnBLjcwNR3CA2mYu62IAqNsS56xa5lnTxAgPq7cjw==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/property-provider@2.1.4':
+     resolution: {integrity: sha512-nWaY/MImj1BiXZ9WY65h45dcxOx8pl06KYoHxwojDxDL+Q9yLU1YnZpgv8zsHhEftlj9KhePENjQTlNowWVyug==}
+     engines: {node: '>=14.0.0'}
+@@ -8039,6 +8108,10 @@ packages:
+     resolution: {integrity: sha512-V1L6N9aKOBAN4wEHLyqjLBnAz13mtILU0SeDrjOaIZEeN6IFa6DxwRt1NNpOdmSpQUfkBj0qeD3m6P77uzMhgQ==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/signature-v4@5.5.1':
++    resolution: {integrity: sha512-X9rVls3En0z3NtrmguTmpRM0/NqtWUxBjal6fcAkwtsub+gOdLZ6kD+V7xhUgFMGdG14bHbZ7M5QjaRI1+DatQ==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/smithy-client@2.4.4':
+     resolution: {integrity: sha512-SNE17wjycPZIJ2P5sv6wMTteV/vQVPdaqQkoK1KeGoWHXx79t3iLhQXj1uqRdlkMUS9pXJrLOAS+VvUSOYwQKw==}
+     engines: {node: '>=14.0.0'}
+@@ -8071,6 +8144,10 @@ packages:
+     resolution: {integrity: sha512-COuLsZILbbQsdrwKQpkkpyep7lCsByxwj7m0Mg5v66/ZTyenlfBc40/QFQ5chO0YN/PNEH1Bi3fGtfXPnYNeDw==}
+     engines: {node: '>=18.0.0'}
+ 
++  '@smithy/types@4.15.0':
++    resolution: {integrity: sha512-Z5TAOxygoFvybJV3igo5SloFflSokHx2hu1eFA+DxDTcn+FtKxUSui+rbTRG1pAafMA888Z3MVvCWUuvCrTXjg==}
++    engines: {node: '>=18.0.0'}
++
+   '@smithy/types@4.3.1':
+     resolution: {integrity: sha512-UqKOQBL2x6+HWl3P+3QqFD4ncKq0I8Nuz9QItGv5WuKuMHuuwlhvqcZCoXGfc+P1QmfJE7VieykoYYmrOoFJxA==}
+     engines: {node: '>=18.0.0'}
+@@ -8446,28 +8523,24 @@ packages:
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-arm64-musl@1.4.6':
+     resolution: {integrity: sha512-LGQsKJ8MA9zZ8xHCkbGkcPSmpkZL2O7drvwsGKynyCttHhpwVjj9lguhD4DWU3+FWIsjvho5Vu0Ggei8OYi/Lw==}
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-linux-x64-gnu@1.4.6':
+     resolution: {integrity: sha512-10JL2nLIreMQDKvq2TECnQe5fCuoqBHu1yW8aChqgHUyg9d7gfZX/kppUsuimqcgRBnS0AjTDAA+JF6UsG/2Yg==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-x64-musl@1.4.6':
+     resolution: {integrity: sha512-EGyjFVzVY6Do89x8sfah7I3cuP4MwtwzmA6OlfD/KASqfCFf5eIaEBMbajgR41bVfMV7lK72lwAIea5xEyq1AQ==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-win32-arm64-msvc@1.4.6':
+     resolution: {integrity: sha512-gfW9AuXvwSyK07Vb8Y8E9m2oJZk21WqcD+X4BZhkbKB0TCZK0zk1j/HpS2UFlr1JB2zPKPpSWLU3ll0GEHRG2A==}
+@@ -9567,49 +9640,41 @@ packages:
+     resolution: {integrity: sha512-34gw7PjDGB9JgePJEmhEqBhWvCiiWCuXsL9hYphDF7crW7UgI05gyBAi6MF58uGcMOiOqSJ2ybEeCvHcq0BCmQ==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-arm64-musl@1.11.1':
+     resolution: {integrity: sha512-RyMIx6Uf53hhOtJDIamSbTskA99sPHS96wxVE/bJtePJJtpdKGXO1wY90oRdXuYOGOTuqjT8ACccMc4K6QmT3w==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-ppc64-gnu@1.11.1':
+     resolution: {integrity: sha512-D8Vae74A4/a+mZH0FbOkFJL9DSK2R6TFPC9M+jCWYia/q2einCubX10pecpDiTmkJVUH+y8K3BZClycD8nCShA==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-gnu@1.11.1':
+     resolution: {integrity: sha512-frxL4OrzOWVVsOc96+V3aqTIQl1O2TjgExV4EKgRY09AJ9leZpEg8Ak9phadbuX0BA4k8U5qtvMSQQGGmaJqcQ==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-musl@1.11.1':
+     resolution: {integrity: sha512-mJ5vuDaIZ+l/acv01sHoXfpnyrNKOk/3aDoEdLO/Xtn9HuZlDD6jKxHlkN8ZhWyLJsRBxfv9GYM2utQ1SChKew==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-s390x-gnu@1.11.1':
+     resolution: {integrity: sha512-kELo8ebBVtb9sA7rMe1Cph4QHreByhaZ2QEADd9NzIQsYNQpt9UkM9iqr2lhGr5afh885d/cB5QeTXSbZHTYPg==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-gnu@1.11.1':
+     resolution: {integrity: sha512-C3ZAHugKgovV5YvAMsxhq0gtXuwESUKc5MhEtjBpLoHPLYM+iuwSj3lflFwK3DPm68660rZ7G8BMcwSro7hD5w==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-musl@1.11.1':
+     resolution: {integrity: sha512-rV0YSoyhK2nZ4vEswT/QwqzqQXw5I6CjoaYMOX0TqBlWhojUf8P94mvI7nuJTeaCkkds3QE4+zS8Ko+GdXuZtA==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-wasm32-wasi@1.11.1':
+     resolution: {integrity: sha512-5u4RkfxJm+Ng7IWgkzi3qrFOvLvQYnPBmjmZQ8+szTK/b31fQCnleNl1GgEt7nIsZRIf5PLhPwT0WM+q45x/UQ==}
+@@ -10000,6 +10065,9 @@ packages:
+     resolution: {integrity: sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==}
+     engines: {node: '>= 8'}
+ 
++  anynum@1.0.1:
++    resolution: {integrity: sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A==}
++
+   apify-client@2.9.3:
+     resolution: {integrity: sha512-qQn1BxNL29cxwFSpgA3oc53i88xdYGtNZfYDFCoi3MJyds1XKx2NDPuf65YwQS/n0Qsfq1uHJqbkqV5oo/FSXw==}
+ 
+@@ -10821,14 +10889,12 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-linux-x64-gnu@1.1.1:
+     resolution: {integrity: sha512-RcvBcECbUcFXlFM2httdGc+3wmkI76tD9iGS0H9npEhz4LyLvdXKBK8CZtw67hsHCH09KklKw4ITkSS85pHVbA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-win32-x64-msvc@1.1.1:
+     resolution: {integrity: sha512-296SxWNwsmvP+1Ggkl72norTFLOivoXhGu0t5mXNIbd7yd2UodntvAvG2cheTHDCL/ILbox4u+6KHNvRxHgm6A==}
+@@ -12733,6 +12799,9 @@ packages:
+   fast-xml-builder@1.0.0:
+     resolution: {integrity: sha512-fpZuDogrAgnyt9oDDz+5DBz0zgPdPZz6D4IR7iESxRXElrlGTRkHJ9eEt+SACRJwT0FNFrt71DFQIUFBJfX/uQ==}
+ 
++  fast-xml-builder@1.2.0:
++    resolution: {integrity: sha512-00aAWieqff+ZJhsXA4g1g7M8k+7AYoMUUHF+/zFb5U6Uv/P0Vl4QZo84/IcufzYalLuEj9928bXN9PbbFzMF0Q==}
++
+   fast-xml-parser@4.2.5:
+     resolution: {integrity: sha512-B9/wizE4WngqQftFPmdaMYlXoJlJOYxGQOanC77fq9k8+Z0v5dDSVh+3glErdIROP//s/jgb7ZuxKfB8nVyo0g==}
+     hasBin: true
+@@ -12749,6 +12818,10 @@ packages:
+     resolution: {integrity: sha512-BQ30U1mKkvXQXXkAGcuyUA/GA26oEB7NzOtsxCDtyu62sjGw5QraKFhx2Em3WQNjPw9PG6MQ9yuIIgkSDfGu5A==}
+     hasBin: true
+ 
++  fast-xml-parser@5.7.3:
++    resolution: {integrity: sha512-C0AaNuC+mscy6vrAQKAc/rMq+zAPHodfHGZu4sGVehvAQt/JLG1O5zEcYcXSY5zSqr4YVgxsB+pHXTq0i7eDlg==}
++    hasBin: true
++
+   fastest-levenshtein@1.0.16:
+     resolution: {integrity: sha512-eRnCtTTtGZFpQCwhJiUOuxPQWRXVKYDn0b2PeHfXL6/Zi53SLAzAHfVhVWK2AryC/WH05kGfxhFIPvTF0SXQzg==}
+     engines: {node: '>= 4.9.1'}
+@@ -16814,6 +16887,10 @@ packages:
+     resolution: {integrity: sha512-ak9Qy5Q7jYb2Wwcey5Fpvg2KoAc/ZIhLSLOSBmRmygPsGwkVVt0fZa0qrtMz+m6tJTAHfZQ8FnmB4MG4LWy7/w==}
+     engines: {node: '>=8'}
+ 
++  path-expression-matcher@1.6.0:
++    resolution: {integrity: sha512-e5y7RCLHKjemsgQ4eqGJtPyr10ILz25HO7flzxhTV8bgvd5yHx98DGtCAtbVW9f2TqnYI/gEVZd+vz7snrdPTw==}
++    engines: {node: '>=14.0.0'}
++
+   path-is-absolute@1.0.1:
+     resolution: {integrity: sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg==}
+     engines: {node: '>=0.10.0'}
+@@ -19292,6 +19369,9 @@ packages:
+   strnum@2.2.0:
+     resolution: {integrity: sha512-Y7Bj8XyJxnPAORMZj/xltsfo55uOiyHcU2tnAVzHUnSJR/KsEX+9RoDeXEnsXtl/CX4fAcrt64gZ13aGaWPeBg==}
+ 
++  strnum@2.4.1:
++    resolution: {integrity: sha512-M9eUSMT2dCB2cTNPG7UYj6KuK7RJR2SN2+yCV/fTW3xzTCS6EaGZ5pSMgDIjB7r8zSfTGk+dvvn9rTjpVS9Mwg==}
++
+   strtok3@6.3.0:
+     resolution: {integrity: sha512-fZtbhtvI9I48xDSywd/somNqgUHl2L2cstmXCCif0itOf96jeW18MBSyrLuNicYQVkvpOxkZtkzujiTJ9LW5Jw==}
+     engines: {node: '>=10'}
+@@ -20899,6 +20979,10 @@ packages:
+     resolution: {integrity: sha512-ICP2e+jsHvAj2E2lIHxa5tjXRlKDJo4IdvPvCXbXQGdzSfmSpNVyIKMvoZHjDY9DP0zV17iI85o90vRFXNccRw==}
+     engines: {node: '>=12'}
+ 
++  xml-naming@0.1.0:
++    resolution: {integrity: sha512-k8KO9hrMyNk6tUWqUfkTEZbezRRpONVOzUTnc97VnCvyj6Tf9lyUR9EDAIeiVLv56jsMcoXEwjW8Kv5yPY52lw==}
++    engines: {node: '>=16.0.0'}
++
+   xml2js@0.2.8:
+     resolution: {integrity: sha512-ZHZBIAO55GHCn2jBYByVPHvHS+o3j8/a/qmpEe6kxO3cTnTCWC3Htq9RYJ5G4XMwMMClD2QkXA9SNdPadLyn3Q==}
+ 
+@@ -21702,6 +21786,21 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/client-polly@3.1073.0':
++    dependencies:
++      '@aws-crypto/sha256-browser': 5.2.0
++      '@aws-crypto/sha256-js': 5.2.0
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/credential-provider-node': 3.972.57
++      '@aws-sdk/eventstream-handler-node': 3.972.22
++      '@aws-sdk/middleware-eventstream': 3.972.18
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/fetch-http-handler': 5.5.1
++      '@smithy/node-http-handler': 4.8.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/client-s3@3.844.0':
+     dependencies:
+       '@aws-crypto/sha1-browser': 5.2.0
+@@ -22339,6 +22438,19 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/client-transcribe@3.1073.0':
++    dependencies:
++      '@aws-crypto/sha256-browser': 5.2.0
++      '@aws-crypto/sha256-js': 5.2.0
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/credential-provider-node': 3.972.57
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/fetch-http-handler': 5.5.1
++      '@smithy/node-http-handler': 4.8.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/core@3.529.1':
+     dependencies:
+       '@smithy/core': 1.3.7
+@@ -22445,6 +22557,17 @@ snapshots:
+       '@smithy/util-utf8': 4.2.2
+       tslib: 2.8.1
+ 
++  '@aws-sdk/core@3.974.22':
++    dependencies:
++      '@aws-sdk/types': 3.973.13
++      '@aws-sdk/xml-builder': 3.972.30
++      '@aws/lambda-invoke-store': 0.2.3
++      '@smithy/core': 3.25.1
++      '@smithy/signature-v4': 5.5.1
++      '@smithy/types': 4.15.0
++      bowser: 2.11.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-cognito-identity@3.972.8':
+     dependencies:
+       '@aws-sdk/nested-clients': 3.996.5
+@@ -22510,6 +22633,14 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/credential-provider-env@3.972.48':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-http@3.525.0':
+     dependencies:
+       '@aws-sdk/types': 3.523.0
+@@ -22600,6 +22731,16 @@ snapshots:
+       '@smithy/util-stream': 4.5.17
+       tslib: 2.8.1
+ 
++  '@aws-sdk/credential-provider-http@3.972.50':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/fetch-http-handler': 5.5.1
++      '@smithy/node-http-handler': 4.8.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-ini@3.529.1(@aws-sdk/credential-provider-node@3.529.1)':
+     dependencies:
+       '@aws-sdk/client-sts': 3.529.1(@aws-sdk/credential-provider-node@3.529.1)
+@@ -22728,6 +22869,22 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/credential-provider-ini@3.972.55':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/credential-provider-env': 3.972.48
++      '@aws-sdk/credential-provider-http': 3.972.50
++      '@aws-sdk/credential-provider-login': 3.972.54
++      '@aws-sdk/credential-provider-process': 3.972.48
++      '@aws-sdk/credential-provider-sso': 3.972.54
++      '@aws-sdk/credential-provider-web-identity': 3.972.54
++      '@aws-sdk/nested-clients': 3.997.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/credential-provider-imds': 4.4.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-login@3.966.0':
+     dependencies:
+       '@aws-sdk/core': 3.966.0
+@@ -22754,6 +22911,15 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/credential-provider-login@3.972.54':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/nested-clients': 3.997.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-node@3.529.1':
+     dependencies:
+       '@aws-sdk/credential-provider-env': 3.523.0
+@@ -22875,6 +23041,20 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/credential-provider-node@3.972.57':
++    dependencies:
++      '@aws-sdk/credential-provider-env': 3.972.48
++      '@aws-sdk/credential-provider-http': 3.972.50
++      '@aws-sdk/credential-provider-ini': 3.972.55
++      '@aws-sdk/credential-provider-process': 3.972.48
++      '@aws-sdk/credential-provider-sso': 3.972.54
++      '@aws-sdk/credential-provider-web-identity': 3.972.54
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/credential-provider-imds': 4.4.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-process@3.523.0':
+     dependencies:
+       '@aws-sdk/types': 3.523.0
+@@ -22937,6 +23117,14 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/credential-provider-process@3.972.48':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-sso@3.529.1(@aws-sdk/credential-provider-node@3.529.1)':
+     dependencies:
+       '@aws-sdk/client-sso': 3.529.1
+@@ -23029,6 +23217,16 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/credential-provider-sso@3.972.54':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/nested-clients': 3.997.22
++      '@aws-sdk/token-providers': 3.1071.0
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-provider-web-identity@3.529.1(@aws-sdk/credential-provider-node@3.529.1)':
+     dependencies:
+       '@aws-sdk/client-sts': 3.529.1(@aws-sdk/credential-provider-node@3.529.1)
+@@ -23106,6 +23304,15 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/credential-provider-web-identity@3.972.54':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/nested-clients': 3.997.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/credential-providers@3.1002.0':
+     dependencies:
+       '@aws-sdk/client-cognito-identity': 3.1002.0
+@@ -23143,6 +23350,13 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/eventstream-handler-node@3.972.22':
++    dependencies:
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/lib-storage@3.726.1(@aws-sdk/client-s3@3.844.0)':
+     dependencies:
+       '@aws-sdk/client-s3': 3.844.0
+@@ -23180,6 +23394,13 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/middleware-eventstream@3.972.18':
++    dependencies:
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/middleware-expect-continue@3.840.0':
+     dependencies:
+       '@aws-sdk/types': 3.840.0
+@@ -23670,6 +23891,19 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/nested-clients@3.997.22':
++    dependencies:
++      '@aws-crypto/sha256-browser': 5.2.0
++      '@aws-crypto/sha256-js': 5.2.0
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/signature-v4-multi-region': 3.996.35
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/fetch-http-handler': 5.5.1
++      '@smithy/node-http-handler': 4.8.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/region-config-resolver@3.525.0':
+     dependencies:
+       '@aws-sdk/types': 3.523.0
+@@ -23740,6 +23974,13 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/signature-v4-multi-region@3.996.35':
++    dependencies:
++      '@aws-sdk/types': 3.973.13
++      '@smithy/signature-v4': 5.5.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/token-providers@3.1002.0':
+     dependencies:
+       '@aws-sdk/core': 3.973.17
+@@ -23752,6 +23993,15 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
++  '@aws-sdk/token-providers@3.1071.0':
++    dependencies:
++      '@aws-sdk/core': 3.974.22
++      '@aws-sdk/nested-clients': 3.997.22
++      '@aws-sdk/types': 3.973.13
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/token-providers@3.529.1(@aws-sdk/credential-provider-node@3.529.1)':
+     dependencies:
+       '@aws-sdk/client-sso-oidc': 3.529.1(@aws-sdk/credential-provider-node@3.529.1)
+@@ -23850,6 +24100,11 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@aws-sdk/types@3.973.13':
++    dependencies:
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@aws-sdk/types@3.973.4':
+     dependencies:
+       '@smithy/types': 4.13.0
+@@ -24047,6 +24302,12 @@ snapshots:
+       fast-xml-parser: 5.2.5
+       tslib: 2.8.1
+ 
++  '@aws-sdk/xml-builder@3.972.30':
++    dependencies:
++      '@smithy/types': 4.15.0
++      fast-xml-parser: 5.7.3
++      tslib: 2.8.1
++
+   '@aws-sdk/xml-builder@3.972.9':
+     dependencies:
+       '@smithy/types': 4.13.0
+@@ -27461,7 +27722,7 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
+-  '@langchain/community@0.3.49(7109e02ee7313de1ae9c7644f915b450)':
++  '@langchain/community@0.3.49(b2a96e3a13df408c2a8ba24f71e2ecde)':
+     dependencies:
+       '@browserbasehq/stagehand': 1.9.0(@playwright/test@1.49.1)(bufferutil@4.0.8)(deepmerge@4.3.1)(dotenv@16.4.5)(encoding@0.1.13)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(utf-8-validate@6.0.4)(zod@4.3.6)
+       '@ibm-cloud/watsonx-ai': 1.7.7
+@@ -27518,7 +27779,7 @@ snapshots:
+       crypto-js: 4.2.0
+       d3-dsv: 2.0.0
+       epub2: 3.0.2(ts-toolbelt@9.6.0)
+-      fast-xml-parser: 5.4.1
++      fast-xml-parser: 5.7.3
+       google-auth-library: 9.6.3(encoding@0.1.13)
+       html-to-text: 9.0.5
+       ignore: 5.3.1
+@@ -27563,7 +27824,7 @@ snapshots:
+       - handlebars
+       - peggy
+ 
+-  '@langchain/community@1.1.12(72e5206c4d1ed59dcf2c9f2ae0808b12)':
++  '@langchain/community@1.1.12(c8eeafc3275ed85dea8c8c0ccf3b3ee2)':
+     dependencies:
+       '@browserbasehq/stagehand': 1.9.0(@playwright/test@1.49.1)(bufferutil@4.0.8)(deepmerge@4.3.1)(dotenv@16.4.5)(encoding@0.1.13)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(utf-8-validate@6.0.4)(zod@4.3.6)
+       '@ibm-cloud/watsonx-ai': 1.7.7
+@@ -27615,7 +27876,7 @@ snapshots:
+       d3-dsv: 2.0.0
+       epub2: 3.0.2(ts-toolbelt@9.6.0)
+       faiss-node: 0.5.1
+-      fast-xml-parser: 5.4.1
++      fast-xml-parser: 5.7.3
+       google-auth-library: 9.6.3(encoding@0.1.13)
+       html-to-text: 9.0.5
+       ignore: 5.3.1
+@@ -27969,9 +28230,9 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  '@mem0/community@0.0.1(e748aecd5adaef8863109d5a998ca8de)':
++  '@mem0/community@0.0.1(f853550310033a33bb7daafa6c93b73e)':
+     dependencies:
+-      '@langchain/community': 0.3.49(7109e02ee7313de1ae9c7644f915b450)
++      '@langchain/community': 0.3.49(b2a96e3a13df408c2a8ba24f71e2ecde)
+       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       axios: 1.15.0(debug@4.3.4)
+       mem0ai: 2.1.16(@anthropic-ai/sdk@0.73.0(zod@4.3.6))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@1.14.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@qdrant/js-client-rest@1.17.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(groq-sdk@1.1.2)(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+@@ -28620,6 +28881,8 @@ snapshots:
+ 
+   '@noble/hashes@1.8.0': {}
+ 
++  '@nodable/entities@2.2.0': {}
++
+   '@nodelib/fs.scandir@2.1.5':
+     dependencies:
+       '@nodelib/fs.stat': 2.0.5
+@@ -30000,6 +30263,12 @@ snapshots:
+       '@smithy/uuid': 1.1.2
+       tslib: 2.8.1
+ 
++  '@smithy/core@3.25.1':
++    dependencies:
++      '@aws-crypto/crc32': 5.2.0
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@smithy/core@3.7.0':
+     dependencies:
+       '@smithy/middleware-serde': 4.2.12
+@@ -30066,6 +30335,12 @@ snapshots:
+       '@smithy/url-parser': 4.2.11
+       tslib: 2.8.1
+ 
++  '@smithy/credential-provider-imds@4.4.1':
++    dependencies:
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@smithy/eventstream-codec@2.1.4':
+     dependencies:
+       '@aws-crypto/crc32': 3.0.0
+@@ -30173,6 +30448,12 @@ snapshots:
+       '@smithy/util-base64': 4.3.2
+       tslib: 2.8.1
+ 
++  '@smithy/fetch-http-handler@5.5.1':
++    dependencies:
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@smithy/hash-blob-browser@4.0.4':
+     dependencies:
+       '@smithy/chunked-blob-reader': 5.0.0
+@@ -30537,6 +30818,12 @@ snapshots:
+       '@smithy/types': 4.13.0
+       tslib: 2.8.1
+ 
++  '@smithy/node-http-handler@4.8.1':
++    dependencies:
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@smithy/property-provider@2.1.4':
+     dependencies:
+       '@smithy/types': 2.11.0
+@@ -30731,6 +31018,12 @@ snapshots:
+       '@smithy/util-utf8': 4.2.2
+       tslib: 2.8.1
+ 
++  '@smithy/signature-v4@5.5.1':
++    dependencies:
++      '@smithy/core': 3.25.1
++      '@smithy/types': 4.15.0
++      tslib: 2.8.1
++
+   '@smithy/smithy-client@2.4.4':
+     dependencies:
+       '@smithy/middleware-endpoint': 2.4.6
+@@ -30792,6 +31085,10 @@ snapshots:
+     dependencies:
+       tslib: 2.8.1
+ 
++  '@smithy/types@4.15.0':
++    dependencies:
++      tslib: 2.8.1
++
+   '@smithy/types@4.3.1':
+     dependencies:
+       tslib: 2.8.1
+@@ -33152,6 +33449,8 @@ snapshots:
+       normalize-path: 3.0.0
+       picomatch: 2.3.1
+ 
++  anynum@1.0.1: {}
++
+   apify-client@2.9.3:
+     dependencies:
+       '@apify/consts': 2.26.0
+@@ -36664,6 +36963,11 @@ snapshots:
+ 
+   fast-xml-builder@1.0.0: {}
+ 
++  fast-xml-builder@1.2.0:
++    dependencies:
++      path-expression-matcher: 1.6.0
++      xml-naming: 0.1.0
++
+   fast-xml-parser@4.2.5:
+     dependencies:
+       strnum: 1.0.5
+@@ -36681,6 +36985,13 @@ snapshots:
+       fast-xml-builder: 1.0.0
+       strnum: 2.2.0
+ 
++  fast-xml-parser@5.7.3:
++    dependencies:
++      '@nodable/entities': 2.2.0
++      fast-xml-builder: 1.2.0
++      path-expression-matcher: 1.6.0
++      strnum: 2.4.1
++
+   fastest-levenshtein@1.0.16: {}
+ 
+   fastq@1.17.1:
+@@ -42274,6 +42585,8 @@ snapshots:
+ 
+   path-exists@4.0.0: {}
+ 
++  path-expression-matcher@1.6.0: {}
++
+   path-is-absolute@1.0.1: {}
+ 
+   path-key@1.0.0: {}
+@@ -45305,6 +45618,10 @@ snapshots:
+ 
+   strnum@2.2.0: {}
+ 
++  strnum@2.4.1:
++    dependencies:
++      anynum: 1.0.1
++
+   strtok3@6.3.0:
+     dependencies:
+       '@tokenizer/token': 0.3.0
+@@ -47316,6 +47633,8 @@ snapshots:
+ 
+   xml-name-validator@4.0.0: {}
+ 
++  xml-naming@0.1.0: {}
++
+   xml2js@0.2.8:
+     dependencies:
+       sax: 0.5.8
+
+From cf9480cc0765c51cc6f9e7e3995510898cf9b655 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 21:03:11 +0530
+Subject: [PATCH 08/18] fix(components): use instanceof Readable for Polly
+ stream check
+
+---
+ packages/components/src/textToSpeech.ts | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index 54f7632e34a..e60486c4211 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -139,9 +139,8 @@ export const convertTextToSpeechStream = async (
+ 
+                             // AudioStream from Polly is a Readable in Node.js
+                             const pollyStream = pollyResponse.AudioStream as unknown as Readable
+-                            const stream = Readable.isReadable(pollyStream)
+-                                ? pollyStream
+-                                : Readable.fromWeb(pollyStream as unknown as ReadableStream)
++                            const stream =
++                                pollyStream instanceof Readable ? pollyStream : Readable.fromWeb(pollyStream as unknown as ReadableStream)
+ 
+                             await processStreamWithRateLimit(stream, onChunk, onEnd, resolve, reject, 640, 20, abortController, () => {
+                                 streamDestroyed = true
+
+From 04755a751c8118d73076d5ca090be960d874d191 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 21:05:15 +0530
+Subject: [PATCH 09/18] fix(components): lowercase STT file extension and
+ cleanup orphaned jobs on failure
+
+---
+ packages/components/src/speechToText.ts | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index d52ac911140..fc98ecd9e47 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -11,7 +11,8 @@ import {
+     StartTranscriptionJobCommand,
+     GetTranscriptionJobCommand,
+     TranscriptionJobStatus,
+-    MediaFormat
++    MediaFormat,
++    DeleteTranscriptionJobCommand
+ } from '@aws-sdk/client-transcribe'
+ 
+ const SpeechToTextType = {
+@@ -156,8 +157,9 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                 const transcribeClient = new TranscribeClient(awsClientConfig)
+ 
+                 // Generate unique file name and upload to S3
+-                const fileExtension = upload.name.split('.').pop() || 'webm'
+-                const s3Key = `flowise-stt-temp/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExtension}`
++                const fileExtension = ((upload.name || '').split('.').pop() || 'webm').toLowerCase()
++                const s3Key = 'flowise-stt-temp/' + Date.now() + '-' + Math.random().toString(36).substring(2) + '.' + fileExtension
++                const jobName = 'flowise-' + Date.now() + '-' + Math.random().toString(36).substring(2)
+ 
+                 try {
+                     await s3Client.send(
+@@ -182,7 +184,6 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                     const mediaFormat = (mediaFormatMap[fileExtension] || 'webm') as MediaFormat
+ 
+                     // Start transcription job
+-                    const jobName = `flowise-${Date.now()}-${Math.random().toString(36).substring(2)}`
+                     await transcribeClient.send(
+                         new StartTranscriptionJobCommand({
+                             TranscriptionJobName: jobName,
+@@ -256,6 +257,13 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                                 Key: s3Key
+                             })
+                         )
++                        if (jobName) {
++                            await transcribeClient.send(
++                                new DeleteTranscriptionJobCommand({
++                                    TranscriptionJobName: jobName
++                                })
++                            )
++                        }
+                     } catch {
+                         // Non-fatal cleanup error
+                     }
+
+From 73afef457257ac9b69681d82b790b66eae528431 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 21:09:20 +0530
+Subject: [PATCH 10/18] fix(components): separate S3 and Transcribe job cleanup
+ into distinct try blocks and clean up successful jobs
+
+---
+ packages/components/src/speechToText.ts | 29 ++++++++++++++++++-------
+ 1 file changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index fc98ecd9e47..f3017290834 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -233,7 +233,7 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                         // IN_PROGRESS or QUEUED — continue polling
+                     }
+ 
+-                    // Clean up: delete temporary S3 file
++                    // Clean up: delete temporary S3 file and Transcribe job
+                     try {
+                         await s3Client.send(
+                             new DeleteObjectCommand({
+@@ -245,6 +245,16 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                         // Non-fatal: log but don't fail if cleanup fails
+                     }
+ 
++                    try {
++                        await transcribeClient.send(
++                            new DeleteTranscriptionJobCommand({
++                                TranscriptionJobName: jobName
++                            })
++                        )
++                    } catch {
++                        // Non-fatal
++                    }
++
+                     if (transcriptText) {
+                         return transcriptText
+                     }
+@@ -257,13 +267,16 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                                 Key: s3Key
+                             })
+                         )
+-                        if (jobName) {
+-                            await transcribeClient.send(
+-                                new DeleteTranscriptionJobCommand({
+-                                    TranscriptionJobName: jobName
+-                                })
+-                            )
+-                        }
++                    } catch {
++                        // Non-fatal cleanup error
++                    }
++
++                    try {
++                        await transcribeClient.send(
++                            new DeleteTranscriptionJobCommand({
++                                TranscriptionJobName: jobName
++                            })
++                        )
+                     } catch {
+                         // Non-fatal cleanup error
+                     }
+
+From 9704f260d7837211328a9ecd5ae4f0d8d534303e Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sat, 20 Jun 2026 21:16:21 +0530
+Subject: [PATCH 11/18] feat(components): add native support for .m4a audio
+ files in AWS Transcribe STT
+
+---
+ packages/components/src/speechToText.ts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index f3017290834..32b0811aaa5 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -176,6 +176,7 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                         webm: 'webm',
+                         mp3: 'mp3',
+                         mp4: 'mp4',
++                        m4a: 'm4a',
+                         wav: 'wav',
+                         flac: 'flac',
+                         ogg: 'ogg',
+
+From 9dce32c52953905c7f7147395c747ebb853121f2 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sun, 5 Jul 2026 12:19:27 +0530
+Subject: [PATCH 12/18] feat(components): add automatic language identification
+ support for AWS Transcribe STT
+
+- Add identifyLanguage and languageOptions config parameters
+- Dynamically build StartTranscriptionJobCommand payload:
+  - When identifyLanguage=true: set IdentifyLanguage flag and optional
+    LanguageOptions array, omit LanguageCode
+  - When identifyLanguage=false: use standard LanguageCode property
+- Import StartTranscriptionJobCommandInput and LanguageCode types
+  for proper TypeScript type safety
+- Parse comma-separated languageOptions string into LanguageCode array
+  with trimming and empty-value filtering
+---
+ packages/components/src/speechToText.ts | 41 ++++++++++++++++++-------
+ 1 file changed, 30 insertions(+), 11 deletions(-)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index 32b0811aaa5..13bc5d6aec2 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -14,6 +14,7 @@ import {
+     MediaFormat,
+     DeleteTranscriptionJobCommand
+ } from '@aws-sdk/client-transcribe'
++import type { StartTranscriptionJobCommandInput, LanguageCode } from '@aws-sdk/client-transcribe'
+ 
+ const SpeechToTextType = {
+     OPENAI_WHISPER: 'openAIWhisper',
+@@ -138,7 +139,8 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+             case SpeechToTextType.AWS_TRANSCRIBE: {
+                 const region = speechToTextConfig.region || 'us-east-1'
+                 const s3BucketName = speechToTextConfig.s3BucketName as string
+-                const languageCode = speechToTextConfig.languageCode || 'en-US'
++                const identifyLanguage = speechToTextConfig.identifyLanguage === true || speechToTextConfig.identifyLanguage === 'true'
++                const languageOptions = speechToTextConfig.languageOptions as string | undefined
+ 
+                 if (!s3BucketName) {
+                     throw new Error('S3 Bucket Name is required for AWS Transcribe')
+@@ -184,17 +186,34 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                     }
+                     const mediaFormat = (mediaFormatMap[fileExtension] || 'webm') as MediaFormat
+ 
++                    // Dynamically build the transcription job payload
++                    const transcriptionJobInput: StartTranscriptionJobCommandInput = {
++                        TranscriptionJobName: jobName,
++                        Media: {
++                            MediaFileUri: `s3://${s3BucketName}/${s3Key}`
++                        },
++                        MediaFormat: mediaFormat
++                    }
++
++                    if (identifyLanguage) {
++                        // Automatic language identification mode — LanguageCode must NOT be set
++                        transcriptionJobInput.IdentifyLanguage = true
++                        if (languageOptions) {
++                            const parsedLanguageOptions = languageOptions
++                                .split(',')
++                                .map((code) => code.trim())
++                                .filter((code) => code.length > 0)
++                            if (parsedLanguageOptions.length > 0) {
++                                transcriptionJobInput.LanguageOptions = parsedLanguageOptions as LanguageCode[]
++                            }
++                        }
++                    } else {
++                        // Standard mode — use a single LanguageCode
++                        transcriptionJobInput.LanguageCode = (speechToTextConfig.languageCode || 'en-US') as LanguageCode
++                    }
++
+                     // Start transcription job
+-                    await transcribeClient.send(
+-                        new StartTranscriptionJobCommand({
+-                            TranscriptionJobName: jobName,
+-                            LanguageCode: languageCode,
+-                            Media: {
+-                                MediaFileUri: `s3://${s3BucketName}/${s3Key}`
+-                            },
+-                            MediaFormat: mediaFormat
+-                        })
+-                    )
++                    await transcribeClient.send(new StartTranscriptionJobCommand(transcriptionJobInput))
+ 
+                     // Poll for completion with 60 second timeout
+                     const POLL_INTERVAL_MS = 3000
+
+From a0708a00ddb688a07ba083443d08cc509898362c Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sun, 5 Jul 2026 12:19:59 +0530
+Subject: [PATCH 13/18] feat(ui): add automatic language identification UI for
+ AWS Transcribe STT
+
+---
+ .../ui-component/extended/SpeechToText.jsx    | 35 +++++++++++++++++--
+ 1 file changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index 8f5cb6deec2..d7e456708c6 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -265,7 +265,27 @@ const speechToTextProviders = {
+                 type: 'string',
+                 description: 'The language code of the audio (e.g., en-US, es-ES, fr-FR)',
+                 placeholder: 'en-US',
+-                optional: true
++                optional: true,
++                show: { identifyLanguage: false }
++            },
++            {
++                label: 'Automatic Language Identification',
++                name: 'identifyLanguage',
++                type: 'boolean',
++                default: false,
++                optional: true,
++                description:
++                    'If enabled, Amazon Transcribe will automatically identify the language spoken in the audio.'
++            },
++            {
++                label: 'Language Options',
++                name: 'languageOptions',
++                type: 'string',
++                optional: true,
++                description:
++                    'Comma-separated list of language codes to restrict detection (e.g., en-US, es-ES, fr-FR). Improves accuracy and latency when Identify Language is enabled.',
++                placeholder: 'en-US, es-ES, fr-FR',
++                show: { identifyLanguage: true }
+             },
+             {
+                 label: 'S3 Bucket Name',
+@@ -457,8 +477,17 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
+                             }
+                         />
+                     </ListItem>
+-                    {speechToTextProviders[selectedProvider].inputs.map((inputParam, index) => (
+-                        <Box key={index} sx={{ p: 2 }}>
++                    {speechToTextProviders[selectedProvider].inputs
++                        .filter((inputParam) => {
++                            if (!inputParam.show) return true
++                            const providerConfig = speechToText[selectedProvider] || {}
++                            return Object.entries(inputParam.show).every(([key, value]) => {
++                                const currentValue = providerConfig[key] ?? false
++                                return currentValue === value
++                            })
++                        })
++                        .map((inputParam, index) => (
++                        <Box key={inputParam.name || index} sx={{ p: 2 }}>
+                             <div style={{ display: 'flex', flexDirection: 'row' }}>
+                                 <Typography>
+                                     {inputParam.label}
+
+From 81b35703f7e9f38beebb7972dc344c02cc654a83 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sun, 5 Jul 2026 12:20:09 +0530
+Subject: [PATCH 14/18] feat(components): add European Spanish voices for
+ Amazon Polly TTS
+
+---
+ packages/components/src/textToSpeech.ts | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index e60486c4211..c9d13246ee0 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -303,7 +303,9 @@ export const getVoices = async (provider: string, credentialId: string, options:
+                 { id: 'Pedro', name: 'Pedro (Male, US Spanish)' },
+                 { id: 'Léa', name: 'Léa (Female, French)' },
+                 { id: 'Vicki', name: 'Vicki (Female, German)' },
+-                { id: 'Daniel', name: 'Daniel (Male, German)' }
++                { id: 'Daniel', name: 'Daniel (Male, German)' },
++                { id: 'Lucia', name: 'Lucia (Female, European Spanish)' },
++                { id: 'Sergio', name: 'Sergio (Male, European Spanish)' }
+             ]
+ 
+         default:
+
+From e153767d9c75b4a03c1796b5bea558ef0af7a5b3 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Sun, 5 Jul 2026 12:26:32 +0530
+Subject: [PATCH 15/18] style(ui): fix prettier formatting issues in
+ SpeechToText
+
+---
+ .../ui-component/extended/SpeechToText.jsx    | 117 +++++++++---------
+ 1 file changed, 58 insertions(+), 59 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index d7e456708c6..383a3983ade 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -274,8 +274,7 @@ const speechToTextProviders = {
+                 type: 'boolean',
+                 default: false,
+                 optional: true,
+-                description:
+-                    'If enabled, Amazon Transcribe will automatically identify the language spoken in the audio.'
++                description: 'If enabled, Amazon Transcribe will automatically identify the language spoken in the audio.'
+             },
+             {
+                 label: 'Language Options',
+@@ -487,64 +486,64 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
+                             })
+                         })
+                         .map((inputParam, index) => (
+-                        <Box key={inputParam.name || index} sx={{ p: 2 }}>
+-                            <div style={{ display: 'flex', flexDirection: 'row' }}>
+-                                <Typography>
+-                                    {inputParam.label}
+-                                    {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
+-                                    {inputParam.description && (
+-                                        <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />
+-                                    )}
+-                                </Typography>
+-                            </div>
+-                            {inputParam.type === 'credential' && (
+-                                <CredentialInputHandler
+-                                    key={speechToText[selectedProvider]?.credentialId}
+-                                    data={
+-                                        speechToText[selectedProvider]?.credentialId
+-                                            ? { credential: speechToText[selectedProvider].credentialId }
+-                                            : {}
+-                                    }
+-                                    inputParam={inputParam}
+-                                    onSelect={(newValue) => setValue(newValue, selectedProvider, 'credentialId')}
+-                                />
+-                            )}
+-                            {inputParam.type === 'boolean' && (
+-                                <SwitchInput
+-                                    onChange={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
+-                                    value={
+-                                        speechToText[selectedProvider]
+-                                            ? speechToText[selectedProvider][inputParam.name]
+-                                            : inputParam.default ?? false
+-                                    }
+-                                />
+-                            )}
+-                            {(inputParam.type === 'string' || inputParam.type === 'password' || inputParam.type === 'number') && (
+-                                <Input
+-                                    inputParam={inputParam}
+-                                    onChange={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
+-                                    value={
+-                                        speechToText[selectedProvider]
+-                                            ? speechToText[selectedProvider][inputParam.name]
+-                                            : inputParam.default ?? ''
+-                                    }
+-                                />
+-                            )}
++                            <Box key={inputParam.name || index} sx={{ p: 2 }}>
++                                <div style={{ display: 'flex', flexDirection: 'row' }}>
++                                    <Typography>
++                                        {inputParam.label}
++                                        {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
++                                        {inputParam.description && (
++                                            <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />
++                                        )}
++                                    </Typography>
++                                </div>
++                                {inputParam.type === 'credential' && (
++                                    <CredentialInputHandler
++                                        key={speechToText[selectedProvider]?.credentialId}
++                                        data={
++                                            speechToText[selectedProvider]?.credentialId
++                                                ? { credential: speechToText[selectedProvider].credentialId }
++                                                : {}
++                                        }
++                                        inputParam={inputParam}
++                                        onSelect={(newValue) => setValue(newValue, selectedProvider, 'credentialId')}
++                                    />
++                                )}
++                                {inputParam.type === 'boolean' && (
++                                    <SwitchInput
++                                        onChange={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
++                                        value={
++                                            speechToText[selectedProvider]
++                                                ? speechToText[selectedProvider][inputParam.name]
++                                                : inputParam.default ?? false
++                                        }
++                                    />
++                                )}
++                                {(inputParam.type === 'string' || inputParam.type === 'password' || inputParam.type === 'number') && (
++                                    <Input
++                                        inputParam={inputParam}
++                                        onChange={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
++                                        value={
++                                            speechToText[selectedProvider]
++                                                ? speechToText[selectedProvider][inputParam.name]
++                                                : inputParam.default ?? ''
++                                        }
++                                    />
++                                )}
+ 
+-                            {inputParam.type === 'options' && (
+-                                <Dropdown
+-                                    name={inputParam.name}
+-                                    options={inputParam.options}
+-                                    onSelect={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
+-                                    value={
+-                                        speechToText[selectedProvider]
+-                                            ? speechToText[selectedProvider][inputParam.name]
+-                                            : inputParam.default ?? 'choose an option'
+-                                    }
+-                                />
+-                            )}
+-                        </Box>
+-                    ))}
++                                {inputParam.type === 'options' && (
++                                    <Dropdown
++                                        name={inputParam.name}
++                                        options={inputParam.options}
++                                        onSelect={(newValue) => setValue(newValue, selectedProvider, inputParam.name)}
++                                        value={
++                                            speechToText[selectedProvider]
++                                                ? speechToText[selectedProvider][inputParam.name]
++                                                : inputParam.default ?? 'choose an option'
++                                        }
++                                    />
++                                )}
++                            </Box>
++                        ))}
+                 </>
+             )}
+             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
+
+From 9dbf38be9144c3432dc33cf20d81afd908d9af41 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Mon, 13 Jul 2026 20:05:29 +0530
+Subject: [PATCH 16/18] feat(tts): replace Polly SynthesizeSpeechCommand with
+ bidirectional streaming API
+
+Use StartSpeechSynthesisStreamCommand with HTTP/2 (NodeHttp2Handler) to
+remove the 3,000 character limit on Amazon Polly TTS. Text is split into
+sentence chunks via an async generator and streamed incrementally to Polly.
+Engine auto-fallbacks to 'generative' for unsupported engine types.
+---
+ packages/components/src/textToSpeech.ts | 110 ++++++++++++++++++++----
+ 1 file changed, 95 insertions(+), 15 deletions(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index c9d13246ee0..e911ef72e5d 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -2,7 +2,14 @@ import { ICommonObject } from './Interface'
+ import { getCredentialData } from './utils'
+ import OpenAI from 'openai'
+ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
+-import { PollyClient, SynthesizeSpeechCommand, Engine, VoiceId } from '@aws-sdk/client-polly'
++import {
++    PollyClient,
++    StartSpeechSynthesisStreamCommand,
++    Engine,
++    VoiceId,
++    type StartSpeechSynthesisStreamActionStream
++} from '@aws-sdk/client-polly'
++import { NodeHttp2Handler } from '@smithy/node-http-handler'
+ import { Readable } from 'node:stream'
+ import type { ReadableStream } from 'node:stream/web'
+ 
+@@ -12,6 +19,37 @@ const TextToSpeechType = {
+     AMAZON_POLLY_TTS: 'amazonPolly'
+ }
+ 
++/**
++ * Splits input text into sentence-boundary chunks and yields them as
++ * StartSpeechSynthesisStreamActionStream TextEvent payloads.
++ *
++ * Chunking strategy: split on sentence-ending punctuation (.!?) followed by
++ * whitespace, keeping the punctuation attached to the preceding sentence.
++ * Each chunk is sent as a separate TextEvent so Polly can begin synthesizing
++ * immediately without waiting for the full text.
++ */
++async function* createTextEventStream(text: string): AsyncGenerator<StartSpeechSynthesisStreamActionStream> {
++    // Split on sentence boundaries (., !, ?) followed by whitespace while
++    // keeping the delimiter attached to the preceding chunk.
++    const sentences = text.match(/[^.!?]*[.!?]+[\s]*/g)
++    const chunks = sentences && sentences.length > 0 ? sentences : [text]
++
++    for (const chunk of chunks) {
++        const trimmed = chunk.trim()
++        if (trimmed.length === 0) continue
++        yield {
++            TextEvent: {
++                Text: trimmed
++            }
++        } as StartSpeechSynthesisStreamActionStream
++    }
++
++    // Signal end-of-input to Polly
++    yield {
++        CloseStreamEvent: {}
++    } as StartSpeechSynthesisStreamActionStream
++}
++
+ export const convertTextToSpeechStream = async (
+     text: string,
+     textToSpeechConfig: ICommonObject,
+@@ -107,7 +145,12 @@ export const convertTextToSpeechStream = async (
+                             onStart('mp3')
+ 
+                             const region = textToSpeechConfig.region || 'us-east-1'
+-                            const pollyClientConfig: Record<string, any> = { region }
++                            const pollyClientConfig: Record<string, any> = {
++                                region,
++                                // Bidirectional streaming requires HTTP/2; the default HTTP/1.1
++                                // handler causes the request to hang indefinitely.
++                                requestHandler: new NodeHttp2Handler()
++                            }
+ 
+                             if (credentialData.awsKey && credentialData.awsSecret) {
+                                 pollyClientConfig.credentials = {
+@@ -120,27 +163,64 @@ export const convertTextToSpeechStream = async (
+                             const pollyClient = new PollyClient(pollyClientConfig)
+ 
+                             const voiceId = (textToSpeechConfig.voice || 'Joanna') as VoiceId
+-                            const engine = (textToSpeechConfig.engine || 'neural') as Engine
++                            const configuredEngine = (textToSpeechConfig.engine || 'neural') as Engine
+ 
+-                            const command = new SynthesizeSpeechCommand({
+-                                Text: text,
++                            // Bidirectional streaming only supports 'generative' and 'long-form' engines.
++                            // Fall back to 'generative' for unsupported engines (standard, neural).
++                            const streamingEngine: Engine =
++                                configuredEngine === 'long-form' || configuredEngine === 'generative'
++                                    ? configuredEngine
++                                    : ('generative' as Engine)
++
++                            const command = new StartSpeechSynthesisStreamCommand({
++                                Engine: streamingEngine,
+                                 OutputFormat: 'mp3',
++                                SampleRate: textToSpeechConfig.sampleRate || '24000',
+                                 VoiceId: voiceId,
+-                                Engine: engine
++                                ActionStream: createTextEventStream(text)
+                             })
+ 
+-                            const pollyResponse = await pollyClient.send(command, {
+-                                abortSignal: abortController.signal
+-                            })
++                            const pollyResponse = await pollyClient.send(command)
++
++                            if (!pollyResponse.EventStream) {
++                                throw new Error('Amazon Polly returned no event stream')
++                            }
++
++                            // Collect audio chunks from the bidirectional event stream
++                            const audioChunks: Buffer[] = []
++
++                            for await (const event of pollyResponse.EventStream) {
++                                // Check for abort between events
++                                if (abortController.signal.aborted) {
++                                    throw new Error('TTS generation aborted')
++                                }
++
++                                if ('AudioEvent' in event && event.AudioEvent?.AudioChunk) {
++                                    audioChunks.push(Buffer.from(event.AudioEvent.AudioChunk))
++                                }
++
++                                // Re-throw service-side errors surfaced as event stream members
++                                if ('ValidationException' in event && event.ValidationException) {
++                                    throw new Error(`Polly ValidationException: ${event.ValidationException.message}`)
++                                }
++                                if ('ServiceFailureException' in event && event.ServiceFailureException) {
++                                    throw new Error(`Polly ServiceFailure: ${event.ServiceFailureException.message}`)
++                                }
++                                if ('ThrottlingException' in event && event.ThrottlingException) {
++                                    throw new Error(`Polly ThrottlingException: ${event.ThrottlingException.message}`)
++                                }
++                                if ('ServiceQuotaExceededException' in event && event.ServiceQuotaExceededException) {
++                                    throw new Error(`Polly ServiceQuotaExceeded: ${event.ServiceQuotaExceededException.message}`)
++                                }
++                            }
+ 
+-                            if (!pollyResponse.AudioStream) {
+-                                throw new Error('Amazon Polly returned no audio stream')
++                            if (audioChunks.length === 0) {
++                                throw new Error('Amazon Polly returned no audio data')
+                             }
+ 
+-                            // AudioStream from Polly is a Readable in Node.js
+-                            const pollyStream = pollyResponse.AudioStream as unknown as Readable
+-                            const stream =
+-                                pollyStream instanceof Readable ? pollyStream : Readable.fromWeb(pollyStream as unknown as ReadableStream)
++                            // Concatenate all chunks and wrap in a Readable for the rate-limited streamer
++                            const concatenatedAudio = Buffer.concat(audioChunks)
++                            const stream = Readable.from(concatenatedAudio)
+ 
+                             await processStreamWithRateLimit(stream, onChunk, onEnd, resolve, reject, 640, 20, abortController, () => {
+                                 streamDestroyed = true
+
+From b0faf90ff45c9f9b286d708a38f7b5758d143e47 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Mon, 13 Jul 2026 20:14:18 +0530
+Subject: [PATCH 17/18] feat: optimize Amazon Polly text-to-speech by streaming
+ audio chunks in real-time to reduce latency
+
+---
+ packages/components/src/textToSpeech.ts | 20 +++++++++-----------
+ 1 file changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index e911ef72e5d..28e7ecd06ae 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -186,8 +186,10 @@ export const convertTextToSpeechStream = async (
+                                 throw new Error('Amazon Polly returned no event stream')
+                             }
+ 
+-                            // Collect audio chunks from the bidirectional event stream
+-                            const audioChunks: Buffer[] = []
++                            // Stream audio chunks directly to the frontend as they arrive
++                            // from Polly — no buffering. This gives true real-time playback
++                            // with ~200ms time-to-first-byte instead of waiting for full synthesis.
++                            let receivedAudio = false
+ 
+                             for await (const event of pollyResponse.EventStream) {
+                                 // Check for abort between events
+@@ -196,7 +198,8 @@ export const convertTextToSpeechStream = async (
+                                 }
+ 
+                                 if ('AudioEvent' in event && event.AudioEvent?.AudioChunk) {
+-                                    audioChunks.push(Buffer.from(event.AudioEvent.AudioChunk))
++                                    receivedAudio = true
++                                    onChunk(Buffer.from(event.AudioEvent.AudioChunk))
+                                 }
+ 
+                                 // Re-throw service-side errors surfaced as event stream members
+@@ -214,17 +217,12 @@ export const convertTextToSpeechStream = async (
+                                 }
+                             }
+ 
+-                            if (audioChunks.length === 0) {
++                            if (!receivedAudio) {
+                                 throw new Error('Amazon Polly returned no audio data')
+                             }
+ 
+-                            // Concatenate all chunks and wrap in a Readable for the rate-limited streamer
+-                            const concatenatedAudio = Buffer.concat(audioChunks)
+-                            const stream = Readable.from(concatenatedAudio)
+-
+-                            await processStreamWithRateLimit(stream, onChunk, onEnd, resolve, reject, 640, 20, abortController, () => {
+-                                streamDestroyed = true
+-                            })
++                            onEnd()
++                            resolve()
+                             break
+                         }
+                     }
+
+From 9e85b2cd146d56b9e8cc48fb1a54ee31b7fed820 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Mon, 13 Jul 2026 20:23:02 +0530
+Subject: [PATCH 18/18] feat(tts): batch long text into multiple Polly
+ streaming sessions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split text into ≤2500-char batches at sentence boundaries to avoid
+Polly per-session Synthesis duration limit exceeded error. Each batch
+runs as a separate streaming session with audio chunks streamed
+directly to the frontend as they arrive for real-time playback.
+---
+ packages/components/src/textToSpeech.ts | 143 +++++++++++++++---------
+ 1 file changed, 88 insertions(+), 55 deletions(-)
+
+diff --git a/packages/components/src/textToSpeech.ts b/packages/components/src/textToSpeech.ts
+index 28e7ecd06ae..3aec4b7a057 100644
+--- a/packages/components/src/textToSpeech.ts
++++ b/packages/components/src/textToSpeech.ts
+@@ -20,31 +20,58 @@ const TextToSpeechType = {
+ }
+ 
+ /**
+- * Splits input text into sentence-boundary chunks and yields them as
+- * StartSpeechSynthesisStreamActionStream TextEvent payloads.
+- *
+- * Chunking strategy: split on sentence-ending punctuation (.!?) followed by
+- * whitespace, keeping the punctuation attached to the preceding sentence.
+- * Each chunk is sent as a separate TextEvent so Polly can begin synthesizing
+- * immediately without waiting for the full text.
++ * Maximum characters per streaming session batch.
++ * Polly's bidirectional streaming has a per-session audio duration limit (~5 min).
++ * Keeping each batch under ~2500 chars ensures we stay well within that limit
++ * while still batching enough text for natural-sounding synthesis.
+  */
+-async function* createTextEventStream(text: string): AsyncGenerator<StartSpeechSynthesisStreamActionStream> {
+-    // Split on sentence boundaries (., !, ?) followed by whitespace while
+-    // keeping the delimiter attached to the preceding chunk.
++const POLLY_STREAMING_MAX_BATCH_CHARS = 2500
++
++/**
++ * Splits the full text into batches of sentences, each batch staying under
++ * POLLY_STREAMING_MAX_BATCH_CHARS. This avoids Polly's per-session
++ * "Synthesis duration limit exceeded" error for very long texts.
++ */
++function splitTextIntoBatches(text: string): string[] {
+     const sentences = text.match(/[^.!?]*[.!?]+[\s]*/g)
+-    const chunks = sentences && sentences.length > 0 ? sentences : [text]
++    // If no sentence boundaries found, split by newlines or return as-is
++    const parts = sentences && sentences.length > 0 ? sentences : text.split(/\n+/).filter((s) => s.trim().length > 0)
++
++    const batches: string[] = []
++    let currentBatch = ''
+ 
+-    for (const chunk of chunks) {
+-        const trimmed = chunk.trim()
++    for (const part of parts) {
++        const trimmed = part.trim()
+         if (trimmed.length === 0) continue
+-        yield {
+-            TextEvent: {
+-                Text: trimmed
+-            }
+-        } as StartSpeechSynthesisStreamActionStream
++
++        // If adding this sentence would exceed the limit, finalize the current batch
++        if (currentBatch.length > 0 && currentBatch.length + trimmed.length + 1 > POLLY_STREAMING_MAX_BATCH_CHARS) {
++            batches.push(currentBatch.trim())
++            currentBatch = ''
++        }
++
++        currentBatch += (currentBatch.length > 0 ? ' ' : '') + trimmed
++    }
++
++    // Push any remaining text
++    if (currentBatch.trim().length > 0) {
++        batches.push(currentBatch.trim())
+     }
+ 
+-    // Signal end-of-input to Polly
++    return batches.length > 0 ? batches : [text]
++}
++
++/**
++ * Creates an async generator that yields TextEvent payloads for a single
++ * batch of text, then signals end-of-input with CloseStreamEvent.
++ */
++async function* createTextEventStream(batchText: string): AsyncGenerator<StartSpeechSynthesisStreamActionStream> {
++    yield {
++        TextEvent: {
++            Text: batchText
++        }
++    } as StartSpeechSynthesisStreamActionStream
++
+     yield {
+         CloseStreamEvent: {}
+     } as StartSpeechSynthesisStreamActionStream
+@@ -172,52 +199,58 @@ export const convertTextToSpeechStream = async (
+                                     ? configuredEngine
+                                     : ('generative' as Engine)
+ 
+-                            const command = new StartSpeechSynthesisStreamCommand({
+-                                Engine: streamingEngine,
+-                                OutputFormat: 'mp3',
+-                                SampleRate: textToSpeechConfig.sampleRate || '24000',
+-                                VoiceId: voiceId,
+-                                ActionStream: createTextEventStream(text)
+-                            })
+-
+-                            const pollyResponse = await pollyClient.send(command)
+-
+-                            if (!pollyResponse.EventStream) {
+-                                throw new Error('Amazon Polly returned no event stream')
+-                            }
+-
+-                            // Stream audio chunks directly to the frontend as they arrive
+-                            // from Polly — no buffering. This gives true real-time playback
+-                            // with ~200ms time-to-first-byte instead of waiting for full synthesis.
+-                            let receivedAudio = false
++                            // Split text into batches to avoid Polly's per-session
++                            // "Synthesis duration limit exceeded" error on long texts.
++                            const textBatches = splitTextIntoBatches(text)
++                            let receivedAnyAudio = false
+ 
+-                            for await (const event of pollyResponse.EventStream) {
+-                                // Check for abort between events
++                            for (const batch of textBatches) {
+                                 if (abortController.signal.aborted) {
+                                     throw new Error('TTS generation aborted')
+                                 }
+ 
+-                                if ('AudioEvent' in event && event.AudioEvent?.AudioChunk) {
+-                                    receivedAudio = true
+-                                    onChunk(Buffer.from(event.AudioEvent.AudioChunk))
+-                                }
++                                const command = new StartSpeechSynthesisStreamCommand({
++                                    Engine: streamingEngine,
++                                    OutputFormat: 'mp3',
++                                    SampleRate: textToSpeechConfig.sampleRate || '24000',
++                                    VoiceId: voiceId,
++                                    ActionStream: createTextEventStream(batch)
++                                })
+ 
+-                                // Re-throw service-side errors surfaced as event stream members
+-                                if ('ValidationException' in event && event.ValidationException) {
+-                                    throw new Error(`Polly ValidationException: ${event.ValidationException.message}`)
+-                                }
+-                                if ('ServiceFailureException' in event && event.ServiceFailureException) {
+-                                    throw new Error(`Polly ServiceFailure: ${event.ServiceFailureException.message}`)
+-                                }
+-                                if ('ThrottlingException' in event && event.ThrottlingException) {
+-                                    throw new Error(`Polly ThrottlingException: ${event.ThrottlingException.message}`)
++                                const pollyResponse = await pollyClient.send(command)
++
++                                if (!pollyResponse.EventStream) {
++                                    throw new Error('Amazon Polly returned no event stream')
+                                 }
+-                                if ('ServiceQuotaExceededException' in event && event.ServiceQuotaExceededException) {
+-                                    throw new Error(`Polly ServiceQuotaExceeded: ${event.ServiceQuotaExceededException.message}`)
++
++                                // Stream audio chunks directly to the frontend as they arrive.
++                                for await (const event of pollyResponse.EventStream) {
++                                    if (abortController.signal.aborted) {
++                                        throw new Error('TTS generation aborted')
++                                    }
++
++                                    if ('AudioEvent' in event && event.AudioEvent?.AudioChunk) {
++                                        receivedAnyAudio = true
++                                        onChunk(Buffer.from(event.AudioEvent.AudioChunk))
++                                    }
++
++                                    // Re-throw service-side errors surfaced as event stream members
++                                    if ('ValidationException' in event && event.ValidationException) {
++                                        throw new Error(`Polly ValidationException: ${event.ValidationException.message}`)
++                                    }
++                                    if ('ServiceFailureException' in event && event.ServiceFailureException) {
++                                        throw new Error(`Polly ServiceFailure: ${event.ServiceFailureException.message}`)
++                                    }
++                                    if ('ThrottlingException' in event && event.ThrottlingException) {
++                                        throw new Error(`Polly ThrottlingException: ${event.ThrottlingException.message}`)
++                                    }
++                                    if ('ServiceQuotaExceededException' in event && event.ServiceQuotaExceededException) {
++                                        throw new Error(`Polly ServiceQuotaExceeded: ${event.ServiceQuotaExceededException.message}`)
++                                    }
+                                 }
+                             }
+ 
+-                            if (!receivedAudio) {
++                            if (!receivedAnyAudio) {
+                                 throw new Error('Amazon Polly returned no audio data')
+                             }
+ 

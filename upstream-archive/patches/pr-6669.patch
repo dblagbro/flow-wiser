@@ -1,0 +1,50 @@
+From 3f2c01396d8ddd925251a1afff816bcf0b30a394 Mon Sep 17 00:00:00 2001
+From: iruzen-dono <juleszhou01@gmail.com>
+Date: Sun, 26 Jul 2026 10:52:30 +0000
+Subject: [PATCH] fix(server): support direct variable names in overrideConfig
+ for Agentflow
+
+When users pass custom variable values directly in overrideConfig
+(e.g. { clasificador: "new_value" }) instead of nested under
+overrideConfig.vars, the values were silently ignored because
+replaceInputsWithConfig only applied overrides to enabled node input
+parameters.
+
+This fix pre-processes overrideConfig to detect keys that match
+enabled variable overrides and moves them to overrideConfig.vars,
+where getGlobalVariable can resolve them properly.
+
+Fixes #6651
+---
+ packages/server/src/utils/index.ts | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 7a558407c7f..29160057a45 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -1096,6 +1096,24 @@ export const replaceInputsWithConfig = (
+ ) => {
+     const types = 'inputs'
+ 
++    // Pre-process overrideConfig: if a key matches a variable override (custom variable),
++    // move it to overrideConfig.vars so getGlobalVariable can resolve it properly.
++    // This allows users to pass overrideConfig: { myVariable: "value" } instead of
++    // overrideConfig: { vars: { myVariable: "value" } }
++    if (variableOverrides && variableOverrides.length > 0) {
++        if (!overrideConfig['vars']) {
++            overrideConfig['vars'] = {}
++        }
++        for (const configKey of Object.keys(overrideConfig)) {
++            if (configKey === 'analytics' || configKey === 'vars' || configKey === 'sessionId') continue
++            const varOverride = variableOverrides.find((v) => v.name === configKey)
++            if (varOverride?.enabled) {
++                overrideConfig['vars'][configKey] = overrideConfig[configKey]
++                delete overrideConfig[configKey]
++            }
++        }
++    }
++
+     const isParameterEnabled = (nodeType: string, paramName: string): boolean => {
+         if (!nodeOverrides[nodeType]) return false
+         const parameter = nodeOverrides[nodeType].find((param: any) => param.name === paramName)

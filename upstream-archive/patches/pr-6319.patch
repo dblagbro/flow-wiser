@@ -1,0 +1,578 @@
+From 9e3d8bebd1c7d6239520d57a48c2f22bb3bfc089 Mon Sep 17 00:00:00 2001
+From: Jackie Chui <jackie.chui@workday.com>
+Date: Wed, 29 Apr 2026 16:40:14 -0700
+Subject: [PATCH] create mime.ts to fix duplicated mime functions
+
+---
+ .../agentflow/SmartAgent/sandbox/utils.ts     |  93 +----------
+ packages/components/nodes/agentflow/utils.ts  |  17 +-
+ packages/components/src/mime.test.ts          | 119 ++++++++++++++
+ packages/components/src/mime.ts               | 155 ++++++++++++++++++
+ packages/components/src/utils.ts              | 116 +------------
+ 5 files changed, 279 insertions(+), 221 deletions(-)
+ create mode 100644 packages/components/src/mime.test.ts
+ create mode 100644 packages/components/src/mime.ts
+
+diff --git a/packages/components/nodes/agentflow/SmartAgent/sandbox/utils.ts b/packages/components/nodes/agentflow/SmartAgent/sandbox/utils.ts
+index 2f58616c829..d35c19d3722 100644
+--- a/packages/components/nodes/agentflow/SmartAgent/sandbox/utils.ts
++++ b/packages/components/nodes/agentflow/SmartAgent/sandbox/utils.ts
+@@ -1,95 +1,4 @@
+-// Overlaps with mapMimeTypeToExt (src/utils.ts), S3File.ts, GoogleDrive.ts, agentflow/utils.ts.
+-// TODO: consolidate into shared packages/components/src/mime.ts.
+-const MIME_MAP: Record<string, string> = {
+-    // text
+-    '.ts': 'text/typescript',
+-    '.tsx': 'text/typescript',
+-    '.js': 'text/javascript',
+-    '.jsx': 'text/javascript',
+-    '.mjs': 'text/javascript',
+-    '.cjs': 'text/javascript',
+-    '.json': 'application/json',
+-    '.jsonl': 'application/json',
+-    '.md': 'text/markdown',
+-    '.mdx': 'text/markdown',
+-    '.txt': 'text/plain',
+-    '.log': 'text/plain',
+-    '.env': 'text/plain',
+-    '.html': 'text/html',
+-    '.htm': 'text/html',
+-    '.css': 'text/css',
+-    '.scss': 'text/css',
+-    '.less': 'text/css',
+-    '.xml': 'application/xml',
+-    '.yaml': 'application/yaml',
+-    '.yml': 'application/yaml',
+-    '.toml': 'application/toml',
+-    '.ini': 'text/plain',
+-    '.cfg': 'text/plain',
+-    '.py': 'text/x-python',
+-    '.rb': 'text/x-ruby',
+-    '.go': 'text/x-go',
+-    '.rs': 'text/x-rust',
+-    '.java': 'text/x-java',
+-    '.c': 'text/x-c',
+-    '.cpp': 'text/x-cpp',
+-    '.h': 'text/x-c',
+-    '.sh': 'application/x-sh',
+-    '.bash': 'application/x-sh',
+-    '.zsh': 'application/x-sh',
+-    '.sql': 'application/sql',
+-    '.graphql': 'application/graphql',
+-    '.csv': 'text/csv',
+-    '.tsv': 'text/tab-separated-values',
+-    // images
+-    '.png': 'image/png',
+-    '.jpg': 'image/jpeg',
+-    '.jpeg': 'image/jpeg',
+-    '.gif': 'image/gif',
+-    '.webp': 'image/webp',
+-    '.svg': 'image/svg+xml',
+-    '.ico': 'image/x-icon',
+-    '.bmp': 'image/bmp',
+-    // documents
+-    '.pdf': 'application/pdf',
+-    // audio
+-    '.mp3': 'audio/mpeg',
+-    '.wav': 'audio/wav',
+-    '.ogg': 'audio/ogg',
+-    '.m4a': 'audio/mp4',
+-    '.flac': 'audio/flac',
+-    // video
+-    '.mp4': 'video/mp4',
+-    '.mov': 'video/quicktime',
+-    '.avi': 'video/x-msvideo',
+-    '.webm': 'video/webm',
+-    // archives / binary
+-    '.zip': 'application/zip',
+-    '.tar': 'application/x-tar',
+-    '.gz': 'application/gzip',
+-    '.wasm': 'application/wasm'
+-}
+-
+-const TEXT_MIME_PREFIXES = ['text/']
+-const TEXT_MIME_EXACT = new Set([
+-    'application/json',
+-    'application/javascript',
+-    'application/xml',
+-    'application/x-sh',
+-    'application/sql',
+-    'application/graphql',
+-    'application/yaml',
+-    'application/toml'
+-])
+-
+-export function getMimeType(filePath: string): string {
+-    const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+-    return MIME_MAP[ext] ?? 'application/octet-stream'
+-}
+-
+-export function isTextMimeType(mimeType: string): boolean {
+-    return TEXT_MIME_PREFIXES.some((p) => mimeType.startsWith(p)) || TEXT_MIME_EXACT.has(mimeType)
+-}
++export { getMimeType, isTextMimeType } from '../../../../src/mime'
+ 
+ export function paginateLines(text: string, offset: number, limit: number): string {
+     const lines = text.split('\n')
+diff --git a/packages/components/nodes/agentflow/utils.ts b/packages/components/nodes/agentflow/utils.ts
+index 4b673b237ad..a0ce44ae2aa 100644
+--- a/packages/components/nodes/agentflow/utils.ts
++++ b/packages/components/nodes/agentflow/utils.ts
+@@ -18,6 +18,7 @@ import {
+     IMessageAdditionalKwargs
+ } from './Interface.Agentflow'
+ import { getCredentialData, getCredentialParam, handleEscapeCharacters, mapMimeTypeToInputField } from '../../src/utils'
++import { getMimeType } from '../../src/mime'
+ import { sanitizeFileName } from '../../src/validator'
+ import fetch from 'node-fetch'
+ 
+@@ -25,19 +26,6 @@ import fetch from 'node-fetch'
+ 
+ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp']
+ 
+-const MIME_TYPES: Record<string, string> = {
+-    png: 'image/png',
+-    jpg: 'image/jpeg',
+-    jpeg: 'image/jpeg',
+-    gif: 'image/gif',
+-    pdf: 'application/pdf',
+-    txt: 'text/plain',
+-    csv: 'text/csv',
+-    json: 'application/json',
+-    html: 'text/html',
+-    xml: 'application/xml'
+-}
+-
+ const ARTIFACT_TYPES: Record<string, string> = {
+     png: 'png',
+     jpg: 'jpeg',
+@@ -464,8 +452,7 @@ export const getPastChatHistoryImageMessages = async (
+ 
+ /** Returns the MIME type for a filename based on its extension. */
+ export const getMimeTypeFromFilename = (filename: string): string => {
+-    const extension = filename.toLowerCase().split('.').pop()
+-    return MIME_TYPES[extension || ''] || 'application/octet-stream'
++    return getMimeType(filename)
+ }
+ 
+ /** Returns the artifact type (for UI rendering) based on a filename's extension. */
+diff --git a/packages/components/src/mime.test.ts b/packages/components/src/mime.test.ts
+new file mode 100644
+index 00000000000..8c2e1af464c
+--- /dev/null
++++ b/packages/components/src/mime.test.ts
+@@ -0,0 +1,119 @@
++import { getMimeType, isTextMimeType, mapMimeTypeToExt, EXT_TO_MIME } from './mime'
++
++describe('getMimeType', () => {
++    it('returns correct MIME for a standard extension', () => {
++        expect(getMimeType('file.ts')).toBe('text/typescript')
++        expect(getMimeType('file.pdf')).toBe('application/pdf')
++        expect(getMimeType('file.mp3')).toBe('audio/mpeg')
++        expect(getMimeType('file.webm')).toBe('video/webm')
++    })
++
++    it('is case-insensitive', () => {
++        expect(getMimeType('file.PDF')).toBe('application/pdf')
++        expect(getMimeType('file.PNG')).toBe('image/png')
++    })
++
++    it('handles dotfiles (.env, .log)', () => {
++        expect(getMimeType('.env')).toBe('text/plain')
++        expect(getMimeType('.log')).toBe('text/plain')
++    })
++
++    it('uses the last extension for multi-dot filenames', () => {
++        expect(getMimeType('my.config.json')).toBe('application/json')
++    })
++
++    it('falls back to application/octet-stream for unknown extensions', () => {
++        expect(getMimeType('file.unknown')).toBe('application/octet-stream')
++        expect(getMimeType('noextension')).toBe('application/octet-stream')
++    })
++})
++
++describe('isTextMimeType', () => {
++    it('returns true for text/* types', () => {
++        expect(isTextMimeType('text/plain')).toBe(true)
++        expect(isTextMimeType('text/html')).toBe(true)
++        expect(isTextMimeType('text/typescript')).toBe(true)
++    })
++
++    it('returns true for text-like application/* types', () => {
++        expect(isTextMimeType('application/json')).toBe(true)
++        expect(isTextMimeType('application/xml')).toBe(true)
++        expect(isTextMimeType('application/yaml')).toBe(true)
++        expect(isTextMimeType('application/sql')).toBe(true)
++    })
++
++    it('returns false for binary types', () => {
++        expect(isTextMimeType('image/png')).toBe(false)
++        expect(isTextMimeType('audio/mpeg')).toBe(false)
++        expect(isTextMimeType('application/pdf')).toBe(false)
++        expect(isTextMimeType('application/zip')).toBe(false)
++    })
++})
++
++describe('mapMimeTypeToExt', () => {
++    it('returns canonical extension for primary MIME types', () => {
++        expect(mapMimeTypeToExt('application/pdf')).toBe('pdf')
++        expect(mapMimeTypeToExt('text/plain')).toBe('txt')
++        expect(mapMimeTypeToExt('application/json')).toBe('json')
++        expect(mapMimeTypeToExt('text/csv')).toBe('csv')
++        expect(mapMimeTypeToExt('text/html')).toBe('html')
++        expect(mapMimeTypeToExt('audio/mpeg')).toBe('mp3')
++        expect(mapMimeTypeToExt('video/mp4')).toBe('mp4')
++    })
++
++    it('resolves MIME aliases', () => {
++        expect(mapMimeTypeToExt('text/x-yaml')).toBe('yaml')
++        expect(mapMimeTypeToExt('application/x-yaml')).toBe('yaml')
++        expect(mapMimeTypeToExt('text/x-markdown')).toBe('md')
++        expect(mapMimeTypeToExt('application/javascript')).toBe('js')
++        expect(mapMimeTypeToExt('audio/mp3')).toBe('mp3')
++        expect(mapMimeTypeToExt('audio/webm')).toBe('webm')
++        expect(mapMimeTypeToExt('application/json-lines')).toBe('jsonl')
++        expect(mapMimeTypeToExt('application/jsonl')).toBe('jsonl')
++    })
++
++    it('handles Office document MIME types', () => {
++        expect(mapMimeTypeToExt('application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe('docx')
++        expect(mapMimeTypeToExt('application/msword')).toBe('doc')
++        expect(mapMimeTypeToExt('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).toBe('xlsx')
++        expect(mapMimeTypeToExt('application/vnd.ms-excel')).toBe('xls')
++        expect(mapMimeTypeToExt('application/vnd.openxmlformats-officedocument.presentationml.presentation')).toBe('pptx')
++    })
++
++    it('returns empty string for unknown MIME types', () => {
++        expect(mapMimeTypeToExt('application/x-unknown')).toBe('')
++    })
++})
++
++describe('EXT_TO_MIME first-listed-wins inversion', () => {
++    it('.js wins over .jsx for text/javascript', () => {
++        expect(mapMimeTypeToExt('text/javascript')).toBe('js')
++    })
++
++    it('.ts wins over .tsx for text/typescript', () => {
++        expect(mapMimeTypeToExt('text/typescript')).toBe('ts')
++    })
++
++    it('.html wins over .htm for text/html', () => {
++        expect(mapMimeTypeToExt('text/html')).toBe('html')
++    })
++
++    it('.yaml wins over .yml for application/yaml', () => {
++        expect(mapMimeTypeToExt('application/yaml')).toBe('yaml')
++    })
++})
++
++describe('EXT_TO_MIME completeness', () => {
++    it('has no empty keys or values', () => {
++        for (const [ext, mime] of Object.entries(EXT_TO_MIME)) {
++            expect(ext.length).toBeGreaterThan(1) // at least dot + one char
++            expect(mime.length).toBeGreaterThan(0)
++        }
++    })
++
++    it('all keys start with a dot', () => {
++        for (const ext of Object.keys(EXT_TO_MIME)) {
++            expect(ext.startsWith('.')).toBe(true)
++        }
++    })
++})
+diff --git a/packages/components/src/mime.ts b/packages/components/src/mime.ts
+new file mode 100644
+index 00000000000..d8f0f44caeb
+--- /dev/null
++++ b/packages/components/src/mime.ts
+@@ -0,0 +1,155 @@
++// Shared MIME utilities for sandbox, agentflow, and utils.
++// S3File.ts and GoogleDrive.ts intentionally keep their own inline maps — those are
++// allowlists that gate which file types get parsed by their document loaders. Consolidating
++// them here would silently expand the set of supported types beyond what those loaders handle.
++
++// Canonical ext→MIME map. Keys are lowercased with leading dot (e.g. '.pdf').
++// First entry per MIME type wins when computing the reverse lookup.
++export const EXT_TO_MIME: Record<string, string> = {
++    // text / code
++    '.ts': 'text/typescript',
++    '.tsx': 'text/typescript',
++    '.js': 'text/javascript',
++    '.jsx': 'text/javascript',
++    '.mjs': 'text/javascript',
++    '.cjs': 'text/javascript',
++    '.json': 'application/json',
++    '.jsonl': 'application/json',
++    '.md': 'text/markdown',
++    '.mdx': 'text/markdown',
++    '.txt': 'text/plain',
++    '.log': 'text/plain',
++    '.env': 'text/plain',
++    '.ini': 'text/plain',
++    '.cfg': 'text/plain',
++    '.html': 'text/html',
++    '.htm': 'text/html',
++    '.css': 'text/css',
++    '.scss': 'text/css',
++    '.less': 'text/css',
++    '.xml': 'application/xml',
++    '.yaml': 'application/yaml',
++    '.yml': 'application/yaml',
++    '.toml': 'application/toml',
++    '.py': 'text/x-python',
++    '.rb': 'text/x-ruby',
++    '.go': 'text/x-go',
++    '.rs': 'text/x-rust',
++    '.java': 'text/x-java',
++    '.c': 'text/x-c',
++    '.cpp': 'text/x-cpp',
++    '.h': 'text/x-c',
++    '.sh': 'application/x-sh',
++    '.bash': 'application/x-sh',
++    '.zsh': 'application/x-sh',
++    '.sql': 'application/sql',
++    '.graphql': 'application/graphql',
++    '.csv': 'text/csv',
++    '.tsv': 'text/tab-separated-values',
++    // images
++    '.png': 'image/png',
++    '.jpg': 'image/jpeg',
++    '.jpeg': 'image/jpeg',
++    '.gif': 'image/gif',
++    '.webp': 'image/webp',
++    '.svg': 'image/svg+xml',
++    '.ico': 'image/x-icon',
++    '.bmp': 'image/bmp',
++    '.tiff': 'image/tiff',
++    '.tif': 'image/tiff',
++    '.avif': 'image/avif',
++    // documents
++    '.pdf': 'application/pdf',
++    '.doc': 'application/msword',
++    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
++    '.xls': 'application/vnd.ms-excel',
++    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
++    '.ppt': 'application/vnd.ms-powerpoint',
++    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
++    '.rtf': 'application/rtf',
++    // audio
++    '.mp3': 'audio/mpeg',
++    '.wav': 'audio/wav',
++    '.ogg': 'audio/ogg',
++    '.m4a': 'audio/mp4',
++    '.flac': 'audio/flac',
++    '.aac': 'audio/aac',
++    // video
++    '.mp4': 'video/mp4',
++    '.mov': 'video/quicktime',
++    '.avi': 'video/x-msvideo',
++    '.webm': 'video/webm',
++    // archives / binary
++    '.zip': 'application/zip',
++    '.tar': 'application/x-tar',
++    '.gz': 'application/gzip',
++    '.wasm': 'application/wasm'
++}
++
++// Non-standard or secondary MIME aliases not present as primary values in EXT_TO_MIME.
++const MIME_ALIASES: Record<string, string> = {
++    'application/javascript': 'js',
++    'text/xml': 'xml',
++    'text/x-markdown': 'md',
++    'application/vnd.yaml': 'yaml',
++    'application/x-yaml': 'yaml',
++    'text/vnd.yaml': 'yaml',
++    'text/x-yaml': 'yaml',
++    'text/yaml': 'yaml',
++    'text/x-sql': 'sql',
++    'image/jpg': 'jpg',
++    'image/tif': 'tiff',
++    'image/vnd.microsoft.icon': 'ico',
++    'audio/mp3': 'mp3',
++    'audio/x-m4a': 'm4a',
++    'audio/oga': 'ogg',
++    'audio/wave': 'wav',
++    'audio/x-wav': 'wav',
++    'audio/webm': 'webm',
++    'application/json-lines': 'jsonl',
++    'application/jsonl': 'jsonl',
++    'text/jsonl': 'jsonl'
++}
++
++// Auto-inverted from EXT_TO_MIME: maps MIME type → extension (without dot).
++// First-listed extension per MIME type wins (e.g. '.js' wins over '.jsx' for text/javascript).
++const _MIME_TO_EXT: Record<string, string> = {}
++for (const [ext, mime] of Object.entries(EXT_TO_MIME)) {
++    if (!_MIME_TO_EXT[mime]) _MIME_TO_EXT[mime] = ext.slice(1)
++}
++
++const _TEXT_MIME_PREFIXES = ['text/']
++const _TEXT_MIME_EXACT = new Set([
++    'application/json',
++    'application/javascript',
++    'application/xml',
++    'application/x-sh',
++    'application/sql',
++    'application/graphql',
++    'application/yaml',
++    'application/toml'
++])
++
++/**
++ * Returns the MIME type for a file path based on its extension.
++ * Uses lastIndexOf to correctly handle dotfiles (e.g. '.env' → 'text/plain').
++ */
++export function getMimeType(filePath: string): string {
++    const dotIdx = filePath.lastIndexOf('.')
++    if (dotIdx === -1) return 'application/octet-stream'
++    const ext = filePath.slice(dotIdx).toLowerCase()
++    return EXT_TO_MIME[ext] ?? 'application/octet-stream'
++}
++
++/** Returns true for MIME types whose content is human-readable text. */
++export function isTextMimeType(mimeType: string): boolean {
++    return _TEXT_MIME_PREFIXES.some((p) => mimeType.startsWith(p)) || _TEXT_MIME_EXACT.has(mimeType)
++}
++
++/**
++ * Returns the canonical file extension (without dot) for a MIME type, or '' if unknown.
++ * Checks explicit aliases first, then the auto-inverted EXT_TO_MIME map.
++ */
++export function mapMimeTypeToExt(mimeType: string): string {
++    return MIME_ALIASES[mimeType] ?? _MIME_TO_EXT[mimeType] ?? ''
++}
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 56c81cf6948..cc89ec516b3 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -14,6 +14,8 @@ import { AIMessage, AIMessageChunk, HumanMessage, BaseMessage } from '@langchain
+ import { Runnable, type RunnableConfig } from '@langchain/core/runnables'
+ import { Document } from '@langchain/core/documents'
+ import { getFileFromStorage } from './storageUtils'
++import { mapMimeTypeToExt } from './mime'
++export { mapMimeTypeToExt }
+ import { GetSecretValueCommand, SecretsManagerClient, SecretsManagerClientConfig } from '@aws-sdk/client-secrets-manager'
+ import { customGet } from '../nodes/sequentialagents/commonUtils'
+ import { TextSplitter } from '@langchain/textsplitters'
+@@ -1137,120 +1139,6 @@ export const mapMimeTypeToInputField = (mimeType: string) => {
+     }
+ }
+ 
+-/**
+- * Map MimeType to Extension
+- * @param {string} mimeType
+- * @returns {string}
+- */
+-export const mapMimeTypeToExt = (mimeType: string) => {
+-    switch (mimeType) {
+-        case 'text/plain':
+-            return 'txt'
+-        case 'text/html':
+-            return 'html'
+-        case 'text/css':
+-            return 'css'
+-        case 'text/javascript':
+-        case 'application/javascript':
+-            return 'js'
+-        case 'text/xml':
+-        case 'application/xml':
+-            return 'xml'
+-        case 'text/markdown':
+-        case 'text/x-markdown':
+-            return 'md'
+-        case 'application/pdf':
+-            return 'pdf'
+-        case 'application/json':
+-            return 'json'
+-        case 'text/csv':
+-            return 'csv'
+-        case 'application/json-lines':
+-        case 'application/jsonl':
+-        case 'text/jsonl':
+-            return 'jsonl'
+-        // YAML types
+-        case 'application/vnd.yaml':
+-        case 'application/x-yaml':
+-        case 'text/vnd.yaml':
+-        case 'text/x-yaml':
+-        case 'text/yaml':
+-            return 'yaml'
+-        // SQL types
+-        case 'application/sql':
+-        case 'text/x-sql':
+-            return 'sql'
+-        // Document types
+-        case 'application/msword':
+-            return 'doc'
+-        case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+-            return 'docx'
+-        case 'application/vnd.ms-excel':
+-            return 'xls'
+-        case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+-            return 'xlsx'
+-        case 'application/vnd.ms-powerpoint':
+-            return 'ppt'
+-        case 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+-            return 'pptx'
+-        case 'application/rtf':
+-            return 'rtf'
+-        // Image types
+-        case 'image/jpeg':
+-        case 'image/jpg':
+-            return 'jpg'
+-        case 'image/png':
+-            return 'png'
+-        case 'image/gif':
+-            return 'gif'
+-        case 'image/webp':
+-            return 'webp'
+-        case 'image/svg+xml':
+-            return 'svg'
+-        case 'image/bmp':
+-            return 'bmp'
+-        case 'image/tiff':
+-        case 'image/tif':
+-            return 'tiff'
+-        case 'image/x-icon':
+-        case 'image/vnd.microsoft.icon':
+-            return 'ico'
+-        case 'image/avif':
+-            return 'avif'
+-        // Audio types
+-        case 'audio/webm':
+-            return 'webm'
+-        case 'audio/mp4':
+-        case 'audio/x-m4a':
+-            return 'm4a'
+-        case 'audio/mpeg':
+-        case 'audio/mp3':
+-            return 'mp3'
+-        case 'audio/ogg':
+-        case 'audio/oga':
+-            return 'ogg'
+-        case 'audio/wav':
+-        case 'audio/wave':
+-        case 'audio/x-wav':
+-            return 'wav'
+-        case 'audio/aac':
+-            return 'aac'
+-        case 'audio/flac':
+-            return 'flac'
+-        // Video types
+-        case 'video/mp4':
+-            return 'mp4'
+-        case 'video/webm':
+-            return 'webm'
+-        case 'video/quicktime':
+-            return 'mov'
+-        case 'video/x-msvideo':
+-            return 'avi'
+-        default:
+-            return ''
+-    }
+-}
+-
+ /**
+  * MIME types allowed for full file upload (chatflow config).
+  * Server validates stored allowedUploadFileTypes against this list to prevent

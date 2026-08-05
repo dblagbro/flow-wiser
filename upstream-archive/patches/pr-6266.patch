@@ -1,0 +1,1781 @@
+From 518f6f9eb9f283b40abbaff65a6ff24892a23a80 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Wed, 22 Apr 2026 18:48:59 +0800
+Subject: [PATCH 01/10] init
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/package.json   |   1 +
+ packages/components/src/handler.ts | 137 +++++++-
+ pnpm-lock.yaml                     | 484 ++++++++++++++++++++++++++++-
+ 3 files changed, 616 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/package.json b/packages/components/package.json
+index 5f24485ef29..45ae0a89f38 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -32,6 +32,7 @@
+     "license": "SEE LICENSE IN LICENSE.md",
+     "dependencies": {
+         "@anthropic-ai/sdk": "^0.73.0",
++        "@mlflow/core": "^0.2.0",
+         "@apidevtools/json-schema-ref-parser": "^11.7.0",
+         "@arizeai/openinference-instrumentation-langchain": "^2.0.0",
+         "@aws-sdk/client-bedrock-runtime": "3.966.0",
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 9cd8167e8d7..5e7781651cd 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -30,6 +30,9 @@ import { EvaluationRunTracer } from '../evaluation/EvaluationRunTracer'
+ import { EvaluationRunTracerLlama } from '../evaluation/EvaluationRunTracerLlama'
+ import { ICommonObject, IDatabaseEntity, INodeData, IServerSideEventStreamer } from './Interface'
+ import { LangWatch, LangWatchSpan, LangWatchTrace, autoconvertTypedValues } from 'langwatch'
++import * as mlflow from '@mlflow/core'
++import { SpanType as MlflowSpanType, SpanStatusCode as MlflowSpanStatusCode } from '@mlflow/core'
++import type { LiveSpan as MlflowLiveSpan } from '@mlflow/core'
+ import { DataSource } from 'typeorm'
+ import { ChatGenerationChunk } from '@langchain/core/outputs'
+ import { AIMessageChunk, BaseMessageLike } from '@langchain/core/messages'
+@@ -898,6 +901,23 @@ export class AnalyticHandler {
+             const rootSpan: Span | undefined = undefined
+ 
+             this.handlers['opik'] = { client: opik, opikProject, rootSpan }
++        } else if (provider === 'mlflow') {
++            const mlflowTrackingUri = getCredentialParam('mlflowTrackingUri', credentialData, this.nodeData)
++            const mlflowToken = getCredentialParam('mlflowToken', credentialData, this.nodeData)
++            const mlflowUsername = getCredentialParam('mlflowUsername', credentialData, this.nodeData)
++            const mlflowPassword = getCredentialParam('mlflowPassword', credentialData, this.nodeData)
++            const mlflowExperimentId = providerConfig.experimentId as string
++
++            const mlflowOptions: any = {
++                trackingUri: mlflowTrackingUri ?? 'http://localhost:5000'
++            }
++            if (mlflowExperimentId) mlflowOptions.experimentId = mlflowExperimentId
++            if (mlflowToken) mlflowOptions.trackingServerToken = mlflowToken
++            if (mlflowUsername) mlflowOptions.trackingServerUsername = mlflowUsername
++            if (mlflowPassword) mlflowOptions.trackingServerPassword = mlflowPassword
++
++            mlflow.init(mlflowOptions)
++            this.handlers['mlflow'] = {}
+         }
+     }
+ 
+@@ -909,7 +929,8 @@ export class AnalyticHandler {
+             langWatch: {},
+             arize: {},
+             phoenix: {},
+-            opik: {}
++            opik: {},
++            mlflow: {}
+         }
+ 
+         if (Object.prototype.hasOwnProperty.call(this.handlers, 'langSmith')) {
+@@ -1125,6 +1146,26 @@ export class AnalyticHandler {
+             returnIds['opik'].chainSpan = chainSpanId
+         }
+ 
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const parentSpan: MlflowLiveSpan | undefined =
++                parentIds && Object.keys(parentIds).length ? this.handlers['mlflow'].chainSpan?.[parentIds['mlflow']?.chainSpan] : undefined
++
++            const chainSpan = mlflow.startSpan({
++                name,
++                spanType: MlflowSpanType.CHAIN,
++                inputs: { text: input },
++                ...(parentSpan ? { parent: parentSpan } : {})
++            })
++
++            if (!parentIds || !Object.keys(parentIds).length) {
++                chainSpan.setAttributes({ 'mlflow.trace.session': this.options.chatId })
++            }
++
++            const spanId = chainSpan.spanId
++            this.handlers['mlflow'].chainSpan = { [spanId]: chainSpan }
++            returnIds['mlflow'].chainSpan = spanId
++        }
++
+         return returnIds
+     }
+ 
+@@ -1213,6 +1254,16 @@ export class AnalyticHandler {
+             }
+         }
+ 
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const chainSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].chainSpan?.[returnIds['mlflow']?.chainSpan]
++            if (chainSpan) {
++                chainSpan.end({ outputs: { output } })
++            }
++            if (shutdown) {
++                await mlflow.flushTraces()
++            }
++        }
++
+         if (shutdown) {
+             // Cleanup this instance when chain ends
+             AnalyticHandler.resetInstance(this.chatId)
+@@ -1296,6 +1347,16 @@ export class AnalyticHandler {
+             }
+         }
+ 
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const chainSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].chainSpan?.[returnIds['mlflow']?.chainSpan]
++            if (chainSpan) {
++                chainSpan.end({ outputs: { error }, status: MlflowSpanStatusCode.ERROR })
++            }
++            if (shutdown) {
++                await mlflow.flushTraces()
++            }
++        }
++
+         if (shutdown) {
+             // Cleanup this instance when chain ends
+             AnalyticHandler.resetInstance(this.chatId)
+@@ -1310,7 +1371,8 @@ export class AnalyticHandler {
+             langWatch: {},
+             arize: {},
+             phoenix: {},
+-            opik: {}
++            opik: {},
++            mlflow: {}
+         }
+ 
+         if (Object.prototype.hasOwnProperty.call(this.handlers, 'langSmith')) {
+@@ -1432,6 +1494,21 @@ export class AnalyticHandler {
+             returnIds['opik'].llmSpan = llmSpanId
+         }
+ 
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const parentSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].chainSpan?.[parentIds['mlflow']?.chainSpan]
++
++            const llmSpan = mlflow.startSpan({
++                name,
++                spanType: MlflowSpanType.LLM,
++                inputs: Array.isArray(input) ? { messages: input } : { prompts: [input] },
++                ...(parentSpan ? { parent: parentSpan } : {})
++            })
++
++            const spanId = llmSpan.spanId
++            this.handlers['mlflow'].llmSpan = { [spanId]: llmSpan }
++            returnIds['mlflow'].llmSpan = spanId
++        }
++
+         return returnIds
+     }
+ 
+@@ -1590,6 +1667,25 @@ export class AnalyticHandler {
+         if (Object.prototype.hasOwnProperty.call(this.handlers, 'opik')) {
+             this._endOtelSpan('opik', returnIds, outputText, usageMetadata, modelName)
+         }
++
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const llmSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].llmSpan?.[returnIds['mlflow']?.llmSpan]
++            if (llmSpan) {
++                const endAttrs: Record<string, any> = {}
++                if (usageMetadata) {
++                    endAttrs['mlflow.chat.tokenUsage'] = {
++                        input_tokens: usageMetadata.input_tokens,
++                        output_tokens: usageMetadata.output_tokens,
++                        total_tokens: usageMetadata.total_tokens
++                    }
++                }
++                if (modelName) endAttrs['mlflow.model_name'] = modelName
++                llmSpan.end({
++                    outputs: { output: outputText },
++                    ...(Object.keys(endAttrs).length ? { attributes: endAttrs } : {})
++                })
++            }
++        }
+     }
+ 
+     async onLLMError(returnIds: ICommonObject, error: string | object) {
+@@ -1664,6 +1760,13 @@ export class AnalyticHandler {
+                 llmSpan.end()
+             }
+         }
++
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const llmSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].llmSpan?.[returnIds['mlflow']?.llmSpan]
++            if (llmSpan) {
++                llmSpan.end({ outputs: { error }, status: MlflowSpanStatusCode.ERROR })
++            }
++        }
+     }
+ 
+     async onToolStart(name: string, input: string | object, parentIds: ICommonObject) {
+@@ -1674,6 +1777,7 @@ export class AnalyticHandler {
+             langWatch: {},
+             arize: {},
+             phoenix: {},
++            mlflow: {},
+             opik: {}
+         }
+ 
+@@ -1792,6 +1896,21 @@ export class AnalyticHandler {
+             returnIds['opik'].toolSpan = toolSpanId
+         }
+ 
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const parentSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].chainSpan?.[parentIds['mlflow']?.chainSpan]
++
++            const toolSpan = mlflow.startSpan({
++                name,
++                spanType: MlflowSpanType.TOOL,
++                inputs: { input },
++                ...(parentSpan ? { parent: parentSpan } : {})
++            })
++
++            const spanId = toolSpan.spanId
++            this.handlers['mlflow'].toolSpan = { [spanId]: toolSpan }
++            returnIds['mlflow'].toolSpan = spanId
++        }
++
+         return returnIds
+     }
+ 
+@@ -1867,6 +1986,13 @@ export class AnalyticHandler {
+                 toolSpan.end()
+             }
+         }
++
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const toolSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].toolSpan?.[returnIds['mlflow']?.toolSpan]
++            if (toolSpan) {
++                toolSpan.end({ outputs: { output } })
++            }
++        }
+     }
+ 
+     async onToolError(returnIds: ICommonObject, error: string | object) {
+@@ -1941,6 +2067,13 @@ export class AnalyticHandler {
+                 toolSpan.end()
+             }
+         }
++
++        if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
++            const toolSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].toolSpan?.[returnIds['mlflow']?.toolSpan]
++            if (toolSpan) {
++                toolSpan.end({ outputs: { error }, status: MlflowSpanStatusCode.ERROR })
++            }
++        }
+     }
+ }
+ 
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index b1397be3198..f35f941c878 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -443,6 +443,9 @@ importers:
+       '@mistralai/mistralai':
+         specifier: 1.14.0
+         version: 1.14.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
++      '@mlflow/core':
++        specifier: ^0.2.0
++        version: 0.2.0
+       '@modelcontextprotocol/sdk':
+         specifier: ^1.10.1
+         version: 1.10.2
+@@ -3819,6 +3822,10 @@ packages:
+   '@dabh/diagnostics@2.0.3':
+     resolution: {integrity: sha512-hrlQOIi7hAfzsMqlGSFyVucrx38O+j6wiGOf//H2ecvIEqYN4ADBSS2iLMh5UFyDunCNniUIPk/q3riFv45xRA==}
+ 
++  '@databricks/sdk-experimental@0.15.0':
++    resolution: {integrity: sha512-HkoMiF7dNDt6WRW0xhi7oPlBJQfxJ9suJhEZRFt08VwLMaWcw2PiF8monfHlkD4lkufEYV6CTxi5njQkciqiHA==}
++    engines: {node: '>=22.0', npm: '>=10.0.0'}
++
+   '@datastax/astra-db-ts@1.5.0':
+     resolution: {integrity: sha512-Z9pEVyyHfglh8XAKrIASxdvORdei4pLUKDDGarqYvBkA9B9rKdqqdN+4I42Dz8paU5uscu8FwM5mc+Ly/U6jfA==}
+     engines: {node: '>=14.0.0'}
+@@ -5968,6 +5975,10 @@ packages:
+   '@mixmark-io/domino@2.2.0':
+     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
+ 
++  '@mlflow/core@0.2.0':
++    resolution: {integrity: sha512-CZ/J3HN8WZ836rvmlFsqa3uPk9YrrzXXex5Gjv602bSzVVzzXaXkViNm8BszMwIZt9Xew205u6G2cAaBRD3GkA==}
++    engines: {node: '>=18'}
++
+   '@modelcontextprotocol/sdk@0.5.0':
+     resolution: {integrity: sha512-RXgulUX6ewvxjAG0kOpLMEdXXWkzWgaoCGaA2CwNW7cQCIphjpJhjpHSiaPdVCnisjRF/0Cm9KWHUuIoeiAblQ==}
+ 
+@@ -6405,6 +6416,10 @@ packages:
+     resolution: {integrity: sha512-bX0aUz5e7rlY1lKz1rFrqnNbl/l1CHvvysYB2Jn+C3WNs7nL6FnQjuxLhGwyRdW9W1bFokDoOVgPMIOi/Nn9/g==}
+     engines: {node: '>=10'}
+ 
++  '@opentelemetry/api-logs@0.205.0':
++    resolution: {integrity: sha512-wBlPk1nFB37Hsm+3Qy73yQSobVn28F4isnWIBvKpd5IUH/eat8bwcL02H9yzmHyyPmukeccSl2mbN5sDQZYnPg==}
++    engines: {node: '>=8.0.0'}
++
+   '@opentelemetry/api-logs@0.54.0':
+     resolution: {integrity: sha512-9HhEh5GqFrassUndqJsyW7a0PzfyWr2eV2xwzHLIS+wX3125+9HE9FMRAKmJRwxZhgZGwH3HNQQjoMGZqmOeVA==}
+     engines: {node: '>=14'}
+@@ -6429,48 +6444,108 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/context-async-hooks@2.1.0':
++    resolution: {integrity: sha512-zOyetmZppnwTyPrt4S7jMfXiSX9yyfF0hxlA8B5oo2TtKl+/RGCy7fi4DrBfIf3lCPrkKsRBWZZD7RFojK7FDg==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.0.0 <1.10.0'
++
+   '@opentelemetry/core@1.27.0':
+     resolution: {integrity: sha512-yQPKnK5e+76XuiqUH/gKyS8wv/7qITd5ln56QkBTf3uggr0VkXOXfcaAuG330UfdYu83wsyoBwqwxigpIG+Jkg==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/core@2.1.0':
++    resolution: {integrity: sha512-RMEtHsxJs/GiHHxYT58IY57UXAQTuUnZVco6ymDEqTNlJKTimM4qPUPVe8InNFyBjhHBEAx4k3Q8LtNayBsbUQ==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.0.0 <1.10.0'
++
++  '@opentelemetry/exporter-logs-otlp-grpc@0.205.0':
++    resolution: {integrity: sha512-jQlw7OHbqZ8zPt+pOrW2KGN7T55P50e3NXBMr4ckPOF+DWDwSy4W7mkG09GpYWlQAQ5C9BXg5gfUlv5ldTgWsw==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-logs-otlp-grpc@0.54.2':
+     resolution: {integrity: sha512-MQNmV5r96+5n3axLFgNYtVy62x8Ru7VERZH3zgC50KDcIKWCiQT3vHOtzakhzd1Wq0HqOgu6bzKdwzneSoDrEQ==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-logs-otlp-http@0.205.0':
++    resolution: {integrity: sha512-5JteMyVWiro4ghF0tHQjfE6OJcF7UBUcoEqX3UIQ5jutKP1H+fxFdyhqjjpmeHMFxzOHaYuLlNR1Bn7FOjGyJg==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-logs-otlp-http@0.54.2':
+     resolution: {integrity: sha512-wYeCSbX2XWX2wFslnfQ/YFUolO0fj2nUiGI7oEQWpLKSg40Lc4xOOW14X/EXOkCCijhP7bigo6nvyEQlxEVLjA==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-logs-otlp-proto@0.205.0':
++    resolution: {integrity: sha512-q3VS9wS+lpZ01txKxiDGBtBpTNge3YhbVEFDgem9ZQR9eI3EZ68+9tVZH9zJcSxI37nZPJ6lEEZO58yEjYZsVA==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-logs-otlp-proto@0.54.2':
+     resolution: {integrity: sha512-agrzFbSNmIy6dhkyg41ERlEDUDqkaUJj2n/tVRFp9Tl+6wyNVPsqmwU5RWJOXpyK+lYH/znv6A47VpTeJF0lrw==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-metrics-otlp-grpc@0.205.0':
++    resolution: {integrity: sha512-1Vxlo4lUwqSKYX+phFkXHKYR3DolFHxCku6lVMP1H8sVE3oj4wwmwxMzDsJ7zF+sXd8M0FCr+ckK4SnNNKkV+w==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-metrics-otlp-grpc@0.54.0':
+     resolution: {integrity: sha512-xzehh4aIoOuUrS2WFDlKVIz3Ayufa4AO8JOYwUsb65e8oWT3VWJV/V6kV80zC5xK/Wv/xJxfCBNA4FPazW1eDg==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-metrics-otlp-http@0.205.0':
++    resolution: {integrity: sha512-fFxNQ/HbbpLmh1pgU6HUVbFD1kNIjrkoluoKJkh88+gnmpFD92kMQ8WFNjPnSbjg2mNVnEkeKXgCYEowNW+p1w==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-metrics-otlp-http@0.54.0':
+     resolution: {integrity: sha512-9jRNyeyjPjGGRY4Fx7NdIAJ8Rook5D5z1toCp+xevujQcltgZOO/3rCqMo95UiY3d6zQu/H9ky5zzeCaYtXijg==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-metrics-otlp-proto@0.205.0':
++    resolution: {integrity: sha512-qIbNnedw9QfFjwpx4NQvdgjK3j3R2kWH/2T+7WXAm1IfMFe9fwatYxE61i7li4CIJKf8HgUC3GS8Du0C3D+AuQ==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-metrics-otlp-proto@0.54.0':
+     resolution: {integrity: sha512-2XOuSna24CWn1vCTqu/dY0Iva+3azP3tIPffjbCy+EDboATT6wpDJSkuT0gMgVb1HG7h0hxdq5XMIlJk/pS03A==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-prometheus@0.205.0':
++    resolution: {integrity: sha512-xsot/Qm9VLDTag4GEwAunD1XR1U8eBHTLAgO7IZNo2JuD/c/vL7xmDP7mQIUr6Lk3gtj/yGGIR2h3vhTeVzv4w==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
++  '@opentelemetry/exporter-trace-otlp-grpc@0.205.0':
++    resolution: {integrity: sha512-ZBksUk84CcQOuDJB65yu5A4PORkC4qEsskNwCrPZxDLeWjPOFZNSWt0E0jQxKCY8PskLhjNXJYo12YaqsYvGFA==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-trace-otlp-grpc@0.54.0':
+     resolution: {integrity: sha512-DOoK7yk/L/RHoyuYTxIyGY7PLFSTS7OGNks9htMS7eAFkm4Lsa6EtPlGANCT39NXWP4XIQR1c+Y+YIQ7lJdI+w==}
+     engines: {node: '>=14'}
+@@ -6483,6 +6558,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-trace-otlp-http@0.205.0':
++    resolution: {integrity: sha512-vr2bwwPCSc9u7rbKc74jR+DXFvyMFQo9o5zs+H/fgbK672Whw/1izUKVf+xfWOdJOvuwTnfWxy+VAY+4TSo74Q==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-trace-otlp-http@0.54.0':
+     resolution: {integrity: sha512-00X6rtr6Ew59+MM9pPSH7Ww5ScpWKBLiBA49awbPqQuVL/Bp0qp7O1cTxKHgjWdNkhsELzJxAEYwuRnDGrMXyA==}
+     engines: {node: '>=14'}
+@@ -6495,6 +6576,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/exporter-trace-otlp-proto@0.205.0':
++    resolution: {integrity: sha512-bGtFzqiENO2GpJk988mOBMe0MfeNpTQjbLm/LBijas6VRyEDQarUzdBHpFlu89A25k1+BCntdWGsWTa9Ai4FyA==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/exporter-trace-otlp-proto@0.54.0':
+     resolution: {integrity: sha512-cpDQj5wl7G8pLu3lW94SnMpn0C85A9Ehe7+JBow2IL5DGPWXTkynFngMtCC3PpQzQgzlyOVe0MVZfoBB3M5ECA==}
+     engines: {node: '>=14'}
+@@ -6513,6 +6600,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.0.0
+ 
++  '@opentelemetry/exporter-zipkin@2.1.0':
++    resolution: {integrity: sha512-0mEI0VDZrrX9t5RE1FhAyGz+jAGt96HSuXu73leswtY3L5YZD11gtcpARY2KAx/s6Z2+rj5Mhj566JsI2C7mfA==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.0.0
++
+   '@opentelemetry/instrumentation-amqplib@0.43.0':
+     resolution: {integrity: sha512-ALjfQC+0dnIEcvNYsbZl/VLh7D2P1HhFF4vicRKHhHFIUV3Shpg4kXgiek5PLhmeKSIPiUB25IYH5RIneclL4A==}
+     engines: {node: '>=14'}
+@@ -6747,6 +6840,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/instrumentation@0.205.0':
++    resolution: {integrity: sha512-cgvm7tvQdu9Qo7VurJP84wJ7ZV9F6WqDDGZpUc6rUEXwjV7/bXWs0kaYp9v+1Vh1+3TZCD3i6j/lUBcPhu8NhA==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/instrumentation@0.46.0':
+     resolution: {integrity: sha512-a9TijXZZbk0vI5TGLZl+0kxyFfrXHhX6Svtz7Pp2/VBlCSKrazuULEyoJQrOknJyFWNMEmbbJgOciHCCpQcisw==}
+     engines: {node: '>=14'}
+@@ -6759,6 +6858,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/otlp-exporter-base@0.205.0':
++    resolution: {integrity: sha512-2MN0C1IiKyo34M6NZzD6P9Nv9Dfuz3OJ3rkZwzFmF6xzjDfqqCTatc9v1EpNfaP55iDOCLHFyYNCgs61FFgtUQ==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/otlp-exporter-base@0.54.0':
+     resolution: {integrity: sha512-g+H7+QleVF/9lz4zhaR9Dt4VwApjqG5WWupy5CTMpWJfHB/nLxBbX73GBZDgdiNfh08nO3rNa6AS7fK8OhgF5g==}
+     engines: {node: '>=14'}
+@@ -6771,6 +6876,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/otlp-grpc-exporter-base@0.205.0':
++    resolution: {integrity: sha512-AeuLfrciGYffqsp4EUTdYYc6Ee2BQS+hr08mHZk1C524SFWx0WnfcTnV0NFXbVURUNU6DZu1DhS89zRRrcx/hg==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/otlp-grpc-exporter-base@0.54.0':
+     resolution: {integrity: sha512-Yl2Dw0jlRWisEia9Hv/N8u2JLITCvzA6gAIKEvxpEu6nwHEftD2WhTJMIclkTtfmSW0rLmEEXymwmboG4xDN0Q==}
+     engines: {node: '>=14'}
+@@ -6783,6 +6894,12 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': ^1.3.0
+ 
++  '@opentelemetry/otlp-transformer@0.205.0':
++    resolution: {integrity: sha512-KmObgqPtk9k/XTlWPJHdMbGCylRAmMJNXIRh6VYJmvlRDMfe+DonH41G7eenG8t4FXn3fxOGh14o/WiMRR6vPg==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': ^1.3.0
++
+   '@opentelemetry/otlp-transformer@0.54.0':
+     resolution: {integrity: sha512-jRexIASQQzdK4AjfNIBfn94itAq4Q8EXR9d3b/OVbhd3kKQKvMr7GkxYDjbeTbY7hHCOLcLfJ3dpYQYGOe8qOQ==}
+     engines: {node: '>=14'}
+@@ -6807,12 +6924,24 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/propagator-b3@2.1.0':
++    resolution: {integrity: sha512-yOdHmFseIChYanddMMz0mJIFQHyjwbNhoxc65fEAA8yanxcBPwoFDoh1+WBUWAO/Z0NRgk+k87d+aFIzAZhcBw==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.0.0 <1.10.0'
++
+   '@opentelemetry/propagator-jaeger@1.27.0':
+     resolution: {integrity: sha512-EI1bbK0wn0yIuKlc2Qv2LKBRw6LiUWevrjCF80fn/rlaB+7StAi8Y5s8DBqAYNpY7v1q86+NjU18v7hj2ejU3A==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/propagator-jaeger@2.1.0':
++    resolution: {integrity: sha512-QYo7vLyMjrBCUTpwQBF/e+rvP7oGskrSELGxhSvLj5gpM0az9oJnu/0O4l2Nm7LEhAff80ntRYKkAcSwVgvSVQ==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.0.0 <1.10.0'
++
+   '@opentelemetry/redis-common@0.36.2':
+     resolution: {integrity: sha512-faYX1N0gpLhej/6nyp6bgRjzAKXn5GOEMYY7YhciSfCoITAktLUtQ36d24QEWNA1/WA1y6qQunCe0OhHRkVl9g==}
+     engines: {node: '>=14'}
+@@ -6853,6 +6982,18 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/resources@2.1.0':
++    resolution: {integrity: sha512-1CJjf3LCvoefUOgegxi8h6r4B/wLSzInyhGP2UmIBYNlo4Qk5CZ73e1eEyWmfXvFtm1ybkmfb2DqWvspsYLrWw==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.3.0 <1.10.0'
++
++  '@opentelemetry/sdk-logs@0.205.0':
++    resolution: {integrity: sha512-nyqhNQ6eEzPWQU60Nc7+A5LIq8fz3UeIzdEVBQYefB4+msJZ2vuVtRuk9KxPMw1uHoHDtYEwkr2Ct0iG29jU8w==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.4.0 <1.10.0'
++
+   '@opentelemetry/sdk-logs@0.54.0':
+     resolution: {integrity: sha512-HeWvOPiWhEw6lWvg+lCIi1WhJnIPbI4/OFZgHq9tKfpwF3LX6/kk3+GR8sGUGAEZfbjPElkkngzvd2s03zbD7Q==}
+     engines: {node: '>=14'}
+@@ -6871,6 +7012,18 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': '>=1.3.0 <1.10.0'
+ 
++  '@opentelemetry/sdk-metrics@2.1.0':
++    resolution: {integrity: sha512-J9QX459mzqHLL9Y6FZ4wQPRZG4TOpMCyPOh6mkr/humxE1W2S3Bvf4i75yiMW9uyed2Kf5rxmLhTm/UK8vNkAw==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.9.0 <1.10.0'
++
++  '@opentelemetry/sdk-node@0.205.0':
++    resolution: {integrity: sha512-Y4Wcs8scj/Wy1u61pX1ggqPXPtCsGaqx/UnFu7BtRQE1zCQR+b0h56K7I0jz7U2bRlPUZIFdnNLtoaJSMNzz2g==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.3.0 <1.10.0'
++
+   '@opentelemetry/sdk-node@0.54.2':
+     resolution: {integrity: sha512-afn8GBpA7Gb55aU0LUxIQ+oe6QxLhsf+Te9iw12Non3ZAspzdoCcfz5+hqecwpuVpEDdnj5iSalF7VVaL2pDeg==}
+     engines: {node: '>=14'}
+@@ -6883,16 +7036,32 @@ packages:
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/sdk-trace-base@2.1.0':
++    resolution: {integrity: sha512-uTX9FBlVQm4S2gVQO1sb5qyBLq/FPjbp+tmGoxu4tIgtYGmBYB44+KX/725RFDe30yBSaA9Ml9fqphe1hbUyLQ==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.3.0 <1.10.0'
++
+   '@opentelemetry/sdk-trace-node@1.27.0':
+     resolution: {integrity: sha512-dWZp/dVGdUEfRBjBq2BgNuBlFqHCxyyMc8FsN0NX15X07mxSUO0SZRLyK/fdAVrde8nqFI/FEdMH4rgU9fqJfQ==}
+     engines: {node: '>=14'}
+     peerDependencies:
+       '@opentelemetry/api': '>=1.0.0 <1.10.0'
+ 
++  '@opentelemetry/sdk-trace-node@2.1.0':
++    resolution: {integrity: sha512-SvVlBFc/jI96u/mmlKm86n9BbTCbQ35nsPoOohqJX6DXH92K0kTe73zGY5r8xoI1QkjR9PizszVJLzMC966y9Q==}
++    engines: {node: ^18.19.0 || >=20.6.0}
++    peerDependencies:
++      '@opentelemetry/api': '>=1.0.0 <1.10.0'
++
+   '@opentelemetry/semantic-conventions@1.27.0':
+     resolution: {integrity: sha512-sAay1RrB+ONOem0OZanAR1ZI/k7yDpnOQSQmTMuGImUQb2y8EbSaCJ94FQluM74xoU03vlb2d2U90hZluL6nQg==}
+     engines: {node: '>=14'}
+ 
++  '@opentelemetry/semantic-conventions@1.40.0':
++    resolution: {integrity: sha512-cifvXDhcqMwwTlTK04GBNeIe7yyo28Mfby85QXFe1Yk8nmi36Ab/5UQwptOx84SsoGNRg+EVSjwzfSZMy6pmlw==}
++    engines: {node: '>=14'}
++
+   '@opentelemetry/sql-common@0.40.1':
+     resolution: {integrity: sha512-nSDlnHSqzC3pXn/wZEZVLuAuJ1MYMXPBwtv2qAbCa3847SaHItdE7SzUq/Jtb0KZmh1zfAbNi3AAMjztTT4Ugg==}
+     engines: {node: '>=14'}
+@@ -12865,6 +13034,10 @@ packages:
+     resolution: {integrity: sha512-Odju3uBUJyVCkW64nLD4wKLhbh93bh6vIg/ZIXkWiLPBrdgtc65+tls/qml+un3pr6JqYVFDZbbmLDQT68rTOQ==}
+     engines: {node: '>=18'}
+ 
++  gaxios@7.1.4:
++    resolution: {integrity: sha512-bTIgTsM2bWn3XklZISBTQX7ZSddGW+IO3bMdGaemHZ3tbqExMENHLx6kKZ/KlejgrMtj8q7wBItt51yegqalrA==}
++    engines: {node: '>=18'}
++
+   gcp-metadata@6.1.0:
+     resolution: {integrity: sha512-Jh/AIwwgaxan+7ZUUmRLCjtchyDiqh4KjBJ5tW3plBZb5iL/BPcso8A5DlzeD9qlw0duCamnNdpFjxwaT0KyKg==}
+     engines: {node: '>=14'}
+@@ -12873,6 +13046,10 @@ packages:
+     resolution: {integrity: sha512-UcO3kefx6dCcZkgcTGgVOTFb7b1LlQ02hY1omMjjrrBzkajRMCFgYOjs7J71WqnuG1k2b+9ppGL7FsOfhZMQKQ==}
+     engines: {node: '>=18'}
+ 
++  gcp-metadata@8.1.2:
++    resolution: {integrity: sha512-zV/5HKTfCeKWnxG0Dmrw51hEWFGfcF2xiXqcA3+J90WDuP0SvoiSO5ORvcBsifmx/FoIjgQN3oNOGaQ5PhLFkg==}
++    engines: {node: '>=18'}
++
+   generate-function@2.3.1:
+     resolution: {integrity: sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==}
+ 
+@@ -13055,6 +13232,10 @@ packages:
+     resolution: {integrity: sha512-GspVjZj1RbyRWpQ9FbAXMKjFGzZwDKnUHi66JJ+tcjcu5/xYAP1pdlWotCuIkMwjfVsxxDvsGZXGLzRt72D0sQ==}
+     engines: {node: '>=18'}
+ 
++  google-auth-library@10.6.2:
++    resolution: {integrity: sha512-e27Z6EThmVNNvtYASwQxose/G57rkRuaRbQyxM2bvYLLX/GqWZ5chWq2EBoUchJbCc57eC9ArzO5wMsEmWftCw==}
++    engines: {node: '>=18'}
++
+   google-auth-library@9.15.1:
+     resolution: {integrity: sha512-Jb6Z0+nvECVz+2lzSMt9u98UsoakXxA2HGHMCxh+so3n90XgYWkq5dur19JAJV7ONiJY22yBTyJB1TSkvPq9Ng==}
+     engines: {node: '>=14'}
+@@ -13071,6 +13252,10 @@ packages:
+     resolution: {integrity: sha512-rcX58I7nqpu4mbKztFeOAObbomBbHU2oIb/d3tJfF3dizGSApqtSwYJigGCooHdnMyQBIw8BrWyK96w3YXgr6A==}
+     engines: {node: '>=14'}
+ 
++  google-logging-utils@1.1.3:
++    resolution: {integrity: sha512-eAmLkjDjAFCVXg7A1unxHsLf961m6y17QFqXqAXGj/gVkKFrEICfStRfwUlGNfeCEjNRa32JEWOUTlYXPyyKvA==}
++    engines: {node: '>=14'}
++
+   google-protobuf@3.21.2:
+     resolution: {integrity: sha512-3MSOYFO5U9mPGikIYCzK0SaThypfGgS6bHqrUGXG3DPHCrb+txNqeEcns1W0lkGfk0rCyNXm7xB9rMxnCiZOoA==}
+ 
+@@ -13556,6 +13741,14 @@ packages:
+     resolution: {integrity: sha512-7PnF4oN3CvZF23ADhA5wRaYEQpJ8qygSkbtTXWBeXWXmEVRXK+1ITciHWwHhsjv1TmW0MgacIv6hEi5pX5NQdA==}
+     engines: {node: '>=10'}
+ 
++  ini@5.0.0:
++    resolution: {integrity: sha512-+N0ngpO3e7cRUWOJAS7qw0IZIVc6XPrW4MlFBdD066F2L4k1L6ker3hLqSq7iXxU5tgS4WGkIUElWn5vogAEnw==}
++    engines: {node: ^18.17.0 || >=20.5.0}
++
++  ini@6.0.0:
++    resolution: {integrity: sha512-IBTdIkzZNOpqm7q3dRqJvMaldXjDHWkEDfrwGEQTs5eaQMWV+djAhR+wahyNNMAa+qpbDUhBMVt4ZKNwpPm7xQ==}
++    engines: {node: ^20.17.0 || >=22.9.0}
++
+   inline-style-parser@0.1.1:
+     resolution: {integrity: sha512-7NXolsK4CAS5+xvdj5OMMbI962hU/wvwoxk+LWR9Ek9bVtyuuYScDN6eS0rUm6TxApFpw7CX1o4uJzcd4AyD3Q==}
+ 
+@@ -17731,6 +17924,9 @@ packages:
+     resolution: {integrity: sha512-i5lLI6iw9AU3Uu4szRNPPEkomnkjRTaVt9hy/bn5g/oSzekBSMeLZblcjP74AW0vBabqERLLIrz+gR8QYR54Tw==}
+     deprecated: This version has a critical bug in fallback handling. Please upgrade to reflect-metadata@0.2.2 or newer.
+ 
++  reflect-metadata@0.2.2:
++    resolution: {integrity: sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q==}
++
+   reflect.getprototypeof@1.0.10:
+     resolution: {integrity: sha512-00o4I+DVrefhv+nX0ulyi3biSHCPDe+yLv5o/p6d/UVlirijB8E16FtfwSAi4g3tcqrQ4lRAqQSoFEZJehYEcw==}
+     engines: {node: '>= 0.4'}
+@@ -25324,6 +25520,15 @@ snapshots:
+       enabled: 2.0.0
+       kuler: 2.0.0
+ 
++  '@databricks/sdk-experimental@0.15.0':
++    dependencies:
++      google-auth-library: 10.6.2
++      ini: 6.0.0
++      reflect-metadata: 0.2.2
++      semver: 7.7.1
++    transitivePeerDependencies:
++      - supports-color
++
+   '@datastax/astra-db-ts@1.5.0':
+     dependencies:
+       fetch-h2: 3.0.2
+@@ -27442,6 +27647,17 @@ snapshots:
+ 
+   '@mixmark-io/domino@2.2.0': {}
+ 
++  '@mlflow/core@0.2.0':
++    dependencies:
++      '@databricks/sdk-experimental': 0.15.0
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/sdk-node': 0.205.0(@opentelemetry/api@1.9.0)
++      bignumber.js: 9.1.2
++      fast-safe-stringify: 2.1.1
++      ini: 5.0.0
++    transitivePeerDependencies:
++      - supports-color
++
+   '@modelcontextprotocol/sdk@0.5.0':
+     dependencies:
+       content-type: 1.0.5
+@@ -27939,6 +28155,10 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  '@opentelemetry/api-logs@0.205.0':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++
+   '@opentelemetry/api-logs@0.54.0':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28007,11 +28227,30 @@ snapshots:
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+ 
++  '@opentelemetry/context-async-hooks@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++
+   '@opentelemetry/core@1.27.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+       '@opentelemetry/semantic-conventions': 1.27.0
+ 
++  '@opentelemetry/core@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/semantic-conventions': 1.40.0
++
++  '@opentelemetry/exporter-logs-otlp-grpc@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@grpc/grpc-js': 1.10.10
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-grpc-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-logs': 0.205.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-logs-otlp-grpc@0.54.2(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@grpc/grpc-js': 1.10.10
+@@ -28021,6 +28260,15 @@ snapshots:
+       '@opentelemetry/otlp-transformer': 0.54.2(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-logs': 0.54.2(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-logs-otlp-http@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-logs': 0.205.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-logs-otlp-http@0.54.2(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28030,6 +28278,17 @@ snapshots:
+       '@opentelemetry/otlp-transformer': 0.54.2(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-logs': 0.54.2(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-logs-otlp-proto@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-logs': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-logs-otlp-proto@0.54.2(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28041,6 +28300,18 @@ snapshots:
+       '@opentelemetry/sdk-logs': 0.54.2(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-metrics-otlp-grpc@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@grpc/grpc-js': 1.10.10
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-metrics-otlp-http': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-grpc-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-metrics-otlp-grpc@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@grpc/grpc-js': 1.10.10
+@@ -28053,6 +28324,15 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-metrics': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-metrics-otlp-http@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-metrics-otlp-http@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28062,6 +28342,16 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-metrics': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-metrics-otlp-proto@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-metrics-otlp-http': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-metrics-otlp-proto@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28072,6 +28362,24 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-metrics': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-prometheus@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++
++  '@opentelemetry/exporter-trace-otlp-grpc@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@grpc/grpc-js': 1.10.10
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-grpc-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-trace-otlp-grpc@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@grpc/grpc-js': 1.10.10
+@@ -28092,6 +28400,15 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-trace-otlp-http@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-trace-otlp-http@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28110,6 +28427,15 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/exporter-trace-otlp-proto@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28136,6 +28462,14 @@ snapshots:
+       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/semantic-conventions': 1.27.0
+ 
++  '@opentelemetry/exporter-zipkin@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/semantic-conventions': 1.40.0
++
+   '@opentelemetry/instrumentation-amqplib@0.43.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28471,6 +28805,15 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  '@opentelemetry/instrumentation@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      import-in-the-middle: 1.11.2
++      require-in-the-middle: 7.4.0
++    transitivePeerDependencies:
++      - supports-color
++
+   '@opentelemetry/instrumentation@0.46.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28494,6 +28837,12 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  '@opentelemetry/otlp-exporter-base@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/otlp-exporter-base@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28506,6 +28855,14 @@ snapshots:
+       '@opentelemetry/core': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/otlp-transformer': 0.54.2(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/otlp-grpc-exporter-base@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@grpc/grpc-js': 1.10.10
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-exporter-base': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/otlp-transformer': 0.205.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/otlp-grpc-exporter-base@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@grpc/grpc-js': 1.10.10
+@@ -28522,6 +28879,17 @@ snapshots:
+       '@opentelemetry/otlp-exporter-base': 0.54.2(@opentelemetry/api@1.9.0)
+       '@opentelemetry/otlp-transformer': 0.54.2(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/otlp-transformer@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-logs': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++      protobufjs: 7.4.0
++
+   '@opentelemetry/otlp-transformer@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28553,11 +28921,21 @@ snapshots:
+       '@opentelemetry/api': 1.9.0
+       '@opentelemetry/core': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/propagator-b3@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/propagator-jaeger@1.27.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+       '@opentelemetry/core': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/propagator-jaeger@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/redis-common@0.36.2': {}
+ 
+   '@opentelemetry/resource-detector-alibaba-cloud@0.29.4(@opentelemetry/api@1.9.0)':
+@@ -28605,6 +28983,19 @@ snapshots:
+       '@opentelemetry/core': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/semantic-conventions': 1.27.0
+ 
++  '@opentelemetry/resources@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/semantic-conventions': 1.40.0
++
++  '@opentelemetry/sdk-logs@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/sdk-logs@0.54.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28625,6 +29016,40 @@ snapshots:
+       '@opentelemetry/core': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+ 
++  '@opentelemetry/sdk-metrics@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++
++  '@opentelemetry/sdk-node@0.205.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/api-logs': 0.205.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-logs-otlp-grpc': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-logs-otlp-http': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-logs-otlp-proto': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-metrics-otlp-grpc': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-metrics-otlp-http': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-metrics-otlp-proto': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-prometheus': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-trace-otlp-grpc': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-trace-otlp-http': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-trace-otlp-proto': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/exporter-zipkin': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/instrumentation': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/propagator-b3': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/propagator-jaeger': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-logs': 0.205.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-metrics': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-node': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/semantic-conventions': 1.40.0
++    transitivePeerDependencies:
++      - supports-color
++
+   '@opentelemetry/sdk-node@0.54.2(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28654,6 +29079,13 @@ snapshots:
+       '@opentelemetry/resources': 1.27.0(@opentelemetry/api@1.9.0)
+       '@opentelemetry/semantic-conventions': 1.27.0
+ 
++  '@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/resources': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/semantic-conventions': 1.40.0
++
+   '@opentelemetry/sdk-trace-node@1.27.0(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -28664,8 +29096,17 @@ snapshots:
+       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
+       semver: 7.7.1
+ 
++  '@opentelemetry/sdk-trace-node@2.1.0(@opentelemetry/api@1.9.0)':
++    dependencies:
++      '@opentelemetry/api': 1.9.0
++      '@opentelemetry/context-async-hooks': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
++      '@opentelemetry/sdk-trace-base': 2.1.0(@opentelemetry/api@1.9.0)
++
+   '@opentelemetry/semantic-conventions@1.27.0': {}
+ 
++  '@opentelemetry/semantic-conventions@1.40.0': {}
++
+   '@opentelemetry/sql-common@0.40.1(@opentelemetry/api@1.9.0)':
+     dependencies:
+       '@opentelemetry/api': 1.9.0
+@@ -36346,6 +36787,14 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  gaxios@7.1.4:
++    dependencies:
++      extend: 3.0.2
++      https-proxy-agent: 7.0.4
++      node-fetch: 3.3.2
++    transitivePeerDependencies:
++      - supports-color
++
+   gcp-metadata@6.1.0(encoding@0.1.13):
+     dependencies:
+       gaxios: 6.3.0(encoding@0.1.13)
+@@ -36362,6 +36811,14 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
++  gcp-metadata@8.1.2:
++    dependencies:
++      gaxios: 7.1.4
++      google-logging-utils: 1.1.3
++      json-bigint: 1.0.0
++    transitivePeerDependencies:
++      - supports-color
++
+   generate-function@2.3.1:
+     dependencies:
+       is-property: 1.0.2
+@@ -36603,7 +37060,18 @@ snapshots:
+       gcp-metadata: 7.0.1
+       google-logging-utils: 1.1.1
+       gtoken: 8.0.0
+-      jws: 4.0.0
++      jws: 4.0.1
++    transitivePeerDependencies:
++      - supports-color
++
++  google-auth-library@10.6.2:
++    dependencies:
++      base64-js: 1.5.1
++      ecdsa-sig-formatter: 1.0.11
++      gaxios: 7.1.4
++      gcp-metadata: 8.1.2
++      google-logging-utils: 1.1.3
++      jws: 4.0.1
+     transitivePeerDependencies:
+       - supports-color
+ 
+@@ -36614,7 +37082,7 @@ snapshots:
+       gaxios: 6.3.0(encoding@0.1.13)
+       gcp-metadata: 6.1.0(encoding@0.1.13)
+       gtoken: 7.1.0(encoding@0.1.13)
+-      jws: 4.0.0
++      jws: 4.0.1
+     transitivePeerDependencies:
+       - encoding
+       - supports-color
+@@ -36651,6 +37119,8 @@ snapshots:
+ 
+   google-logging-utils@1.1.1: {}
+ 
++  google-logging-utils@1.1.3: {}
++
+   google-protobuf@3.21.2: {}
+ 
+   gopd@1.2.0: {}
+@@ -36711,7 +37181,7 @@ snapshots:
+   gtoken@7.1.0(encoding@0.1.13):
+     dependencies:
+       gaxios: 6.3.0(encoding@0.1.13)
+-      jws: 4.0.0
++      jws: 4.0.1
+     transitivePeerDependencies:
+       - encoding
+       - supports-color
+@@ -36719,7 +37189,7 @@ snapshots:
+   gtoken@8.0.0:
+     dependencies:
+       gaxios: 7.1.1
+-      jws: 4.0.0
++      jws: 4.0.1
+     transitivePeerDependencies:
+       - supports-color
+ 
+@@ -37274,6 +37744,10 @@ snapshots:
+ 
+   ini@2.0.0: {}
+ 
++  ini@5.0.0: {}
++
++  ini@6.0.0: {}
++
+   inline-style-parser@0.1.1: {}
+ 
+   inquirer@10.2.2:
+@@ -42620,6 +43094,8 @@ snapshots:
+ 
+   reflect-metadata@0.2.1: {}
+ 
++  reflect-metadata@0.2.2: {}
++
+   reflect.getprototypeof@1.0.10:
+     dependencies:
+       call-bind: 1.0.8
+
+From b22832c8d412852b5847c7b0e191bd4816077ed7 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Wed, 22 Apr 2026 19:02:03 +0800
+Subject: [PATCH 02/10] update
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ .../credentials/MLflowApi.credential.ts       | 49 +++++++++++++++++++
+ packages/ui/src/assets/images/mlflow.svg      |  1 +
+ .../src/ui-component/extended/AnalyseFlow.jsx | 29 +++++++++++
+ 3 files changed, 79 insertions(+)
+ create mode 100644 packages/components/credentials/MLflowApi.credential.ts
+ create mode 100644 packages/ui/src/assets/images/mlflow.svg
+
+diff --git a/packages/components/credentials/MLflowApi.credential.ts b/packages/components/credentials/MLflowApi.credential.ts
+new file mode 100644
+index 00000000000..539c668d6ac
+--- /dev/null
++++ b/packages/components/credentials/MLflowApi.credential.ts
+@@ -0,0 +1,49 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class MLflowApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'MLflow API'
++        this.name = 'mlflowApi'
++        this.version = 1.0
++        this.description =
++            'Connect to an MLflow tracking server. For Databricks, set Tracking URI to "databricks" and provide a personal access token.'
++        this.inputs = [
++            {
++                label: 'Tracking URI',
++                name: 'mlflowTrackingUri',
++                type: 'string',
++                default: 'http://localhost:5000',
++                placeholder: 'http://localhost:5000'
++            },
++            {
++                label: 'Token',
++                name: 'mlflowToken',
++                type: 'password',
++                optional: true,
++                description: 'Bearer token for OSS MLflow or Databricks personal access token'
++            },
++            {
++                label: 'Username',
++                name: 'mlflowUsername',
++                type: 'string',
++                optional: true,
++                description: 'Username for basic auth (OSS MLflow only)'
++            },
++            {
++                label: 'Password',
++                name: 'mlflowPassword',
++                type: 'password',
++                optional: true,
++                description: 'Password for basic auth (OSS MLflow only)'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: MLflowApi }
+diff --git a/packages/ui/src/assets/images/mlflow.svg b/packages/ui/src/assets/images/mlflow.svg
+new file mode 100644
+index 00000000000..3b8e08af783
+--- /dev/null
++++ b/packages/ui/src/assets/images/mlflow.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="109" height="40" fill="none" viewBox="0 0 109 40" class="h-[36px]" aria-hidden="true"><path fill="#fff" d="M0 31.032v-15.53h3.543v1.968c.893-1.594 2.84-2.425 4.593-2.425 2.042 0 3.828.926 4.658 2.745 1.216-2.043 3.034-2.745 5.043-2.745 2.81 0 5.49 1.787 5.49 5.904v10.083h-3.574v-9.478c0-1.818-.926-3.19-3-3.19-1.947 0-3.224 1.53-3.224 3.445v9.22H9.893v-9.475c0-1.786-.898-3.18-3.003-3.18-1.977 0-3.223 1.467-3.223 3.444v9.221ZM27.855 31.032V7.929h3.703v23.103ZM30.07 39.487c.833.232 1.582.383 3.17.383 2.953 0 6.436-1.665 7.353-6.339l3.786-18.739h5.629l.687-3.117h-5.686l.765-3.725c.586-2.892 2.186-4.358 4.754-4.358.668 0 .48.058 1.076.17L52.427.57c-.793-.237-1.503-.379-3.049-.379a7.32 7.32 0 0 0-4.528 1.484c-1.441 1.114-2.393 2.75-2.827 4.863l-1.066 5.137h-5.034l-.411 3.12h4.823L36.859 32.12c-.383 1.965-1.5 4.315-4.708 4.315-.727 0-.463-.055-1.121-.162ZM53.342 30.905H49.64l5.074-23.309h3.701ZM71.807 16.477A7.962 7.962 0 0 0 60.97 27.904l2.425-1.78a5.005 5.005 0 0 1 3.845-8.145v1.895ZM62.618 29.472a7.962 7.962 0 0 0 10.836-11.428l-2.425 1.78a5.005 5.005 0 0 1-3.845 8.145v-1.894ZM78.092 15.493h4.044l.823 10.612 5.759-10.612 3.839.055 1.508 10.557 5.074-10.612 3.701.055-7.678 15.493H91.46l-1.783-11.106-5.895 11.106h-3.84ZM105.072 15.768h-.766v-.266h1.845v.272h-.765v2.243h-.314ZM106.614 15.502h.383l.482 1.34q.091.259.178.524h.018c.059-.176.113-.352.172-.524l.478-1.34h.383v2.515h-.298V16.63c0-.22.024-.523.04-.747h-.016l-.191.574-.475 1.304h-.208l-.481-1.302-.191-.574h-.015c.017.224.042.527.042.747v1.387h-.291Z"></path></svg>
+diff --git a/packages/ui/src/ui-component/extended/AnalyseFlow.jsx b/packages/ui/src/ui-component/extended/AnalyseFlow.jsx
+index 84038f4c69c..fa24e22f648 100644
+--- a/packages/ui/src/ui-component/extended/AnalyseFlow.jsx
++++ b/packages/ui/src/ui-component/extended/AnalyseFlow.jsx
+@@ -32,6 +32,7 @@ import langwatchSVG from '@/assets/images/langwatch.svg'
+ import arizePNG from '@/assets/images/arize.png'
+ import phoenixPNG from '@/assets/images/phoenix.png'
+ import opikPNG from '@/assets/images/opik.png'
++import mlflowSVG from '@/assets/images/mlflow.svg'
+ 
+ // store
+ import useNotifier from '@/utils/useNotifier'
+@@ -217,6 +218,34 @@ const analyticProviders = [
+                 optional: true
+             }
+         ]
++    },
++    {
++        label: 'MLflow',
++        name: 'mlflow',
++        icon: mlflowSVG,
++        url: 'https://mlflow.org',
++        inputs: [
++            {
++                label: 'Connect Credential',
++                name: 'credential',
++                type: 'credential',
++                credentialNames: ['mlflowApi']
++            },
++            {
++                label: 'Experiment ID',
++                name: 'experimentId',
++                type: 'string',
++                optional: true,
++                description: 'MLflow experiment ID where traces will be logged. If not provided, the default experiment will be used.',
++                placeholder: '0'
++            },
++            {
++                label: 'On/Off',
++                name: 'status',
++                type: 'boolean',
++                optional: true
++            }
++        ]
+     }
+ ]
+ 
+
+From c67a69118c350d5be3294a18cbe0f690c680633d Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Wed, 22 Apr 2026 19:32:31 +0800
+Subject: [PATCH 03/10] update
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/ui/src/assets/images/mlflow.svg | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/assets/images/mlflow.svg b/packages/ui/src/assets/images/mlflow.svg
+index 3b8e08af783..982455180e4 100644
+--- a/packages/ui/src/assets/images/mlflow.svg
++++ b/packages/ui/src/assets/images/mlflow.svg
+@@ -1 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" width="109" height="40" fill="none" viewBox="0 0 109 40" class="h-[36px]" aria-hidden="true"><path fill="#fff" d="M0 31.032v-15.53h3.543v1.968c.893-1.594 2.84-2.425 4.593-2.425 2.042 0 3.828.926 4.658 2.745 1.216-2.043 3.034-2.745 5.043-2.745 2.81 0 5.49 1.787 5.49 5.904v10.083h-3.574v-9.478c0-1.818-.926-3.19-3-3.19-1.947 0-3.224 1.53-3.224 3.445v9.22H9.893v-9.475c0-1.786-.898-3.18-3.003-3.18-1.977 0-3.223 1.467-3.223 3.444v9.221ZM27.855 31.032V7.929h3.703v23.103ZM30.07 39.487c.833.232 1.582.383 3.17.383 2.953 0 6.436-1.665 7.353-6.339l3.786-18.739h5.629l.687-3.117h-5.686l.765-3.725c.586-2.892 2.186-4.358 4.754-4.358.668 0 .48.058 1.076.17L52.427.57c-.793-.237-1.503-.379-3.049-.379a7.32 7.32 0 0 0-4.528 1.484c-1.441 1.114-2.393 2.75-2.827 4.863l-1.066 5.137h-5.034l-.411 3.12h4.823L36.859 32.12c-.383 1.965-1.5 4.315-4.708 4.315-.727 0-.463-.055-1.121-.162ZM53.342 30.905H49.64l5.074-23.309h3.701ZM71.807 16.477A7.962 7.962 0 0 0 60.97 27.904l2.425-1.78a5.005 5.005 0 0 1 3.845-8.145v1.895ZM62.618 29.472a7.962 7.962 0 0 0 10.836-11.428l-2.425 1.78a5.005 5.005 0 0 1-3.845 8.145v-1.894ZM78.092 15.493h4.044l.823 10.612 5.759-10.612 3.839.055 1.508 10.557 5.074-10.612 3.701.055-7.678 15.493H91.46l-1.783-11.106-5.895 11.106h-3.84ZM105.072 15.768h-.766v-.266h1.845v.272h-.765v2.243h-.314ZM106.614 15.502h.383l.482 1.34q.091.259.178.524h.018c.059-.176.113-.352.172-.524l.478-1.34h.383v2.515h-.298V16.63c0-.22.024-.523.04-.747h-.016l-.191.574-.475 1.304h-.208l-.481-1.302-.191-.574h-.015c.017.224.042.527.042.747v1.387h-.291Z"></path></svg>
++<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 -34 109 109" aria-hidden="true"><path fill="#0194E2" d="M0 31.032v-15.53h3.543v1.968c.893-1.594 2.84-2.425 4.593-2.425 2.042 0 3.828.926 4.658 2.745 1.216-2.043 3.034-2.745 5.043-2.745 2.81 0 5.49 1.787 5.49 5.904v10.083h-3.574v-9.478c0-1.818-.926-3.19-3-3.19-1.947 0-3.224 1.53-3.224 3.445v9.22H9.893v-9.475c0-1.786-.898-3.18-3.003-3.18-1.977 0-3.223 1.467-3.223 3.444v9.221ZM27.855 31.032V7.929h3.703v23.103ZM30.07 39.487c.833.232 1.582.383 3.17.383 2.953 0 6.436-1.665 7.353-6.339l3.786-18.739h5.629l.687-3.117h-5.686l.765-3.725c.586-2.892 2.186-4.358 4.754-4.358.668 0 .48.058 1.076.17L52.427.57c-.793-.237-1.503-.379-3.049-.379a7.32 7.32 0 0 0-4.528 1.484c-1.441 1.114-2.393 2.75-2.827 4.863l-1.066 5.137h-5.034l-.411 3.12h4.823L36.859 32.12c-.383 1.965-1.5 4.315-4.708 4.315-.727 0-.463-.055-1.121-.162ZM53.342 30.905H49.64l5.074-23.309h3.701ZM71.807 16.477A7.962 7.962 0 0 0 60.97 27.904l2.425-1.78a5.005 5.005 0 0 1 3.845-8.145v1.895ZM62.618 29.472a7.962 7.962 0 0 0 10.836-11.428l-2.425 1.78a5.005 5.005 0 0 1-3.845 8.145v-1.894ZM78.092 15.493h4.044l.823 10.612 5.759-10.612 3.839.055 1.508 10.557 5.074-10.612 3.701.055-7.678 15.493H91.46l-1.783-11.106-5.895 11.106h-3.84ZM105.072 15.768h-.766v-.266h1.845v.272h-.765v2.243h-.314ZM106.614 15.502h.383l.482 1.34q.091.259.178.524h.018c.059-.176.113-.352.172-.524l.478-1.34h.383v2.515h-.298V16.63c0-.22.024-.523.04-.747h-.016l-.191.574-.475 1.304h-.208l-.481-1.302-.191-.574h-.015c.017.224.042.527.042.747v1.387h-.291Z"></path></svg>
+
+From 342cfe2549a09e3216cb68d77ac1a3754cfb6aa2 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 13:14:32 +0800
+Subject: [PATCH 04/10] mlflow.init check
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 5e7781651cd..573155dc7ff 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -38,6 +38,13 @@ import { ChatGenerationChunk } from '@langchain/core/outputs'
+ import { AIMessageChunk, BaseMessageLike } from '@langchain/core/messages'
+ import { Serialized } from '@langchain/core/load/serializable'
+ 
++// Fingerprint of the last mlflow.init() call. mlflow.init() replaces the global OTel NodeSDK,
++// so we skip re-init when the config is unchanged to avoid disrupting in-flight traces from other
++// handlers. Note: concurrent handlers with *different* MLflow configs (different trackingUri or
++// experimentId) can still interfere — per-instance isolation would require SDK-level support
++// that @mlflow/core does not currently provide.
++let _mlflowActiveConfigKey: string | null = null
++
+ export interface AgentRun extends Run {
+     actions: AgentAction[]
+ }
+@@ -916,7 +923,11 @@ export class AnalyticHandler {
+             if (mlflowUsername) mlflowOptions.trackingServerUsername = mlflowUsername
+             if (mlflowPassword) mlflowOptions.trackingServerPassword = mlflowPassword
+ 
+-            mlflow.init(mlflowOptions)
++            const configKey = JSON.stringify(mlflowOptions)
++            if (configKey !== _mlflowActiveConfigKey) {
++                mlflow.init(mlflowOptions)
++                _mlflowActiveConfigKey = configKey
++            }
+             this.handlers['mlflow'] = {}
+         }
+     }
+
+From de99e397bcea82c6d6fb93a6446422af29688a5e Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 13:29:32 +0800
+Subject: [PATCH 05/10] update span
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 573155dc7ff..c001d87a9e1 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -1173,7 +1173,7 @@ export class AnalyticHandler {
+             }
+ 
+             const spanId = chainSpan.spanId
+-            this.handlers['mlflow'].chainSpan = { [spanId]: chainSpan }
++            this.handlers['mlflow'].chainSpan = { ...this.handlers['mlflow'].chainSpan, [spanId]: chainSpan }
+             returnIds['mlflow'].chainSpan = spanId
+         }
+ 
+@@ -1516,7 +1516,7 @@ export class AnalyticHandler {
+             })
+ 
+             const spanId = llmSpan.spanId
+-            this.handlers['mlflow'].llmSpan = { [spanId]: llmSpan }
++            this.handlers['mlflow'].llmSpan = { ...this.handlers['mlflow'].llmSpan, [spanId]: llmSpan }
+             returnIds['mlflow'].llmSpan = spanId
+         }
+ 
+@@ -1918,7 +1918,7 @@ export class AnalyticHandler {
+             })
+ 
+             const spanId = toolSpan.spanId
+-            this.handlers['mlflow'].toolSpan = { [spanId]: toolSpan }
++            this.handlers['mlflow'].toolSpan = { ...this.handlers['mlflow'].toolSpan, [spanId]: toolSpan }
+             returnIds['mlflow'].toolSpan = spanId
+         }
+ 
+
+From df81666323fd15539a17f38936dde92f8c38dfe6 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 13:31:37 +0800
+Subject: [PATCH 06/10] nit
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index c001d87a9e1..f08e4255b3e 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -915,7 +915,7 @@ export class AnalyticHandler {
+             const mlflowPassword = getCredentialParam('mlflowPassword', credentialData, this.nodeData)
+             const mlflowExperimentId = providerConfig.experimentId as string
+ 
+-            const mlflowOptions: any = {
++            const mlflowOptions: Parameters<typeof mlflow.init>[0] = {
+                 trackingUri: mlflowTrackingUri ?? 'http://localhost:5000'
+             }
+             if (mlflowExperimentId) mlflowOptions.experimentId = mlflowExperimentId
+
+From 284f5a7dadfca7e2cc74cdcae5c2823f0159db6d Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 14:10:03 +0800
+Subject: [PATCH 07/10] update
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ package.json   |  3 +-
+ pnpm-lock.yaml | 81 +++++---------------------------------------------
+ 2 files changed, 10 insertions(+), 74 deletions(-)
+
+diff --git a/package.json b/package.json
+index 14c3b1937c3..2828752bb91 100644
+--- a/package.json
++++ b/package.json
+@@ -88,7 +88,8 @@
+             "ws": "8.18.3",
+             "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+             "uuid": "^10.0.0",
+-            "request>uuid": "^3.4.0"
++            "request>uuid": "^3.4.0",
++            "@databricks/sdk-experimental": "0.14.2"
+         }
+     },
+     "engines": {
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index f35f941c878..0e803130623 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -34,6 +34,7 @@ overrides:
+   ws: 8.18.3
+   xlsx: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+   request>uuid: ^3.4.0
++  '@databricks/sdk-experimental': 0.14.2
+ 
+ importers:
+ 
+@@ -3822,9 +3823,9 @@ packages:
+   '@dabh/diagnostics@2.0.3':
+     resolution: {integrity: sha512-hrlQOIi7hAfzsMqlGSFyVucrx38O+j6wiGOf//H2ecvIEqYN4ADBSS2iLMh5UFyDunCNniUIPk/q3riFv45xRA==}
+ 
+-  '@databricks/sdk-experimental@0.15.0':
+-    resolution: {integrity: sha512-HkoMiF7dNDt6WRW0xhi7oPlBJQfxJ9suJhEZRFt08VwLMaWcw2PiF8monfHlkD4lkufEYV6CTxi5njQkciqiHA==}
+-    engines: {node: '>=22.0', npm: '>=10.0.0'}
++  '@databricks/sdk-experimental@0.14.2':
++    resolution: {integrity: sha512-G7lwQYOyF95IGdTiY9RRVYN5VlGZQ4xVIcfGYIBtW5VjJGKDSC3h8BN0JHKdhZceMNePF0aQ62iBiWpJZ3tQkg==}
++    engines: {node: '>=18.0', npm: '>=9.0.0'}
+ 
+   '@datastax/astra-db-ts@1.5.0':
+     resolution: {integrity: sha512-Z9pEVyyHfglh8XAKrIASxdvORdei4pLUKDDGarqYvBkA9B9rKdqqdN+4I42Dz8paU5uscu8FwM5mc+Ly/U6jfA==}
+@@ -13030,10 +13031,6 @@ packages:
+     resolution: {integrity: sha512-p+ggrQw3fBwH2F5N/PAI4k/G/y1art5OxKpb2J2chwNNHM4hHuAOtivjPuirMF4KNKwTTUal/lPfL2+7h2mEcg==}
+     engines: {node: '>=14'}
+ 
+-  gaxios@7.1.1:
+-    resolution: {integrity: sha512-Odju3uBUJyVCkW64nLD4wKLhbh93bh6vIg/ZIXkWiLPBrdgtc65+tls/qml+un3pr6JqYVFDZbbmLDQT68rTOQ==}
+-    engines: {node: '>=18'}
+-
+   gaxios@7.1.4:
+     resolution: {integrity: sha512-bTIgTsM2bWn3XklZISBTQX7ZSddGW+IO3bMdGaemHZ3tbqExMENHLx6kKZ/KlejgrMtj8q7wBItt51yegqalrA==}
+     engines: {node: '>=18'}
+@@ -13042,10 +13039,6 @@ packages:
+     resolution: {integrity: sha512-Jh/AIwwgaxan+7ZUUmRLCjtchyDiqh4KjBJ5tW3plBZb5iL/BPcso8A5DlzeD9qlw0duCamnNdpFjxwaT0KyKg==}
+     engines: {node: '>=14'}
+ 
+-  gcp-metadata@7.0.1:
+-    resolution: {integrity: sha512-UcO3kefx6dCcZkgcTGgVOTFb7b1LlQ02hY1omMjjrrBzkajRMCFgYOjs7J71WqnuG1k2b+9ppGL7FsOfhZMQKQ==}
+-    engines: {node: '>=18'}
+-
+   gcp-metadata@8.1.2:
+     resolution: {integrity: sha512-zV/5HKTfCeKWnxG0Dmrw51hEWFGfcF2xiXqcA3+J90WDuP0SvoiSO5ORvcBsifmx/FoIjgQN3oNOGaQ5PhLFkg==}
+     engines: {node: '>=18'}
+@@ -13228,10 +13221,6 @@ packages:
+     resolution: {integrity: sha512-5mwUoSuBk44Y4EshyiqcH95ZntbDdTQqA3QYSrxmzj28Ai0vXBGMH1ApSANH14j2sIRtqCEyg6PfsuP7ElOEDA==}
+     engines: {node: '>= 0.10'}
+ 
+-  google-auth-library@10.1.0:
+-    resolution: {integrity: sha512-GspVjZj1RbyRWpQ9FbAXMKjFGzZwDKnUHi66JJ+tcjcu5/xYAP1pdlWotCuIkMwjfVsxxDvsGZXGLzRt72D0sQ==}
+-    engines: {node: '>=18'}
+-
+   google-auth-library@10.6.2:
+     resolution: {integrity: sha512-e27Z6EThmVNNvtYASwQxose/G57rkRuaRbQyxM2bvYLLX/GqWZ5chWq2EBoUchJbCc57eC9ArzO5wMsEmWftCw==}
+     engines: {node: '>=18'}
+@@ -13248,10 +13237,6 @@ packages:
+     resolution: {integrity: sha512-3bnD8RASQyaxOYTdWLgwpQco/aytTxFavoI/UN5QN5txDLp8QRrBHNtCUJ5+Ago+551GD92jG8jJduwvmaneUw==}
+     engines: {node: '>=14'}
+ 
+-  google-logging-utils@1.1.1:
+-    resolution: {integrity: sha512-rcX58I7nqpu4mbKztFeOAObbomBbHU2oIb/d3tJfF3dizGSApqtSwYJigGCooHdnMyQBIw8BrWyK96w3YXgr6A==}
+-    engines: {node: '>=14'}
+-
+   google-logging-utils@1.1.3:
+     resolution: {integrity: sha512-eAmLkjDjAFCVXg7A1unxHsLf961m6y17QFqXqAXGj/gVkKFrEICfStRfwUlGNfeCEjNRa32JEWOUTlYXPyyKvA==}
+     engines: {node: '>=14'}
+@@ -13304,10 +13289,6 @@ packages:
+     resolution: {integrity: sha512-pCcEwRi+TKpMlxAQObHDQ56KawURgyAf6jtIY046fJ5tIv3zDe/LEIubckAO8fj6JnAxLdmWkUfNyulQ2iKdEw==}
+     engines: {node: '>=14.0.0'}
+ 
+-  gtoken@8.0.0:
+-    resolution: {integrity: sha512-+CqsMbHPiSTdtSO14O51eMNlrp9N79gmeqmXeouJOhfucAedHw9noVe/n5uJk3tbKE6a+6ZCQg3RPhVhHByAIw==}
+-    engines: {node: '>=18'}
+-
+   guid-typescript@1.0.9:
+     resolution: {integrity: sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ==}
+ 
+@@ -14687,9 +14668,6 @@ packages:
+   jwa@1.4.1:
+     resolution: {integrity: sha512-qiLX/xhEEFKUAJ6FiBMbes3w9ATzyk5W7Hvzpa/SLYdxNtng+gcurvrI7TbACjIXlsJyr05/S1oUhZrc63evQA==}
+ 
+-  jwa@2.0.0:
+-    resolution: {integrity: sha512-jrZ2Qx916EA+fq9cEAeCROWPTfCwi1IVHqT2tapuqLEVVDKFDENFw1oL+MwrTvH6msKxsd1YTDVw6uKEcsrLEA==}
+-
+   jwa@2.0.1:
+     resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
+ 
+@@ -25520,7 +25498,7 @@ snapshots:
+       enabled: 2.0.0
+       kuler: 2.0.0
+ 
+-  '@databricks/sdk-experimental@0.15.0':
++  '@databricks/sdk-experimental@0.14.2':
+     dependencies:
+       google-auth-library: 10.6.2
+       ini: 6.0.0
+@@ -27159,7 +27137,7 @@ snapshots:
+   '@langchain/google-gauth@2.1.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))':
+     dependencies:
+       '@langchain/google-common': 2.1.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))
+-      google-auth-library: 10.1.0
++      google-auth-library: 10.6.2
+     transitivePeerDependencies:
+       - '@langchain/core'
+       - supports-color
+@@ -27649,7 +27627,7 @@ snapshots:
+ 
+   '@mlflow/core@0.2.0':
+     dependencies:
+-      '@databricks/sdk-experimental': 0.15.0
++      '@databricks/sdk-experimental': 0.14.2
+       '@opentelemetry/api': 1.9.0
+       '@opentelemetry/sdk-node': 0.205.0(@opentelemetry/api@1.9.0)
+       bignumber.js: 9.1.2
+@@ -36779,14 +36757,6 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  gaxios@7.1.1:
+-    dependencies:
+-      extend: 3.0.2
+-      https-proxy-agent: 7.0.4
+-      node-fetch: 3.3.2
+-    transitivePeerDependencies:
+-      - supports-color
+-
+   gaxios@7.1.4:
+     dependencies:
+       extend: 3.0.2
+@@ -36803,14 +36773,6 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  gcp-metadata@7.0.1:
+-    dependencies:
+-      gaxios: 7.1.1
+-      google-logging-utils: 1.1.1
+-      json-bigint: 1.0.0
+-    transitivePeerDependencies:
+-      - supports-color
+-
+   gcp-metadata@8.1.2:
+     dependencies:
+       gaxios: 7.1.4
+@@ -37052,18 +37014,6 @@ snapshots:
+     dependencies:
+       sparkles: 1.0.1
+ 
+-  google-auth-library@10.1.0:
+-    dependencies:
+-      base64-js: 1.5.1
+-      ecdsa-sig-formatter: 1.0.11
+-      gaxios: 7.1.1
+-      gcp-metadata: 7.0.1
+-      google-logging-utils: 1.1.1
+-      gtoken: 8.0.0
+-      jws: 4.0.1
+-    transitivePeerDependencies:
+-      - supports-color
+-
+   google-auth-library@10.6.2:
+     dependencies:
+       base64-js: 1.5.1
+@@ -37117,8 +37067,6 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  google-logging-utils@1.1.1: {}
+-
+   google-logging-utils@1.1.3: {}
+ 
+   google-protobuf@3.21.2: {}
+@@ -37186,13 +37134,6 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  gtoken@8.0.0:
+-    dependencies:
+-      gaxios: 7.1.1
+-      jws: 4.0.1
+-    transitivePeerDependencies:
+-      - supports-color
+-
+   guid-typescript@1.0.9: {}
+ 
+   gulp-cli@2.3.0:
+@@ -39229,12 +39170,6 @@ snapshots:
+       ecdsa-sig-formatter: 1.0.11
+       safe-buffer: 5.2.1
+ 
+-  jwa@2.0.0:
+-    dependencies:
+-      buffer-equal-constant-time: 1.0.1
+-      ecdsa-sig-formatter: 1.0.11
+-      safe-buffer: 5.2.1
+-
+   jwa@2.0.1:
+     dependencies:
+       buffer-equal-constant-time: 1.0.1
+@@ -39248,7 +39183,7 @@ snapshots:
+ 
+   jws@4.0.0:
+     dependencies:
+-      jwa: 2.0.0
++      jwa: 2.0.1
+       safe-buffer: 5.2.1
+ 
+   jws@4.0.1:
+
+From a5b7298d4e8019ecf8368482347926cef31c8326 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 14:19:27 +0800
+Subject: [PATCH 08/10] update
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index f08e4255b3e..1b5e731e234 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -924,9 +924,11 @@ export class AnalyticHandler {
+             if (mlflowPassword) mlflowOptions.trackingServerPassword = mlflowPassword
+ 
+             const configKey = JSON.stringify(mlflowOptions)
+-            if (configKey !== _mlflowActiveConfigKey) {
++            if (_mlflowActiveConfigKey === null) {
+                 mlflow.init(mlflowOptions)
+                 _mlflowActiveConfigKey = configKey
++            } else if (_mlflowActiveConfigKey !== configKey) {
++                console.warn('[MLflow] Reuse initialized mlflow connection, new configuration is ignored')
+             }
+             this.handlers['mlflow'] = {}
+         }
+
+From bb1b2ea05fa2987194324adb43c813351a579cb1 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 21:52:12 +0800
+Subject: [PATCH 09/10] update
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 1b5e731e234..24eaeb916e3 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -1510,10 +1510,29 @@ export class AnalyticHandler {
+         if (Object.prototype.hasOwnProperty.call(this.handlers, 'mlflow')) {
+             const parentSpan: MlflowLiveSpan | undefined = this.handlers['mlflow'].chainSpan?.[parentIds['mlflow']?.chainSpan]
+ 
++            let llmInputs: ICommonObject
++            if (Array.isArray(input)) {
++                let lastAssistantIdx = -1
++                for (let i = input.length - 1; i >= 0; i--) {
++                    const role = (input[i] as any)?.role
++                    if (role === 'assistant' || role === 'ai') {
++                        lastAssistantIdx = i
++                        break
++                    }
++                }
++                const currentTurnMessages = input.filter((msg, idx) => {
++                    const role = (msg as any)?.role
++                    return role === 'system' || idx > lastAssistantIdx
++                })
++                llmInputs = { messages: currentTurnMessages }
++            } else {
++                llmInputs = { prompts: [input] }
++            }
++
+             const llmSpan = mlflow.startSpan({
+                 name,
+                 spanType: MlflowSpanType.LLM,
+-                inputs: Array.isArray(input) ? { messages: input } : { prompts: [input] },
++                inputs: llmInputs,
+                 ...(parentSpan ? { parent: parentSpan } : {})
+             })
+ 
+
+From 384185250083ec2a8ebd74b9d2ec88c39dbbab92 Mon Sep 17 00:00:00 2001
+From: Weichen Xu <weichen.xu@databricks.com>
+Date: Mon, 27 Apr 2026 22:09:11 +0800
+Subject: [PATCH 10/10] fix session grouping
+
+Signed-off-by: Weichen Xu <weichen.xu@databricks.com>
+---
+ packages/components/src/handler.ts | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 24eaeb916e3..c424009eda4 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -1171,7 +1171,11 @@ export class AnalyticHandler {
+             })
+ 
+             if (!parentIds || !Object.keys(parentIds).length) {
+-                chainSpan.setAttributes({ 'mlflow.trace.session': this.options.chatId })
++                const { InMemoryTraceManager } = require('@mlflow/core/dist/core/trace_manager')
++                const traceObj = InMemoryTraceManager.getInstance().getTrace(chainSpan.traceId)
++                if (traceObj) {
++                    traceObj.info.traceMetadata['mlflow.trace.session'] = this.options.chatId
++                }
+             }
+ 
+             const spanId = chainSpan.spanId

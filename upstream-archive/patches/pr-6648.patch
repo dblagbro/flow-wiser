@@ -1,0 +1,50 @@
+From 0cb0885e6ca7acff107e6c25e88f2ec2ae7264a3 Mon Sep 17 00:00:00 2001
+From: akshaykumaran705 <akskum7050@gmail.com>
+Date: Tue, 21 Jul 2026 20:09:13 -0400
+Subject: [PATCH] fix: add gpt-5.4 model series to Azure ChatOpenAI model list
+
+The azureChatOpenAI entry in models.json was not updated when PR #6028
+added gpt-5.4/gpt-5.4-pro/gpt-5.4-mini/gpt-5.4-nano to the regular
+chatOpenAI entry, so Azure OpenAI users have no way to select these
+models as Azure retires older ones.
+
+Fixes #6411
+---
+ packages/components/models.json | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..bb08168fe01 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -700,6 +700,30 @@
+         {
+             "name": "azureChatOpenAI",
+             "models": [
++                {
++                    "label": "gpt-5.4",
++                    "name": "gpt-5.4",
++                    "input_cost": 0.0000025,
++                    "output_cost": 0.000015
++                },
++                {
++                    "label": "gpt-5.4-pro",
++                    "name": "gpt-5.4-pro",
++                    "input_cost": 0.00003,
++                    "output_cost": 0.00018
++                },
++                {
++                    "label": "gpt-5.4-mini",
++                    "name": "gpt-5.4-mini",
++                    "input_cost": 0.00000075,
++                    "output_cost": 0.0000045
++                },
++                {
++                    "label": "gpt-5.4-nano",
++                    "name": "gpt-5.4-nano",
++                    "input_cost": 0.0000002,
++                    "output_cost": 0.00000125
++                },
+                 {
+                     "label": "gpt-5.2",
+                     "name": "gpt-5.2",

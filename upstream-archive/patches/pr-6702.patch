@@ -1,0 +1,24 @@
+From 82eb951d668760cd0d8f4383555372876e7f8f10 Mon Sep 17 00:00:00 2001
+From: odpay <odpay@odpay.net>
+Date: Mon, 3 Aug 2026 15:43:20 +1000
+Subject: [PATCH] docs: add Zenith Hosting deploy option
+
+---
+ README.md | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/README.md b/README.md
+index 72e4081c6b6..e77f50da013 100644
+--- a/README.md
++++ b/README.md
+@@ -186,6 +186,10 @@ Deploy Flowise self-hosted in your existing infrastructure, we support various [
+ -   <details>
+       <summary>Others</summary>
+ 
++    -   [Zenith](https://zenith.hosting/host/flowise)
++
++        [![Deploy with Zenith](https://cdn.zenith.hosting/buttons/deploy-with-zenith.svg)](https://zenith.hosting/host/flowise)
++
+     -   [Railway](https://docs.flowiseai.com/configuration/deployment/railway)
+ 
+         [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/pn4G8S?referralCode=WVNPD9)

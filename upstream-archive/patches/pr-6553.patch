@@ -1,0 +1,93 @@
+From 8489cbda0710d9afc060ffa289749995b18c722a Mon Sep 17 00:00:00 2001
+From: dymux <putramkti@users.noreply.github.com>
+Date: Thu, 18 Jun 2026 09:07:10 +0800
+Subject: [PATCH] fix: prevent duplicate chatflow creation on repeated save
+ clicks
+
+Guard handleSaveFlow with a loading check so rapid clicks cannot
+queue multiple create requests. Disable the save button in
+CanvasHeader while a save is in progress.
+
+Fixes #6502
+---
+ packages/ui/src/views/agentflowsv2/Canvas.jsx | 2 ++
+ packages/ui/src/views/canvas/CanvasHeader.jsx | 6 ++++--
+ packages/ui/src/views/canvas/index.jsx        | 2 ++
+ 3 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 962562c28c2..79c7fd03055 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -217,6 +217,7 @@ const AgentflowCanvas = () => {
+     }
+ 
+     const handleSaveFlow = (chatflowName) => {
++        if (createNewChatflowApi.loading) return
+         if (reactFlowInstance) {
+             const nodes = reactFlowInstance.getNodes().map((node) => {
+                 const nodeData = cloneDeep(node.data)
+@@ -707,6 +708,7 @@ const AgentflowCanvas = () => {
+                         <CanvasHeader
+                             chatflow={chatflow}
+                             handleSaveFlow={handleSaveFlow}
++                            isSaving={createNewChatflowApi.loading}
+                             handleDeleteFlow={handleDeleteFlow}
+                             handleLoadFlow={handleLoadFlow}
+                             isAgentCanvas={true}
+diff --git a/packages/ui/src/views/canvas/CanvasHeader.jsx b/packages/ui/src/views/canvas/CanvasHeader.jsx
+index ea455f41c2e..2339178d952 100644
+--- a/packages/ui/src/views/canvas/CanvasHeader.jsx
++++ b/packages/ui/src/views/canvas/CanvasHeader.jsx
+@@ -120,7 +120,7 @@ const LockedScheduleSwitch = styled(ScheduleSwitch, { shouldForwardProp: (prop)
+ 
+ // ==============================|| CANVAS HEADER ||============================== //
+ 
+-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
++const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow, isSaving }) => {
+     const theme = useTheme()
+     const dispatch = useDispatch()
+     const navigate = useNavigate()
+@@ -319,11 +319,13 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+     }
+ 
+     const onSaveChatflowClick = () => {
++        if (isSaving) return
+         if (chatflow.id) handleSaveFlow(flowName)
+         else setFlowDialogOpen(true)
+     }
+ 
+     const onConfirmSaveName = (flowName) => {
++        if (isSaving) return
+         setFlowDialogOpen(false)
+         setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
+         handleSaveFlow(flowName)
+@@ -593,7 +595,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+                         </ButtonBase>
+                     )}
+                     <Available permission={savePermission}>
+-                        <ButtonBase title={`Save ${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
++                        <ButtonBase title={`Save ${title}`} disabled={isSaving} sx={{ borderRadius: '50%', mr: 2 }}>
+                             <Avatar
+                                 variant='rounded'
+                                 sx={{
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 8835706ecf3..2e16a437f51 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -209,6 +209,7 @@ const Canvas = () => {
+     }
+ 
+     const handleSaveFlow = async (chatflowName) => {
++        if (createNewChatflowApi.loading) return
+         if (reactFlowInstance) {
+             const nodes = reactFlowInstance.getNodes().map((node) => {
+                 const nodeData = cloneDeep(node.data)
+@@ -574,6 +575,7 @@ const Canvas = () => {
+                         <CanvasHeader
+                             chatflow={chatflow}
+                             handleSaveFlow={handleSaveFlow}
++                            isSaving={createNewChatflowApi.loading}
+                             handleDeleteFlow={handleDeleteFlow}
+                             handleLoadFlow={handleLoadFlow}
+                             isAgentCanvas={isAgentCanvas}

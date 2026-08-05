@@ -1,0 +1,572 @@
+From d6c8adf7b48f87c92497ec20167209868830fdbc Mon Sep 17 00:00:00 2001
+From: Dev Shah <dev.shah@resemble.ai>
+Date: Tue, 9 Jun 2026 10:45:53 -0700
+Subject: [PATCH 1/3] feat: add Resemble Detect + Intelligence tool
+
+Adds a Resemble tool node (toolkit of detect / intelligence / watermark
+DynamicStructuredTools) and a Resemble API credential. HTTP logic in a
+dependency-free client.ts; async detection polls to completion.
+---
+ .../credentials/ResembleApi.credential.ts     |  25 ++++
+ .../nodes/tools/Resemble/Resemble.ts          |  55 +++++++
+ .../components/nodes/tools/Resemble/client.ts | 140 ++++++++++++++++++
+ .../components/nodes/tools/Resemble/core.ts   |  60 ++++++++
+ .../nodes/tools/Resemble/resemble.svg         |  18 +++
+ 5 files changed, 298 insertions(+)
+ create mode 100644 packages/components/credentials/ResembleApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/Resemble/Resemble.ts
+ create mode 100644 packages/components/nodes/tools/Resemble/client.ts
+ create mode 100644 packages/components/nodes/tools/Resemble/core.ts
+ create mode 100644 packages/components/nodes/tools/Resemble/resemble.svg
+
+diff --git a/packages/components/credentials/ResembleApi.credential.ts b/packages/components/credentials/ResembleApi.credential.ts
+new file mode 100644
+index 00000000000..15baa96c0a6
+--- /dev/null
++++ b/packages/components/credentials/ResembleApi.credential.ts
+@@ -0,0 +1,25 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class ResembleApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Resemble API'
++        this.name = 'resembleApi'
++        this.version = 1.0
++        this.description = 'Resemble AI Detect + Intelligence API key (dashboard → Account → API).'
++        this.inputs = [
++            {
++                label: 'Resemble API Key',
++                name: 'resembleApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: ResembleApi }
+diff --git a/packages/components/nodes/tools/Resemble/Resemble.ts b/packages/components/nodes/tools/Resemble/Resemble.ts
+new file mode 100644
+index 00000000000..eeed3ea5fea
+--- /dev/null
++++ b/packages/components/nodes/tools/Resemble/Resemble.ts
+@@ -0,0 +1,55 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++import { buildResembleTools } from './core'
++
++class Resemble_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Resemble Detect + Intelligence'
++        this.name = 'resembleDetectIntelligence'
++        this.version = 1.0
++        this.type = 'Resemble'
++        this.icon = 'resemble.svg'
++        this.category = 'Tools'
++        this.description =
++            'Resemble AI deepfake detection, media intelligence, and watermarking. Exposes detect, intelligence, and watermark tools to an agent.'
++        this.baseClasses = ['Tool']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['resembleApi']
++        }
++        this.inputs = [
++            {
++                label: 'API Base URL',
++                name: 'baseUrl',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                placeholder: 'https://app.resemble.ai/api/v2',
++                description: 'Override only for self-hosted / enterprise endpoints.'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('resembleApiKey', credentialData, nodeData)
++        const baseUrl = (nodeData.inputs?.baseUrl as string) || undefined
++        if (!apiKey) throw new Error('Resemble API key is required. Connect the Resemble credential.')
++        return buildResembleTools({ apiKey, baseUrl })
++    }
++}
++
++module.exports = { nodeClass: Resemble_Tools }
+diff --git a/packages/components/nodes/tools/Resemble/client.ts b/packages/components/nodes/tools/Resemble/client.ts
+new file mode 100644
+index 00000000000..9aa15efc2eb
+--- /dev/null
++++ b/packages/components/nodes/tools/Resemble/client.ts
+@@ -0,0 +1,140 @@
++/**
++ * Pure HTTP client for the Resemble Detect + Intelligence API.
++ * Zero external dependencies (uses global fetch) so it can be live-tested
++ * standalone with `bun`. `core.ts` wraps these into LangChain tools.
++ *
++ * Bearer auth; payloads wrapped as { success, item }; async jobs poll to completion.
++ */
++export const DEFAULT_BASE_URL = 'https://app.resemble.ai/api/v2'
++const TERMINAL = new Set(['completed', 'failed', 'error', 'cancelled', 'success'])
++
++export interface ResembleOptions {
++    apiKey: string
++    baseUrl?: string
++}
++
++function buildHeaders(apiKey: string, extra?: Record<string, string>): Record<string, string> {
++    return {
++        Authorization: `Bearer ${apiKey}`,
++        'Content-Type': 'application/json',
++        Accept: 'application/json',
++        ...(extra || {})
++    }
++}
++
++export async function rRequest(
++    opts: ResembleOptions,
++    method: string,
++    path: string,
++    body?: any,
++    extraHeaders?: Record<string, string>
++): Promise<any> {
++    if (!opts.apiKey) throw new Error('Missing Resemble API key.')
++    const base = (opts.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
++    const url = `${base}/${path.replace(/^\/+/, '')}`
++    const res = await fetch(url, {
++        method,
++        headers: buildHeaders(opts.apiKey, extraHeaders),
++        body: body ? JSON.stringify(body) : undefined
++    })
++    let data: any
++    try {
++        data = await res.json()
++    } catch {
++        data = { raw: await res.text() }
++    }
++    if (res.status === 401 || res.status === 403) {
++        throw new Error('Resemble authentication failed — check your API key.')
++    }
++    if (res.status >= 400) {
++        const msg = (data && data.message) || `HTTP ${res.status}`
++        throw new Error(`Resemble API error on ${method} ${path}: ${msg}`)
++    }
++    return data
++}
++
++export function rItem(data: any): any {
++    return data && typeof data === 'object' && data.item && typeof data.item === 'object' ? data.item : data || {}
++}
++
++export async function rPoll(opts: ResembleOptions, path: string, maxWaitSeconds = 120): Promise<any> {
++    const deadline = Date.now() + Math.max(1, maxWaitSeconds) * 1000
++    let delay = 2000
++    let last = await rRequest(opts, 'GET', path)
++    while (true) {
++        const status = (rItem(last).status || '').toString().toLowerCase()
++        if (!status || TERMINAL.has(status)) return last
++        if (Date.now() >= deadline) return last
++        await new Promise((r) => setTimeout(r, delay))
++        delay = Math.min(10000, delay + 1000)
++        last = await rRequest(opts, 'GET', path)
++    }
++}
++
++export function rSanitize(d: any, n = 200): any {
++    if (Array.isArray(d)) return d.map((x) => rSanitize(x, n))
++    if (d && typeof d === 'object') {
++        const o: any = {}
++        for (const k of Object.keys(d)) o[k] = rSanitize(d[k], n)
++        return o
++    }
++    if (typeof d === 'string' && d.startsWith('data:') && d.length > n) {
++        return `<inline base64 omitted — ${d.length} chars>`
++    }
++    return d
++}
++
++// ---- High-level operations -------------------------------------------------
++export async function detect(opts: ResembleOptions, args: any): Promise<any> {
++    const body: any = { url: args.url }
++    const flags: [string, string][] = [
++        ['run_intelligence', 'intelligence'],
++        ['audio_source_tracing', 'audio_source_tracing'],
++        ['visualize', 'visualize'],
++        ['use_reverse_search', 'use_reverse_search'],
++        ['use_ood_detector', 'use_ood_detector'],
++        ['zero_retention_mode', 'zero_retention_mode']
++    ]
++    for (const [a, k] of flags) if (args[a]) body[k] = true
++    if (args.model_types && args.model_types !== 'auto') body.model_types = args.model_types
++    const submitted = await rRequest(opts, 'POST', '/detect', body)
++    const uuid = rItem(submitted).uuid
++    const result = uuid ? await rPoll(opts, `/detect/${uuid}`, args.max_wait_seconds || 120) : submitted
++    return rSanitize(result)
++}
++
++export async function intelligence(opts: ResembleOptions, args: any): Promise<any> {
++    const body: any = { url: args.url, json: args.structured_json !== false }
++    if (args.media_type && args.media_type !== 'auto') body.media_type = args.media_type
++    const result = await rRequest(opts, 'POST', '/intelligence', body)
++    const it = rItem(result)
++    const status = (it.status || '').toString().toLowerCase()
++    if (it.uuid && status && !TERMINAL.has(status)) {
++        try {
++            return rSanitize(await rPoll(opts, `/intelligence/${it.uuid}`, args.max_wait_seconds || 120))
++        } catch {
++            /* poll path may vary; fall through */
++        }
++    }
++    return rSanitize(result)
++}
++
++export async function watermarkDetect(opts: ResembleOptions, args: any): Promise<any> {
++    return rSanitize(await rRequest(opts, 'POST', '/watermark/detect', { url: args.url }, { Prefer: 'wait' }))
++}
++
++export async function watermarkApply(opts: ResembleOptions, args: any): Promise<any> {
++    const body: any = { url: args.url }
++    if (args.strength != null && args.strength !== '') body.strength = Number(args.strength)
++    if (args.custom_message) body.custom_message = args.custom_message
++    let result = await rRequest(opts, 'POST', '/watermark/apply', body, { Prefer: 'wait' })
++    const it = rItem(result)
++    if (!(it.watermarked_media || it.url) && it.uuid) {
++        try {
++            result = await rPoll(opts, `/watermark/apply/${it.uuid}/result`, args.max_wait_seconds || 120)
++        } catch {
++            /* fall through */
++        }
++    }
++    return rSanitize(result)
++}
+diff --git a/packages/components/nodes/tools/Resemble/core.ts b/packages/components/nodes/tools/Resemble/core.ts
+new file mode 100644
+index 00000000000..957170f601b
+--- /dev/null
++++ b/packages/components/nodes/tools/Resemble/core.ts
+@@ -0,0 +1,60 @@
++import { z } from 'zod/v3'
++import { DynamicStructuredTool } from '@langchain/core/tools'
++import { detect, intelligence, watermarkApply, watermarkDetect, type ResembleOptions } from './client'
++
++/** Build the set of Resemble Detect + Intelligence tools for an agent. */
++export function buildResembleTools(opts: ResembleOptions): DynamicStructuredTool[] {
++    const out = (data: any) => JSON.stringify(data)
++
++    const detectTool = new DynamicStructuredTool({
++        name: 'resemble_detect',
++        description:
++            'Detect whether media (audio, image, or video) at a public HTTPS URL is a deepfake / AI-generated. Returns a label and confidence score.',
++        schema: z.object({
++            url: z.string().describe('Public HTTPS URL of the media to analyze.'),
++            run_intelligence: z.boolean().optional().describe('Also run media intelligence.'),
++            audio_source_tracing: z.boolean().optional().describe('If audio is fake, trace the source platform.'),
++            visualize: z.boolean().optional().describe('Generate heatmap artifacts.'),
++            use_reverse_search: z.boolean().optional().describe('Image-only reverse image search.'),
++            use_ood_detector: z.boolean().optional().describe('Enable out-of-distribution detection.'),
++            zero_retention_mode: z.boolean().optional().describe('Auto-delete media after analysis.'),
++            model_types: z.enum(['auto', 'image', 'talking_head']).optional(),
++            max_wait_seconds: z.number().optional()
++        }),
++        func: async (args) => out(await detect(opts, args))
++    })
++
++    const intelligenceTool = new DynamicStructuredTool({
++        name: 'resemble_intelligence',
++        description:
++            'Analyze media for structured intelligence: transcription, translation, speaker info, emotion, scene description, misinformation.',
++        schema: z.object({
++            url: z.string().describe('Public HTTPS URL of the media to analyze.'),
++            structured_json: z.boolean().optional(),
++            media_type: z.enum(['auto', 'audio', 'video', 'image']).optional(),
++            max_wait_seconds: z.number().optional()
++        }),
++        func: async (args) => out(await intelligence(opts, args))
++    })
++
++    const watermarkDetectTool = new DynamicStructuredTool({
++        name: 'resemble_watermark_detect',
++        description: 'Check whether media at a public HTTPS URL contains a Resemble watermark.',
++        schema: z.object({ url: z.string().describe('Public HTTPS URL of the media to check.') }),
++        func: async (args) => out(await watermarkDetect(opts, args))
++    })
++
++    const watermarkApplyTool = new DynamicStructuredTool({
++        name: 'resemble_watermark_apply',
++        description: 'Apply an invisible Resemble provenance watermark and return the watermarked media URL (audio-first).',
++        schema: z.object({
++            url: z.string().describe('Public HTTPS URL of the media to watermark.'),
++            strength: z.number().min(0).max(1).optional(),
++            custom_message: z.string().optional(),
++            max_wait_seconds: z.number().optional()
++        }),
++        func: async (args) => out(await watermarkApply(opts, args))
++    })
++
++    return [detectTool, intelligenceTool, watermarkDetectTool, watermarkApplyTool]
++}
+diff --git a/packages/components/nodes/tools/Resemble/resemble.svg b/packages/components/nodes/tools/Resemble/resemble.svg
+new file mode 100644
+index 00000000000..427356951d2
+--- /dev/null
++++ b/packages/components/nodes/tools/Resemble/resemble.svg
+@@ -0,0 +1,18 @@
++<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <defs>
++    <linearGradient id="g" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
++      <stop stop-color="#6D5BFF"/>
++      <stop offset="1" stop-color="#2E1AC4"/>
++    </linearGradient>
++  </defs>
++  <rect width="128" height="128" rx="28" fill="url(#g)"/>
++  <path d="M64 20l30 11v22c0 19-12.8 36.5-30 43-17.2-6.5-30-24-30-43V31l30-11z"
++        fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" opacity="0.95"/>
++  <g stroke="#FFFFFF" stroke-width="5" stroke-linecap="round">
++    <line x1="46" y1="64" x2="46" y2="64.5"/>
++    <line x1="55" y1="54" x2="55" y2="74"/>
++    <line x1="64" y1="46" x2="64" y2="82"/>
++    <line x1="73" y1="56" x2="73" y2="72"/>
++    <line x1="82" y1="60" x2="82" y2="68"/>
++  </g>
++</svg>
+
+From 529ed02d0d60779e12f367657cec0167db412e2e Mon Sep 17 00:00:00 2001
+From: Dev Shah <dev.shah@resemble.ai>
+Date: Thu, 11 Jun 2026 13:43:05 -0700
+Subject: [PATCH 2/3] fix(Resemble): harden HTTP + polling per review feedback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- read response bodies once via text() then JSON.parse — calling
+  res.text() after a failed res.json() throws on a consumed stream
+- rPoll throws when a job does not finish within max_wait_seconds
+  instead of returning a non-terminal payload
+- completion uses a per-resource predicate: watermark apply results
+  carry no status field, so done = watermarked_media/url present
+- intelligence polls the documented GET /intelligences/{uuid} route
+  and poll errors propagate instead of being swallowed
+---
+ .../components/nodes/tools/Resemble/client.ts | 40 +++++++++++--------
+ 1 file changed, 23 insertions(+), 17 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Resemble/client.ts b/packages/components/nodes/tools/Resemble/client.ts
+index 9aa15efc2eb..4841f8af94f 100644
+--- a/packages/components/nodes/tools/Resemble/client.ts
++++ b/packages/components/nodes/tools/Resemble/client.ts
+@@ -37,11 +37,12 @@ export async function rRequest(
+         headers: buildHeaders(opts.apiKey, extraHeaders),
+         body: body ? JSON.stringify(body) : undefined
+     })
++    const text = await res.text()
+     let data: any
+     try {
+-        data = await res.json()
++        data = JSON.parse(text)
+     } catch {
+-        data = { raw: await res.text() }
++        data = { raw: text }
+     }
+     if (res.status === 401 || res.status === 403) {
+         throw new Error('Resemble authentication failed — check your API key.')
+@@ -57,14 +58,23 @@ export function rItem(data: any): any {
+     return data && typeof data === 'object' && data.item && typeof data.item === 'object' ? data.item : data || {}
+ }
+ 
+-export async function rPoll(opts: ResembleOptions, path: string, maxWaitSeconds = 120): Promise<any> {
+-    const deadline = Date.now() + Math.max(1, maxWaitSeconds) * 1000
++function statusDone(d: any): boolean {
++    return TERMINAL.has((rItem(d).status || '').toString().toLowerCase())
++}
++
++export async function rPoll(
++    opts: ResembleOptions,
++    path: string,
++    maxWaitSeconds = 120,
++    isDone: (d: any) => boolean = statusDone
++): Promise<any> {
++    const wait = Math.max(1, maxWaitSeconds)
++    const deadline = Date.now() + wait * 1000
+     let delay = 2000
+     let last = await rRequest(opts, 'GET', path)
+     while (true) {
+-        const status = (rItem(last).status || '').toString().toLowerCase()
+-        if (!status || TERMINAL.has(status)) return last
+-        if (Date.now() >= deadline) return last
++        if (isDone(last)) return last
++        if (Date.now() >= deadline) throw new Error(`Resemble job did not complete within ${wait}s (GET ${path})`)
+         await new Promise((r) => setTimeout(r, delay))
+         delay = Math.min(10000, delay + 1000)
+         last = await rRequest(opts, 'GET', path)
+@@ -110,11 +120,7 @@ export async function intelligence(opts: ResembleOptions, args: any): Promise<an
+     const it = rItem(result)
+     const status = (it.status || '').toString().toLowerCase()
+     if (it.uuid && status && !TERMINAL.has(status)) {
+-        try {
+-            return rSanitize(await rPoll(opts, `/intelligence/${it.uuid}`, args.max_wait_seconds || 120))
+-        } catch {
+-            /* poll path may vary; fall through */
+-        }
++        return rSanitize(await rPoll(opts, `/intelligences/${it.uuid}`, args.max_wait_seconds || 120))
+     }
+     return rSanitize(result)
+ }
+@@ -130,11 +136,11 @@ export async function watermarkApply(opts: ResembleOptions, args: any): Promise<
+     let result = await rRequest(opts, 'POST', '/watermark/apply', body, { Prefer: 'wait' })
+     const it = rItem(result)
+     if (!(it.watermarked_media || it.url) && it.uuid) {
+-        try {
+-            result = await rPoll(opts, `/watermark/apply/${it.uuid}/result`, args.max_wait_seconds || 120)
+-        } catch {
+-            /* fall through */
+-        }
++        // The apply result has no `status` field — done means the media URL is present.
++        result = await rPoll(opts, `/watermark/apply/${it.uuid}/result`, args.max_wait_seconds || 120, (d) => {
++            const r = rItem(d)
++            return !!(r.watermarked_media || r.url)
++        })
+     }
+     return rSanitize(result)
+ }
+
+From 79d618a537587f06e0052e2daf91ab7c593af402 Mon Sep 17 00:00:00 2001
+From: devshahofficial <devshahofficial001@gmail.com>
+Date: Mon, 15 Jun 2026 14:15:55 -0700
+Subject: [PATCH 3/3] Add Resemble Signal tool
+
+---
+ .../credentials/ResembleApi.credential.ts        |  2 +-
+ .../components/nodes/tools/Resemble/Resemble.ts  |  4 ++--
+ .../components/nodes/tools/Resemble/client.ts    | 10 +++++++---
+ packages/components/nodes/tools/Resemble/core.ts | 16 +++++++++++++---
+ 4 files changed, 23 insertions(+), 9 deletions(-)
+
+diff --git a/packages/components/credentials/ResembleApi.credential.ts b/packages/components/credentials/ResembleApi.credential.ts
+index 15baa96c0a6..25df417f96b 100644
+--- a/packages/components/credentials/ResembleApi.credential.ts
++++ b/packages/components/credentials/ResembleApi.credential.ts
+@@ -11,7 +11,7 @@ class ResembleApi implements INodeCredential {
+         this.label = 'Resemble API'
+         this.name = 'resembleApi'
+         this.version = 1.0
+-        this.description = 'Resemble AI Detect + Intelligence API key (dashboard → Account → API).'
++        this.description = 'Resemble AI Detect, Signal, and Intelligence API key (dashboard → Account → API).'
+         this.inputs = [
+             {
+                 label: 'Resemble API Key',
+diff --git a/packages/components/nodes/tools/Resemble/Resemble.ts b/packages/components/nodes/tools/Resemble/Resemble.ts
+index eeed3ea5fea..57ff515e470 100644
+--- a/packages/components/nodes/tools/Resemble/Resemble.ts
++++ b/packages/components/nodes/tools/Resemble/Resemble.ts
+@@ -15,14 +15,14 @@ class Resemble_Tools implements INode {
+     inputs: INodeParams[]
+ 
+     constructor() {
+-        this.label = 'Resemble Detect + Intelligence'
++        this.label = 'Resemble Detect + Signal'
+         this.name = 'resembleDetectIntelligence'
+         this.version = 1.0
+         this.type = 'Resemble'
+         this.icon = 'resemble.svg'
+         this.category = 'Tools'
+         this.description =
+-            'Resemble AI deepfake detection, media intelligence, and watermarking. Exposes detect, intelligence, and watermark tools to an agent.'
++            'Resemble AI deepfake detection, fraud-intent scoring, media intelligence, and watermarking. Exposes detect, signal, intelligence, and watermark tools to an agent.'
+         this.baseClasses = ['Tool']
+         this.credential = {
+             label: 'Connect Credential',
+diff --git a/packages/components/nodes/tools/Resemble/client.ts b/packages/components/nodes/tools/Resemble/client.ts
+index 4841f8af94f..e4c3e03f74f 100644
+--- a/packages/components/nodes/tools/Resemble/client.ts
++++ b/packages/components/nodes/tools/Resemble/client.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Pure HTTP client for the Resemble Detect + Intelligence API.
++ * Pure HTTP client for the Resemble Detect, Signal, and Intelligence API.
+  * Zero external dependencies (uses global fetch) so it can be live-tested
+  * standalone with `bun`. `core.ts` wraps these into LangChain tools.
+  *
+@@ -72,13 +72,13 @@ export async function rPoll(
+     const deadline = Date.now() + wait * 1000
+     let delay = 2000
+     let last = await rRequest(opts, 'GET', path)
+-    while (true) {
++    while (Date.now() < deadline) {
+         if (isDone(last)) return last
+-        if (Date.now() >= deadline) throw new Error(`Resemble job did not complete within ${wait}s (GET ${path})`)
+         await new Promise((r) => setTimeout(r, delay))
+         delay = Math.min(10000, delay + 1000)
+         last = await rRequest(opts, 'GET', path)
+     }
++    throw new Error(`Resemble job did not complete within ${wait}s (GET ${path})`)
+ }
+ 
+ export function rSanitize(d: any, n = 200): any {
+@@ -125,6 +125,10 @@ export async function intelligence(opts: ResembleOptions, args: any): Promise<an
+     return rSanitize(result)
+ }
+ 
++export async function signal(opts: ResembleOptions, args: any): Promise<any> {
++    return rSanitize(await rRequest(opts, 'POST', '/signal', { text: args.text }))
++}
++
+ export async function watermarkDetect(opts: ResembleOptions, args: any): Promise<any> {
+     return rSanitize(await rRequest(opts, 'POST', '/watermark/detect', { url: args.url }, { Prefer: 'wait' }))
+ }
+diff --git a/packages/components/nodes/tools/Resemble/core.ts b/packages/components/nodes/tools/Resemble/core.ts
+index 957170f601b..75ee724be5c 100644
+--- a/packages/components/nodes/tools/Resemble/core.ts
++++ b/packages/components/nodes/tools/Resemble/core.ts
+@@ -1,8 +1,8 @@
+ import { z } from 'zod/v3'
+ import { DynamicStructuredTool } from '@langchain/core/tools'
+-import { detect, intelligence, watermarkApply, watermarkDetect, type ResembleOptions } from './client'
++import { detect, intelligence, signal, watermarkApply, watermarkDetect, type ResembleOptions } from './client'
+ 
+-/** Build the set of Resemble Detect + Intelligence tools for an agent. */
++/** Build the set of Resemble trust and intelligence tools for an agent. */
+ export function buildResembleTools(opts: ResembleOptions): DynamicStructuredTool[] {
+     const out = (data: any) => JSON.stringify(data)
+ 
+@@ -37,6 +37,16 @@ export function buildResembleTools(opts: ResembleOptions): DynamicStructuredTool
+         func: async (args) => out(await intelligence(opts, args))
+     })
+ 
++    const signalTool = new DynamicStructuredTool({
++        name: 'resemble_signal',
++        description:
++            'Score caller-provided text for fraud and scam intent with Resemble Signal. Use before reset-code, credential, wire-transfer, urgent-payment, or account-change requests.',
++        schema: z.object({
++            text: z.string().min(1).describe('Caller-provided text or transcript excerpt to score.')
++        }),
++        func: async (args) => out(await signal(opts, args))
++    })
++
+     const watermarkDetectTool = new DynamicStructuredTool({
+         name: 'resemble_watermark_detect',
+         description: 'Check whether media at a public HTTPS URL contains a Resemble watermark.',
+@@ -56,5 +66,5 @@ export function buildResembleTools(opts: ResembleOptions): DynamicStructuredTool
+         func: async (args) => out(await watermarkApply(opts, args))
+     })
+ 
+-    return [detectTool, intelligenceTool, watermarkDetectTool, watermarkApplyTool]
++    return [detectTool, signalTool, intelligenceTool, watermarkDetectTool, watermarkApplyTool]
+ }

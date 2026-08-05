@@ -1,0 +1,571 @@
+From 83f2947df934d3fa1032def302f0c8c706db8fe3 Mon Sep 17 00:00:00 2001
+From: chan <chancody@foxmail.com>
+Date: Thu, 9 Jul 2026 15:19:53 +0800
+Subject: [PATCH] feat: support streaming reasoning chunks
+
+---
+ .../components/nodes/agentflow/Agent/Agent.ts |  72 ++++------
+ .../agentflow/Agent/AgentStreaming.test.ts    |  39 +++++
+ .../components/nodes/agentflow/LLM/LLM.ts     |  58 ++++----
+ .../nodes/agentflow/LLM/LLMStreaming.test.ts  |  39 +++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      |   3 +-
+ packages/components/src/utils.test.ts         |  86 ++++++++++-
+ packages/components/src/utils.ts              | 135 ++++++++++++++++--
+ 7 files changed, 339 insertions(+), 93 deletions(-)
+ create mode 100644 packages/components/nodes/agentflow/Agent/AgentStreaming.test.ts
+ create mode 100644 packages/components/nodes/agentflow/LLM/LLMStreaming.test.ts
+
+diff --git a/packages/components/nodes/agentflow/Agent/Agent.ts b/packages/components/nodes/agentflow/Agent/Agent.ts
+index cd031ef4f40..624ff8d4824 100644
+--- a/packages/components/nodes/agentflow/Agent/Agent.ts
++++ b/packages/components/nodes/agentflow/Agent/Agent.ts
+@@ -38,7 +38,8 @@ import {
+     convertMultiOptionsToStringArray,
+     processTemplateVariables,
+     configureStructuredOutput,
+-    extractResponseContent
++    extractResponseContent,
++    extractStreamingChunkContent
+ } from '../../../src/utils'
+ import { sanitizeFileName } from '../../../src/validator'
+ import { getModelConfigByModelName, MODEL_TYPE } from '../../../src/modelLoader'
+@@ -1876,62 +1877,39 @@ class Agent_Agentflow implements INode {
+         try {
+             for await (const chunk of await llmNodeInstance.stream(messages, { signal: abortController?.signal })) {
+                 if (sseStreamer && !isStructuredOutput) {
+-                    let content = ''
+-
+-                    if (chunk.contentBlocks?.length) {
+-                        for (const block of chunk.contentBlocks) {
+-                            if (isLastNode) {
+-                                // As soon as we see the first non-reasoning block, send last thinking event with duration
+-                                if (block.type !== 'reasoning' && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
+-                                    thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
+-                                    sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
+-                                    sentLastThinkingEvent = true
+-                                }
+-                                if (block.type === 'reasoning' && (block as { reasoning?: string }).reasoning) {
+-                                    if (!thinkingStartTime) {
+-                                        thinkingStartTime = Date.now()
+-                                    }
+-                                    wasThinking = true
+-                                    const reasoningContent = (block as { reasoning: string }).reasoning
+-                                    sseStreamer.streamThinkingEvent(chatId, reasoningContent)
+-                                    reasonContent += reasoningContent
+-                                }
++                    const { text: content, reasoning } = extractStreamingChunkContent(chunk, { includeCodeExecution: true })
++
++                    if (reasoning) {
++                        reasonContent += reasoning
++                        if (isLastNode) {
++                            if (!thinkingStartTime) {
++                                thinkingStartTime = Date.now()
+                             }
++                            wasThinking = true
++                            sseStreamer.streamThinkingEvent(chatId, reasoning)
+                         }
+                     }
+ 
+-                    if (typeof chunk === 'string') {
+-                        content = chunk
+-                    } else if (Array.isArray(chunk.content) && chunk.content.length > 0) {
+-                        content = chunk.content
+-                            .map((item: any) => {
+-                                if ((item.text && !item.type) || (item.type === 'text' && item.text)) {
+-                                    return item.text
+-                                } else if (item.type === 'executableCode' && item.executableCode) {
+-                                    const language = item.executableCode.language?.toLowerCase() || 'python'
+-                                    return `\n\`\`\`${language}\n${item.executableCode.code}\n\`\`\`\n`
+-                                } else if (item.type === 'codeExecutionResult' && item.codeExecutionResult) {
+-                                    const outcome = item.codeExecutionResult.outcome || 'OUTCOME_OK'
+-                                    const output = item.codeExecutionResult.output || ''
+-                                    if (outcome === 'OUTCOME_OK' && output) {
+-                                        return `**Code Output:**\n\`\`\`\n${output}\n\`\`\`\n`
+-                                    } else if (outcome !== 'OUTCOME_OK') {
+-                                        return `**Code Execution Error:**\n\`\`\`\n${output}\n\`\`\`\n`
+-                                    }
+-                                }
+-                                return ''
+-                            })
+-                            .filter((text: string) => text)
+-                            .join('')
+-                    } else if (chunk.content) {
+-                        content = chunk.content.toString()
++                    if (content && isLastNode && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
++                        thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
++                        sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
++                        sentLastThinkingEvent = true
++                    }
++
++                    if (content) {
++                        sseStreamer.streamTokenEvent(chatId, content)
+                     }
+-                    sseStreamer.streamTokenEvent(chatId, content)
+                 }
+ 
+                 const messageChunk = typeof chunk === 'string' ? new AIMessageChunk(chunk) : chunk
+                 response = response.concat(messageChunk)
+             }
++
++            if (sseStreamer && !isStructuredOutput && isLastNode && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
++                thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
++                sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
++                sentLastThinkingEvent = true
++            }
+         } catch (error) {
+             console.error('Error during streaming:', error)
+             throw error
+diff --git a/packages/components/nodes/agentflow/Agent/AgentStreaming.test.ts b/packages/components/nodes/agentflow/Agent/AgentStreaming.test.ts
+new file mode 100644
+index 00000000000..e424d5aa60b
+--- /dev/null
++++ b/packages/components/nodes/agentflow/Agent/AgentStreaming.test.ts
+@@ -0,0 +1,39 @@
++import { AIMessageChunk } from '@langchain/core/messages'
++
++const { nodeClass: AgentAgentflow } = require('./Agent')
++
++describe('Agent AgentFlow streaming reasoning chunks', () => {
++    it('streams reasoning-only chunks as thinking content without empty token events', async () => {
++        const agentNode = new AgentAgentflow()
++        const chunk = new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++                reasoning_content: 'Think through the tool plan.'
++            }
++        })
++        const llmNodeInstance = {
++            stream: jest.fn(async function* () {
++                yield chunk
++            })
++        }
++        const sseStreamer = {
++            streamThinkingEvent: jest.fn(),
++            streamTokenEvent: jest.fn()
++        }
++
++        const response = await (agentNode as any).handleStreamingResponse(
++            sseStreamer,
++            llmNodeInstance,
++            [],
++            'chat-id',
++            new AbortController(),
++            false,
++            true
++        )
++
++        expect(sseStreamer.streamThinkingEvent).toHaveBeenCalledWith('chat-id', 'Think through the tool plan.')
++        expect(sseStreamer.streamThinkingEvent).toHaveBeenCalledWith('chat-id', '', expect.any(Number))
++        expect(sseStreamer.streamTokenEvent).not.toHaveBeenCalled()
++        expect(response.additional_kwargs?.reasoning_content).toBe('Think through the tool plan.')
++    })
++})
+diff --git a/packages/components/nodes/agentflow/LLM/LLM.ts b/packages/components/nodes/agentflow/LLM/LLM.ts
+index ccb5d88f594..a5d499002b6 100644
+--- a/packages/components/nodes/agentflow/LLM/LLM.ts
++++ b/packages/components/nodes/agentflow/LLM/LLM.ts
+@@ -15,7 +15,12 @@ import {
+     replaceInlineDataWithFileReferences,
+     updateFlowState
+ } from '../utils'
+-import { processTemplateVariables, configureStructuredOutput, extractResponseContent } from '../../../src/utils'
++import {
++    processTemplateVariables,
++    configureStructuredOutput,
++    extractResponseContent,
++    extractStreamingChunkContent
++} from '../../../src/utils'
+ import { getModelConfigByModelName, MODEL_TYPE } from '../../../src/modelLoader'
+ import { flatten } from 'lodash'
+ 
+@@ -867,44 +872,39 @@ class LLM_Agentflow implements INode {
+         try {
+             for await (const chunk of await llmNodeInstance.stream(messages, { signal: abortController?.signal })) {
+                 if (sseStreamer && !isStructuredOutput) {
+-                    let content = ''
+-
+-                    if (chunk.contentBlocks?.length) {
+-                        for (const block of chunk.contentBlocks) {
+-                            if (isLastNode) {
+-                                // As soon as we see the first non-reasoning block, send last thinking event with duration (only when isLastNode)
+-                                if (block.type !== 'reasoning' && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
+-                                    thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
+-                                    sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
+-                                    sentLastThinkingEvent = true
+-                                }
+-                                if (block.type === 'reasoning' && (block as { reasoning?: string }).reasoning) {
+-                                    if (!thinkingStartTime) {
+-                                        thinkingStartTime = Date.now()
+-                                    }
+-                                    wasThinking = true
+-                                    const reasoningContent = (block as { reasoning: string }).reasoning
+-                                    sseStreamer.streamThinkingEvent(chatId, reasoningContent)
+-                                    reasonContent += reasoningContent
+-                                }
++                    const { text: content, reasoning } = extractStreamingChunkContent(chunk)
++
++                    if (reasoning) {
++                        reasonContent += reasoning
++                        if (isLastNode) {
++                            if (!thinkingStartTime) {
++                                thinkingStartTime = Date.now()
+                             }
++                            wasThinking = true
++                            sseStreamer.streamThinkingEvent(chatId, reasoning)
+                         }
+                     }
+ 
+-                    if (typeof chunk === 'string') {
+-                        content = chunk
+-                    } else if (Array.isArray(chunk.content) && chunk.content.length > 0) {
+-                        const contents = chunk.content as ContentBlock.Text[]
+-                        content = contents.map((item) => item.text).join('')
+-                    } else if (chunk.content) {
+-                        content = chunk.content.toString()
++                    if (content && isLastNode && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
++                        thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
++                        sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
++                        sentLastThinkingEvent = true
++                    }
++
++                    if (content) {
++                        sseStreamer.streamTokenEvent(chatId, content)
+                     }
+-                    sseStreamer.streamTokenEvent(chatId, content)
+                 }
+ 
+                 const messageChunk = typeof chunk === 'string' ? new AIMessageChunk(chunk) : chunk
+                 response = response.concat(messageChunk)
+             }
++
++            if (sseStreamer && !isStructuredOutput && isLastNode && wasThinking && !sentLastThinkingEvent && thinkingStartTime != null) {
++                thinkingDuration = Math.round((Date.now() - thinkingStartTime) / 1000)
++                sseStreamer.streamThinkingEvent(chatId, '', thinkingDuration)
++                sentLastThinkingEvent = true
++            }
+         } catch (error) {
+             console.error('Error during streaming:', error)
+             throw error
+diff --git a/packages/components/nodes/agentflow/LLM/LLMStreaming.test.ts b/packages/components/nodes/agentflow/LLM/LLMStreaming.test.ts
+new file mode 100644
+index 00000000000..492a7258e72
+--- /dev/null
++++ b/packages/components/nodes/agentflow/LLM/LLMStreaming.test.ts
+@@ -0,0 +1,39 @@
++import { AIMessageChunk } from '@langchain/core/messages'
++
++const { nodeClass: LLMAgentflow } = require('./LLM')
++
++describe('LLM AgentFlow streaming reasoning chunks', () => {
++    it('streams reasoning-only chunks as thinking content without empty token events', async () => {
++        const llmNode = new LLMAgentflow()
++        const chunk = new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++                reasoning_content: 'Think before answering.'
++            }
++        })
++        const llmNodeInstance = {
++            stream: jest.fn(async function* () {
++                yield chunk
++            })
++        }
++        const sseStreamer = {
++            streamThinkingEvent: jest.fn(),
++            streamTokenEvent: jest.fn()
++        }
++
++        const response = await (llmNode as any).handleStreamingResponse(
++            sseStreamer,
++            llmNodeInstance,
++            [],
++            'chat-id',
++            new AbortController(),
++            false,
++            true
++        )
++
++        expect(sseStreamer.streamThinkingEvent).toHaveBeenCalledWith('chat-id', 'Think before answering.')
++        expect(sseStreamer.streamThinkingEvent).toHaveBeenCalledWith('chat-id', '', expect.any(Number))
++        expect(sseStreamer.streamTokenEvent).not.toHaveBeenCalled()
++        expect(response.additional_kwargs?.reasoning_content).toBe('Think before answering.')
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index faf2ebd8b37..824d081ced0 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -140,7 +140,8 @@ class ChatOpenAICustom_ChatModels implements INode {
+             modelName,
+             openAIApiKey,
+             apiKey: openAIApiKey,
+-            streaming: streaming ?? true
++            streaming: streaming ?? true,
++            __includeRawResponse: true
+         }
+ 
+         if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
+diff --git a/packages/components/src/utils.test.ts b/packages/components/src/utils.test.ts
+index 97fa0842627..8c0d6b134ac 100644
+--- a/packages/components/src/utils.test.ts
++++ b/packages/components/src/utils.test.ts
+@@ -3,8 +3,10 @@ import {
+     convertRequireToImport,
+     COMMONJS_REQUIRE_REGEX,
+     IMPORT_EXTRACTION_REGEX,
+-    executeJavaScriptCode
++    executeJavaScriptCode,
++    extractStreamingChunkContent
+ } from './utils'
++import { AIMessageChunk } from '@langchain/core/messages'
+ 
+ describe('removeInvalidImageMarkdown', () => {
+     describe('strips non-http/https image markdown', () => {
+@@ -236,6 +238,88 @@ describe('Import extraction regex (utils.ts line 1596 pattern)', () => {
+     })
+ })
+ 
++describe('extractStreamingChunkContent', () => {
++    it('separates vLLM/OpenAI-compatible reasoning_content from visible text', () => {
++        const chunk = new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++                reasoning_content: 'I should inspect the inputs.'
++            }
++        })
++
++        expect(extractStreamingChunkContent(chunk)).toEqual({
++            text: '',
++            reasoning: 'I should inspect the inputs.'
++        })
++    })
++
++    it('extracts reasoning deltas from preserved OpenAI-compatible raw responses', () => {
++        const chunk = new AIMessageChunk({
++            content: '',
++            additional_kwargs: {
++                __raw_response: {
++                    choices: [
++                        {
++                            delta: {
++                                reasoning: 'Raw reasoning.',
++                                reasoning_content: ' Raw content.'
++                            }
++                        }
++                    ]
++                }
++            }
++        })
++
++        expect(extractStreamingChunkContent(chunk)).toEqual({
++            text: '',
++            reasoning: 'Raw reasoning. Raw content.'
++        })
++    })
++
++    it('ignores empty role and usage chunks', () => {
++        expect(
++            extractStreamingChunkContent(
++                new AIMessageChunk({
++                    content: '',
++                    additional_kwargs: {
++                        __raw_response: {
++                            choices: [
++                                {
++                                    delta: {
++                                        role: 'assistant'
++                                    }
++                                }
++                            ],
++                            usage: {
++                                prompt_tokens: 1,
++                                completion_tokens: 0
++                            }
++                        }
++                    }
++                })
++            )
++        ).toEqual({
++            text: '',
++            reasoning: ''
++        })
++    })
++
++    it('preserves visible text extraction while collecting reasoning content blocks', () => {
++        const chunk = new AIMessageChunk({
++            content: [
++                { type: 'reasoning', reasoning: 'First think.' },
++                { type: 'text_delta', text: 'Final ' },
++                { type: 'text', text: 'answer.' }
++            ] as any
++        })
++
++        expect(extractStreamingChunkContent(chunk)).toEqual({
++            text: 'Final answer.',
++            reasoning: 'First think.'
++        })
++    })
++})
++
+ // ---------------------------------------------------------------------------
+ // NodeVM sandbox — availableDependencies allowlist
+ // ---------------------------------------------------------------------------
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index b8b39cbc2d3..714cd3146d4 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -294,21 +294,126 @@ export const transformBracesWithColon = (input: string): string => {
+     })
+ }
+ 
+-/**
+- * Extracts text content from an AIMessageChunk, filtering out reasoning/thinking
+- * content blocks that reasoning models may return.
+- */
+-const extractTextFromChunk = (response: AIMessageChunk): string => {
+-    if (typeof response.content === 'string') {
+-        return response.content
+-    }
+-    if (Array.isArray(response.content)) {
+-        return response.content
+-            .filter((block: any) => block.type === 'text' || block.type === 'text_delta')
+-            .map((block: any) => block.text ?? '')
++const getStringValues = (source: any, keys: string[]): string[] => {
++    if (!source || typeof source !== 'object') return []
++
++    return keys.map((key) => source[key]).filter((value): value is string => typeof value === 'string' && value.length > 0)
++}
++
++const getReasoningTextFromBlock = (block: any): string => {
++    if (!block || typeof block !== 'object') return ''
++
++    const reasoningParts = getStringValues(block, ['reasoning', 'reasoning_content', 'reasoningContent', 'thinking'])
++
++    if (block.delta) {
++        const deltaReasoning = getReasoningTextFromBlock(block.delta)
++        if (deltaReasoning) reasoningParts.push(deltaReasoning)
++    }
++
++    if (block.__raw_response) {
++        const rawReasoning = getReasoningTextFromBlock(block.__raw_response)
++        if (rawReasoning) reasoningParts.push(rawReasoning)
++    }
++
++    if (Array.isArray(block.choices)) {
++        for (const choice of block.choices) {
++            const choiceReasoning = getReasoningTextFromBlock(choice?.delta)
++            if (choiceReasoning) reasoningParts.push(choiceReasoning)
++        }
++    }
++
++    if (['reasoning', 'reasoning_content', 'thinking', 'reasoning_delta', 'thinking_delta'].includes(block.type)) {
++        if (typeof block.text === 'string') reasoningParts.push(block.text)
++    }
++
++    return reasoningParts.join('')
++}
++
++const isReasoningBlock = (block: any): boolean => {
++    if (!block || typeof block !== 'object') return false
++    return (
++        Boolean(getReasoningTextFromBlock(block)) ||
++        ['reasoning', 'reasoning_content', 'thinking', 'reasoning_delta', 'thinking_delta'].includes(block.type)
++    )
++}
++
++const extractReasoningContentFromChunk = (chunk: any): string => {
++    if (!chunk || typeof chunk === 'string') return ''
++
++    const reasoningParts: string[] = []
++
++    const addReasoning = (value: string) => {
++        if (value) reasoningParts.push(value)
++    }
++
++    addReasoning(getReasoningTextFromBlock(chunk.additional_kwargs))
++    addReasoning(getReasoningTextFromBlock(chunk.response_metadata))
++    addReasoning(getReasoningTextFromBlock(chunk.delta))
++
++    if (Array.isArray(chunk.choices)) {
++        for (const choice of chunk.choices) {
++            addReasoning(getReasoningTextFromBlock(choice?.delta))
++        }
++    }
++
++    const reasoningBlocks = chunk.contentBlocks?.length ? chunk.contentBlocks : Array.isArray(chunk.content) ? chunk.content : []
++    for (const block of reasoningBlocks) {
++        addReasoning(getReasoningTextFromBlock(block))
++    }
++
++    return reasoningParts.join('')
++}
++
++export interface IStreamingChunkContent {
++    text: string
++    reasoning: string
++}
++
++export const extractStreamingChunkContent = (chunk: any, options: { includeCodeExecution?: boolean } = {}): IStreamingChunkContent => {
++    const reasoning = extractReasoningContentFromChunk(chunk)
++
++    if (typeof chunk === 'string') {
++        return { text: chunk, reasoning }
++    }
++
++    if (!chunk) {
++        return { text: '', reasoning }
++    }
++
++    const content = chunk.content
++
++    if (Array.isArray(content)) {
++        const text = content
++            .map((item: any) => {
++                if (isReasoningBlock(item)) return ''
++                if ((item.text && !item.type) || ((item.type === 'text' || item.type === 'text_delta') && item.text)) {
++                    return item.text
++                }
++                if (options.includeCodeExecution && item.type === 'executableCode' && item.executableCode) {
++                    const language = item.executableCode.language?.toLowerCase() || 'python'
++                    return `\n\`\`\`${language}\n${item.executableCode.code}\n\`\`\`\n`
++                }
++                if (options.includeCodeExecution && item.type === 'codeExecutionResult' && item.codeExecutionResult) {
++                    const outcome = item.codeExecutionResult.outcome || 'OUTCOME_OK'
++                    const output = item.codeExecutionResult.output || ''
++                    if (outcome === 'OUTCOME_OK' && output) {
++                        return `**Code Output:**\n\`\`\`\n${output}\n\`\`\`\n`
++                    } else if (outcome !== 'OUTCOME_OK') {
++                        return `**Code Execution Error:**\n\`\`\`\n${output}\n\`\`\`\n`
++                    }
++                }
++                return ''
++            })
++            .filter((text: string) => text)
+             .join('')
++
++        return { text, reasoning }
+     }
+-    return ''
++
++    if (typeof content === 'string') return { text: content, reasoning }
++    if (content != null && !isReasoningBlock(content)) return { text: content.toString(), reasoning }
++
++    return { text: '', reasoning }
+ }
+ 
+ /**
+@@ -328,12 +433,12 @@ class TextOnlyOutputParser extends Runnable<AIMessageChunk, string> {
+     lc_namespace = ['flowise', 'output_parsers']
+ 
+     async invoke(input: AIMessageChunk, _options?: Partial<RunnableConfig>): Promise<string> {
+-        return extractTextFromChunk(input)
++        return extractStreamingChunkContent(input).text
+     }
+ 
+     async *_transform(generator: AsyncGenerator<AIMessageChunk>): AsyncGenerator<string> {
+         for await (const chunk of generator) {
+-            const text = extractTextFromChunk(chunk)
++            const text = extractStreamingChunkContent(chunk).text
+             if (text) {
+                 yield text
+             }

@@ -1,0 +1,401 @@
+From 638c474257ded5dd71ca2933d4d3462de6e6b062 Mon Sep 17 00:00:00 2001
+From: petterlindstrom79 <petter@stridemacro.com>
+Date: Tue, 14 Apr 2026 00:22:15 +0200
+Subject: [PATCH 1/2] =?UTF-8?q?feat(tools):=20add=20Strale=20=E2=80=94=202?=
+ =?UTF-8?q?90+=20quality-tested=20data=20capabilities=20for=20agents?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds a Strale tool node that gives Flowise agents access to 290+
+quality-tested data capabilities: company verification across 20
+countries, sanctions screening, VAT validation, invoice extraction,
+and more.
+
+Two modes:
+- Search and execute: agent describes what it needs in natural language,
+  Strale finds and runs the best matching capability
+- Execute specific: call a pre-configured capability by slug
+
+Every response includes a quality score (SQS) and transaction ID for
+audit trails. 5 free capabilities work without an API key.
+
+https://strale.dev
+---
+ .../components/nodes/tools/Strale/Strale.ts   |  96 +++++++++
+ .../components/nodes/tools/Strale/core.ts     | 198 ++++++++++++++++++
+ .../components/nodes/tools/Strale/strale.svg  |  10 +
+ 3 files changed, 304 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Strale/Strale.ts
+ create mode 100644 packages/components/nodes/tools/Strale/core.ts
+ create mode 100644 packages/components/nodes/tools/Strale/strale.svg
+
+diff --git a/packages/components/nodes/tools/Strale/Strale.ts b/packages/components/nodes/tools/Strale/Strale.ts
+new file mode 100644
+index 00000000000..e625b85f7de
+--- /dev/null
++++ b/packages/components/nodes/tools/Strale/Strale.ts
+@@ -0,0 +1,96 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses } from '../../../src/utils'
++import { StraleSearchAndExecuteTool, StraleExecuteTool } from './core'
++
++class Strale_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Strale'
++        this.name = 'strale'
++        this.version = 1.0
++        this.type = 'Strale'
++        this.icon = 'strale.svg'
++        this.category = 'Tools'
++        this.description = 'Access 290+ quality-tested data capabilities — company verification, sanctions screening, VAT validation, and more'
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'straleApiKey',
++                type: 'string',
++                password: true,
++                optional: true,
++                description: 'Strale API key from https://strale.dev. Optional — 5 free capabilities work without auth.'
++            },
++            {
++                label: 'Tool Mode',
++                name: 'toolMode',
++                type: 'options',
++                options: [
++                    {
++                        label: 'Search and execute',
++                        name: 'searchAndExecute',
++                        description: 'Agent describes what it needs; Strale finds and runs the best capability'
++                    },
++                    {
++                        label: 'Execute a specific capability',
++                        name: 'executeSpecific',
++                        description: 'Execute a pre-configured capability by slug'
++                    }
++                ],
++                default: 'searchAndExecute',
++                description: 'How the agent interacts with Strale'
++            },
++            {
++                label: 'Capability Slug',
++                name: 'capabilitySlug',
++                type: 'string',
++                optional: true,
++                description:
++                    'The capability to execute (e.g. "vat-validate", "swedish-company-data"). Required when Tool Mode is "Execute a specific capability". Browse capabilities at https://strale.dev.',
++                placeholder: 'e.g. vat-validate'
++            },
++            {
++                label: 'Base URL',
++                name: 'baseUrl',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                default: 'https://api.strale.io',
++                description: 'Override the Strale API base URL (for self-hosted or development use)'
++            }
++        ]
++        this.baseClasses = [this.type, ...getBaseClasses(StraleSearchAndExecuteTool), 'Tool']
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const apiKey = nodeData.inputs?.straleApiKey as string
++        const toolMode = nodeData.inputs?.toolMode as string
++        const capabilitySlug = nodeData.inputs?.capabilitySlug as string
++        const baseUrl = nodeData.inputs?.baseUrl as string
++
++        const config = {
++            apiKey: apiKey || undefined,
++            baseUrl: baseUrl || undefined
++        }
++
++        if (toolMode === 'executeSpecific') {
++            if (!capabilitySlug) {
++                throw new Error('Capability Slug is required when Tool Mode is "Execute a specific capability"')
++            }
++            return new StraleExecuteTool({ ...config, capabilitySlug })
++        }
++
++        return new StraleSearchAndExecuteTool(config)
++    }
++}
++
++module.exports = { nodeClass: Strale_Tools }
+diff --git a/packages/components/nodes/tools/Strale/core.ts b/packages/components/nodes/tools/Strale/core.ts
+new file mode 100644
+index 00000000000..e4166a9161b
+--- /dev/null
++++ b/packages/components/nodes/tools/Strale/core.ts
+@@ -0,0 +1,198 @@
++import { z } from 'zod/v3'
++import { StructuredTool } from '@langchain/core/tools'
++
++const DEFAULT_BASE_URL = 'https://api.strale.io'
++
++interface StraleToolConfig {
++    apiKey?: string
++    baseUrl?: string
++}
++
++interface StraleExecuteToolConfig extends StraleToolConfig {
++    capabilitySlug: string
++}
++
++async function straleRequest(baseUrl: string, path: string, body: Record<string, any>, apiKey?: string): Promise<any> {
++    const headers: Record<string, string> = {
++        'Content-Type': 'application/json'
++    }
++    if (apiKey) {
++        headers['Authorization'] = `Bearer ${apiKey}`
++    }
++
++    const res = await fetch(`${baseUrl}${path}`, {
++        method: 'POST',
++        headers,
++        body: JSON.stringify(body)
++    })
++
++    const data = await res.json()
++
++    if (!res.ok) {
++        const errorMessage = data?.error || data?.message || `HTTP ${res.status}: ${res.statusText}`
++        throw new Error(errorMessage)
++    }
++
++    return data
++}
++
++function formatExecuteResult(data: any): string {
++    const parts: string[] = []
++
++    if (data.output) {
++        parts.push(JSON.stringify(data.output, null, 2))
++    }
++
++    const meta: Record<string, any> = {}
++    if (data.transaction_id) meta.transaction_id = data.transaction_id
++    if (data.quality) meta.quality = data.quality
++    if (data.sqs_score !== undefined) meta.sqs_score = data.sqs_score
++    if (data.capability_slug) meta.capability_slug = data.capability_slug
++    if (data.price_cents !== undefined) meta.price_cents = data.price_cents
++    if (data.wallet_balance_cents !== undefined) meta.wallet_balance_cents = data.wallet_balance_cents
++    if (data.free_tier !== undefined) meta.free_tier = data.free_tier
++
++    if (Object.keys(meta).length > 0) {
++        parts.push(`\n--- Metadata ---\n${JSON.stringify(meta, null, 2)}`)
++    }
++
++    return parts.length > 0 ? parts.join('\n') : JSON.stringify(data, null, 2)
++}
++
++export class StraleSearchAndExecuteTool extends StructuredTool {
++    name = 'strale_search_and_execute'
++    description: string
++    schema = z.object({
++        task: z.string().describe("What you need to do, e.g. 'verify this Swedish company' or 'validate this IBAN'"),
++        inputs: z
++            .string()
++            .optional()
++            .describe('JSON object with capability-specific inputs, e.g. {"company_name": "Volvo"}')
++    })
++
++    private apiKey?: string
++    private baseUrl: string
++
++    constructor(config: StraleToolConfig) {
++        super()
++        this.apiKey = config.apiKey
++        this.baseUrl = config.baseUrl || DEFAULT_BASE_URL
++
++        const authNote = this.apiKey
++            ? 'Authenticated — full access to 290+ capabilities.'
++            : 'No API key — only free capabilities available (email-validate, dns-lookup, json-repair, url-to-markdown, iban-validate).'
++
++        this.description =
++            `Search Strale's data capability marketplace and execute the best match. ` +
++            `Strale provides 290+ quality-tested data capabilities including company verification, ` +
++            `sanctions screening, VAT validation, invoice extraction, and more. ` +
++            `Describe what you need in the "task" field and optionally provide inputs. ${authNote}`
++    }
++
++    async _call(arg: { task: string; inputs?: string }): Promise<string> {
++        try {
++            // Step 1: Search for matching capabilities
++            const suggestResult = await straleRequest(
++                this.baseUrl,
++                '/v1/suggest',
++                { task: arg.task, limit: 3 },
++                this.apiKey
++            )
++
++            const matches = suggestResult.matches || suggestResult.capabilities || suggestResult
++            if (!Array.isArray(matches) || matches.length === 0) {
++                return JSON.stringify({
++                    error: 'no_matching_capability',
++                    message: `No capabilities found matching: "${arg.task}". Try rephrasing your request.`
++                })
++            }
++
++            const bestMatch = matches[0]
++            const slug = bestMatch.slug || bestMatch.capability_slug
++
++            // Step 2: Parse inputs
++            let inputs: Record<string, any> = {}
++            if (arg.inputs) {
++                try {
++                    inputs = JSON.parse(arg.inputs)
++                } catch {
++                    return JSON.stringify({
++                        error: 'invalid_inputs',
++                        message: `Could not parse inputs as JSON: ${arg.inputs}`
++                    })
++                }
++            }
++
++            // Step 3: Execute the best match
++            const executeResult = await straleRequest(
++                this.baseUrl,
++                '/v1/do',
++                { capability_slug: slug, inputs },
++                this.apiKey
++            )
++
++            return formatExecuteResult(executeResult)
++        } catch (error) {
++            return JSON.stringify({
++                error: 'strale_error',
++                message: error instanceof Error ? error.message : String(error)
++            })
++        }
++    }
++}
++
++export class StraleExecuteTool extends StructuredTool {
++    name: string
++    description: string
++    schema = z.object({
++        inputs: z.string().describe('JSON object with capability-specific inputs')
++    })
++
++    private apiKey?: string
++    private baseUrl: string
++    private capabilitySlug: string
++
++    constructor(config: StraleExecuteToolConfig) {
++        super()
++        this.apiKey = config.apiKey
++        this.baseUrl = config.baseUrl || DEFAULT_BASE_URL
++        this.capabilitySlug = config.capabilitySlug
++        this.name = `strale_${config.capabilitySlug.replace(/-/g, '_')}`
++
++        const authNote = this.apiKey
++            ? ''
++            : ' (No API key configured — only free capabilities will work.)'
++
++        this.description =
++            `Execute the Strale "${config.capabilitySlug}" capability. ` +
++            `Provide inputs as a JSON string.${authNote}`
++    }
++
++    async _call(arg: { inputs: string }): Promise<string> {
++        try {
++            let inputs: Record<string, any> = {}
++            try {
++                inputs = JSON.parse(arg.inputs)
++            } catch {
++                return JSON.stringify({
++                    error: 'invalid_inputs',
++                    message: `Could not parse inputs as JSON: ${arg.inputs}`
++                })
++            }
++
++            const result = await straleRequest(
++                this.baseUrl,
++                '/v1/do',
++                { capability_slug: this.capabilitySlug, inputs },
++                this.apiKey
++            )
++
++            return formatExecuteResult(result)
++        } catch (error) {
++            return JSON.stringify({
++                error: 'strale_error',
++                message: error instanceof Error ? error.message : String(error)
++            })
++        }
++    }
++}
+diff --git a/packages/components/nodes/tools/Strale/strale.svg b/packages/components/nodes/tools/Strale/strale.svg
+new file mode 100644
+index 00000000000..d4d0a201034
+--- /dev/null
++++ b/packages/components/nodes/tools/Strale/strale.svg
+@@ -0,0 +1,10 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
++  <defs>
++    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
++      <stop offset="0%" stop-color="#0d9488"/>
++      <stop offset="100%" stop-color="#0f766e"/>
++    </linearGradient>
++  </defs>
++  <rect width="32" height="32" rx="6" fill="url(#g)"/>
++  <path d="M8 20 L16 10 L16 15 L24 12 L16 22 L16 17 Z" fill="#ffffff" opacity="0.95"/>
++</svg>
+
+From 6855b74007896e5a50a671bc7aa4f1947e474cd8 Mon Sep 17 00:00:00 2001
+From: petterlindstrom79 <petter@stridemacro.com>
+Date: Mon, 27 Apr 2026 22:58:58 +0200
+Subject: [PATCH 2/2] Strale: tighten descriptions in node and core.ts
+
+Drop the "290+ quality-tested" framing in user-visible strings (node
+description, search-tool description, auth-status hint). Describe what
+the catalog covers instead. The package logic and the actual capability
+list are unchanged.
+---
+ packages/components/nodes/tools/Strale/Strale.ts | 2 +-
+ packages/components/nodes/tools/Strale/core.ts   | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Strale/Strale.ts b/packages/components/nodes/tools/Strale/Strale.ts
+index e625b85f7de..b16d0aef69f 100644
+--- a/packages/components/nodes/tools/Strale/Strale.ts
++++ b/packages/components/nodes/tools/Strale/Strale.ts
+@@ -20,7 +20,7 @@ class Strale_Tools implements INode {
+         this.type = 'Strale'
+         this.icon = 'strale.svg'
+         this.category = 'Tools'
+-        this.description = 'Access 290+ quality-tested data capabilities — company verification, sanctions screening, VAT validation, and more'
++        this.description = 'Access Strale’s data capability catalog — company verification, sanctions screening, VAT validation, web extraction, and more'
+         this.inputs = [
+             {
+                 label: 'API Key',
+diff --git a/packages/components/nodes/tools/Strale/core.ts b/packages/components/nodes/tools/Strale/core.ts
+index e4166a9161b..9c137fa11dd 100644
+--- a/packages/components/nodes/tools/Strale/core.ts
++++ b/packages/components/nodes/tools/Strale/core.ts
+@@ -79,12 +79,12 @@ export class StraleSearchAndExecuteTool extends StructuredTool {
+         this.baseUrl = config.baseUrl || DEFAULT_BASE_URL
+ 
+         const authNote = this.apiKey
+-            ? 'Authenticated — full access to 290+ capabilities.'
++            ? 'Authenticated — full catalog access.'
+             : 'No API key — only free capabilities available (email-validate, dns-lookup, json-repair, url-to-markdown, iban-validate).'
+ 
+         this.description =
+             `Search Strale's data capability marketplace and execute the best match. ` +
+-            `Strale provides 290+ quality-tested data capabilities including company verification, ` +
++            `Strale provides a catalog of data capabilities for AI agents — company verification, ` +
+             `sanctions screening, VAT validation, invoice extraction, and more. ` +
+             `Describe what you need in the "task" field and optionally provide inputs. ${authNote}`
+     }

@@ -1,0 +1,24 @@
+From cdfce7c4c564a22dce41f1e166cb99d95d8c0624 Mon Sep 17 00:00:00 2001
+From: Egor Kopylov <koegit@gmail.com>
+Date: Wed, 12 Mar 2025 22:12:36 +0100
+Subject: [PATCH] fix escape in vars
+
+---
+ packages/server/src/utils/index.ts | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index cfb70ec1e2c..52d03bc0d61 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -875,8 +875,9 @@ export const getVariableValue = async (
+ 
+             if (variableFullPath.startsWith('$vars.')) {
+                 const vars = await getGlobalVariable(flowConfig, availableVariables, variableOverrides)
+-                const variableValue = get(vars, variableFullPath.replace('$vars.', ''))
++                let variableValue = get(vars, variableFullPath.replace('$vars.', ''))
+                 if (variableValue != null) {
++                    variableValue = JSON.stringify(variableValue).slice(1, -1)
+                     variableDict[`{{${variableFullPath}}}`] = variableValue
+                     returnVal = returnVal.split(`{{${variableFullPath}}}`).join(variableValue)
+                 }

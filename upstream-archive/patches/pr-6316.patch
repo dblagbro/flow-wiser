@@ -1,0 +1,2756 @@
+From 43b21d346aafffb916ae7d116a05eba4d0e7dfbe Mon Sep 17 00:00:00 2001
+From: j-sanaa <sanaa.javidh@workday.com>
+Date: Wed, 29 Apr 2026 08:27:17 -0700
+Subject: [PATCH 1/2] feat(agentflow): add chat panel for real-time flow
+ testing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add TestFlowDialog — an SSE-driven chat panel for testing agentflows.
+Messages stream in real time using @microsoft/fetch-event-source, with
+node execution status badges updating live as the flow runs.
+
+Key additions:
+- TestFlowDialog: streaming chat, HITL action buttons, history load
+- TestFlowButton container: FAB with expand/clear controls
+- StyledFab moved from node-palette to atoms (shared use)
+- Agentflow.tsx: flowId prop + isChatOpen to hide toolbar while testing
+- chatflows.ts: abortMessage for stopping in-progress streams
+- jest mocks for react-markdown, remark-gfm, uuid, and image assets
+- vite proxy config fixed for cross-origin dev
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ packages/agentflow/examples/src/config.ts     |   4 +-
+ .../examples/src/demos/E2eExample.tsx         |   1 +
+ packages/agentflow/examples/vite.config.ts    |  47 +-
+ packages/agentflow/jest.config.js             |   6 +
+ packages/agentflow/package.json               |   3 +
+ packages/agentflow/src/Agentflow.tsx          |  34 +-
+ packages/agentflow/src/__mocks__/fileMock.js  |   1 +
+ .../src/__mocks__/react-markdown.tsx          |   4 +
+ .../agentflow/src/__mocks__/remark-gfm.ts     |   2 +
+ packages/agentflow/src/__mocks__/uuid.ts      |   7 +
+ .../agentflow/src/assets/images/account.png   | Bin 0 -> 20187 bytes
+ .../agentflow/src/assets/images/robot.png     | Bin 0 -> 16382 bytes
+ .../node-palette => atoms}/StyledFab.tsx      |   4 +-
+ packages/agentflow/src/atoms/index.ts         |   1 +
+ .../canvas/components/TestFlowButton.tsx      |  47 --
+ .../src/features/canvas/components/index.ts   |   1 -
+ .../canvas/containers/TestFlowButton.tsx      |  99 ++++
+ .../canvas/containers/TestFlowDialog.test.tsx | 380 +++++++++++++
+ .../canvas/containers/TestFlowDialog.tsx      | 506 ++++++++++++++++++
+ .../src/features/canvas/containers/index.ts   |   4 +
+ .../agentflow/src/features/canvas/index.ts    |   8 +-
+ .../features/node-palette/AddNodesDrawer.tsx  |   3 +-
+ .../src/features/node-palette/index.ts        |   1 -
+ .../src/infrastructure/api/chatflows.ts       |   7 +
+ .../api/loadMethodRegistry.test.ts            |   3 +-
+ .../src/infrastructure/store/ApiContext.tsx   |   2 +
+ pnpm-lock.yaml                                |  51 +-
+ 27 files changed, 1097 insertions(+), 129 deletions(-)
+ create mode 100644 packages/agentflow/src/__mocks__/fileMock.js
+ create mode 100644 packages/agentflow/src/__mocks__/react-markdown.tsx
+ create mode 100644 packages/agentflow/src/__mocks__/remark-gfm.ts
+ create mode 100644 packages/agentflow/src/__mocks__/uuid.ts
+ create mode 100644 packages/agentflow/src/assets/images/account.png
+ create mode 100644 packages/agentflow/src/assets/images/robot.png
+ rename packages/agentflow/src/{features/node-palette => atoms}/StyledFab.tsx (95%)
+ delete mode 100644 packages/agentflow/src/features/canvas/components/TestFlowButton.tsx
+ create mode 100644 packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
+ create mode 100644 packages/agentflow/src/features/canvas/containers/TestFlowDialog.test.tsx
+ create mode 100644 packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
+
+diff --git a/packages/agentflow/examples/src/config.ts b/packages/agentflow/examples/src/config.ts
+index 86161f215fc..a7d7d41bd94 100644
+--- a/packages/agentflow/examples/src/config.ts
++++ b/packages/agentflow/examples/src/config.ts
+@@ -1,6 +1,8 @@
+ /**
+  * Application configuration from environment variables
+  */
+-export const apiBaseUrl = import.meta.env.VITE_INSTANCE_URL || 'http://localhost:3000'
++// When VITE_INSTANCE_URL is set, use it directly (cross-origin with API key).
++// Otherwise use the dev server origin so Vite's proxy routes /api/* to the backend (no CORS, cookies work).
++export const apiBaseUrl = import.meta.env.VITE_INSTANCE_URL || window.location.origin
+ export const token = import.meta.env.VITE_API_TOKEN || undefined
+ export const agentflowId = import.meta.env.VITE_FLOW_ID || undefined
+diff --git a/packages/agentflow/examples/src/demos/E2eExample.tsx b/packages/agentflow/examples/src/demos/E2eExample.tsx
+index 0162ae9f647..fd927949fe7 100644
+--- a/packages/agentflow/examples/src/demos/E2eExample.tsx
++++ b/packages/agentflow/examples/src/demos/E2eExample.tsx
+@@ -338,6 +338,7 @@ export function E2eExample() {
+                             apiBaseUrl={apiBaseUrl}
+                             token={token ?? undefined}
+                             initialFlow={loadedFlow}
++                            flowId={activeChatflowId}
+                             onFlowChange={handleFlowChange}
+                             onSave={handleSave}
+                             canvasActions={canvasActions}
+diff --git a/packages/agentflow/examples/vite.config.ts b/packages/agentflow/examples/vite.config.ts
+index e396bbad895..bb6eb5eb647 100644
+--- a/packages/agentflow/examples/vite.config.ts
++++ b/packages/agentflow/examples/vite.config.ts
+@@ -1,26 +1,33 @@
+-import { defineConfig } from 'vite'
++import { defineConfig, loadEnv } from 'vite'
+ import react from '@vitejs/plugin-react'
+ import path from 'path'
+ 
+-export default defineConfig({
+-    plugins: [react()],
+-    root: __dirname,
+-    resolve: {
+-        alias: {
+-            // Use the source files directly for development
+-            '@flowiseai/agentflow': path.resolve(__dirname, '../src'),
+-            '@': path.resolve(__dirname, '../src')
+-        }
+-    },
+-    server: {
+-        port: 5174,
+-        // Watch the parent src directory for changes
+-        watch: {
+-            // Include the agentflow source directory
+-            ignored: ['!**/packages/agentflow/src/**']
++export default defineConfig(({ mode }) => {
++    const env = loadEnv(mode, __dirname, '')
++    // VITE_INSTANCE_URL points at a remote instance; BACKEND_URL overrides the local dev server port.
++    const backendUrl = env.VITE_INSTANCE_URL || 'http://localhost:3000'
++
++    return {
++        plugins: [react()],
++        root: __dirname,
++        resolve: {
++            alias: {
++                // Use the source files directly for development
++                '@flowiseai/agentflow': path.resolve(__dirname, '../src'),
++                '@': path.resolve(__dirname, '../src')
++            }
++        },
++        server: {
++            port: 5174,
++            proxy: {
++                '/api': backendUrl
++            },
++            watch: {
++                ignored: ['!**/packages/agentflow/src/**']
++            }
++        },
++        optimizeDeps: {
++            include: ['react', 'react-dom', '@mui/material', 'reactflow']
+         }
+-    },
+-    optimizeDeps: {
+-        include: ['react', 'react-dom', '@mui/material', 'reactflow']
+     }
+ })
+diff --git a/packages/agentflow/jest.config.js b/packages/agentflow/jest.config.js
+index c92c5795932..c240d9b7063 100644
+--- a/packages/agentflow/jest.config.js
++++ b/packages/agentflow/jest.config.js
+@@ -14,6 +14,7 @@ const baseConfig = {
+     moduleNameMapper: {
+         '\\.(css|less|scss|sass)$': '<rootDir>/src/__mocks__/styleMock.js',
+         '\\.svg$': '<rootDir>/src/__mocks__/styleMock.js',
++        '\\.(png|jpg|jpeg|gif|webp|ico)$': '<rootDir>/src/__mocks__/fileMock.js',
+         '^@/(.*)$': '<rootDir>/src/$1',
+         '^@test-utils/(.*)$': '<rootDir>/src/__test_utils__/$1',
+         // TipTap + lowlight ship ESM-only — Jest (CJS) cannot import them,
+@@ -21,6 +22,11 @@ const baseConfig = {
+         '^@tiptap/(.+)$': '<rootDir>/src/__mocks__/@tiptap/$1.ts',
+         '^lowlight$': '<rootDir>/src/__mocks__/lowlight.ts',
+         '^tippy\\.js$': '<rootDir>/src/__mocks__/tippy.js.ts',
++        // uuid ships ESM-only in browser context — redirect to deterministic CJS stub
++        '^uuid$': '<rootDir>/src/__mocks__/uuid.ts',
++        // react-markdown and remark-gfm ship ESM-only — redirect to lightweight CJS stubs
++        '^react-markdown$': '<rootDir>/src/__mocks__/react-markdown.tsx',
++        '^remark-gfm$': '<rootDir>/src/__mocks__/remark-gfm.ts',
+         // Bypass React.lazy wrappers — resolve Foo.lazy → Foo so tests render synchronously
+         '(.*)\\.lazy$': '$1'
+     }
+diff --git a/packages/agentflow/package.json b/packages/agentflow/package.json
+index 138c20ec623..245bb84ff12 100644
+--- a/packages/agentflow/package.json
++++ b/packages/agentflow/package.json
+@@ -83,7 +83,10 @@
+         "@uiw/codemirror-theme-sublime": "^4.21.0",
+         "@uiw/codemirror-theme-vscode": "^4.21.0",
+         "@uiw/react-codemirror": "^4.21.0",
++        "@microsoft/fetch-event-source": "^2.0.1",
+         "axios": "1.15.0",
++        "react-markdown": "^9.1.0",
++        "remark-gfm": "^4.0.1",
+         "dompurify": "^3.2.6",
+         "flowise-react-json-view": "^1.21.7",
+         "html-react-parser": "^3.0.16",
+diff --git a/packages/agentflow/src/Agentflow.tsx b/packages/agentflow/src/Agentflow.tsx
+index 1e22e52da62..b759ce8c930 100644
+--- a/packages/agentflow/src/Agentflow.tsx
++++ b/packages/agentflow/src/Agentflow.tsx
+@@ -4,6 +4,8 @@ import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, useEdgesSt
+ import { Alert, Snackbar } from '@mui/material'
+ import { IconSparkles } from '@tabler/icons-react'
+ 
++import { StyledFab } from '@/atoms'
++
+ import { tokens } from './core/theme'
+ import type { AgentFlowInstance, AgentflowProps, FlowData, FlowDataCallback, FlowEdge, FlowNode } from './core/types'
+ import { initNode, resolveNodeType } from './core/utils'
+@@ -22,7 +24,7 @@ import {
+ import { ValidationFeedback } from './features/canvas/components'
+ import { GenerateFlowDialog } from './features/generator'
+ import { EditNodeDialog } from './features/node-editor'
+-import { AddNodesDrawer, StyledFab } from './features/node-palette'
++import { AddNodesDrawer } from './features/node-palette'
+ import { useAgentflowContext, useConfigContext } from './infrastructure/store'
+ import { AgentflowProvider } from './AgentflowProvider'
+ import { useAgentflow } from './useAgentflow'
+@@ -35,6 +37,7 @@ import './features/canvas/canvas.css'
+  */
+ function AgentflowCanvas({
+     initialFlow,
++    flowId,
+     readOnly,
+     onFlowChange,
+     onSave,
+@@ -47,6 +50,7 @@ function AgentflowCanvas({
+     renderNodePalette
+ }: {
+     initialFlow?: FlowData
++    flowId?: string
+     readOnly?: boolean
+     onFlowChange?: FlowDataCallback
+     onSave?: FlowDataCallback
+@@ -63,6 +67,7 @@ function AgentflowCanvas({
+         syncNodesFromReactFlow,
+         syncEdgesFromReactFlow,
+         setDirty,
++        setChatflow,
+         setReactFlowInstance,
+         closeEditDialog,
+         registerLocalStateSetters,
+@@ -89,6 +94,7 @@ function AgentflowCanvas({
+     const [nodes, setLocalNodes, onNodesChange] = useNodesState(safeInitialNodes)
+     const [edges, setLocalEdges, onEdgesChange] = useEdgesState(safeInitialEdges)
+     const [showGenerateDialog, setShowGenerateDialog] = useState(false)
++    const [isChatOpen, setIsChatOpen] = useState(false)
+ 
+     // Constraint violation snackbar state
+     const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
+@@ -139,6 +145,11 @@ function AgentflowCanvas({
+         return () => registerOnFlowChange(undefined)
+     }, [registerOnFlowChange, onFlowChange])
+ 
++    // Sync flowId into context so features like TestFlowButton can read state.chatflow.id
++    useEffect(() => {
++        setChatflow(flowId ? { id: flowId } : null)
++    }, [flowId, setChatflow])
++
+     // Sync local ReactFlow state to context (when user interacts with canvas)
+     useEffect(() => {
+         syncNodesFromReactFlow(nodes as FlowNode[])
+@@ -287,14 +298,16 @@ function AgentflowCanvas({
+                                 gap: 8
+                             }}
+                         >
+-                            <TestFlowButton />
+-                            <ValidationFeedback
+-                                nodes={nodes as FlowNode[]}
+-                                edges={edges as FlowEdge[]}
+-                                availableNodes={availableNodes}
+-                                setNodes={setLocalNodes as React.Dispatch<React.SetStateAction<FlowNode[]>>}
+-                            />
+-                            {canvasActions}
++                            <TestFlowButton onOpenChange={setIsChatOpen} />
++                            {!isChatOpen && (
++                                <ValidationFeedback
++                                    nodes={nodes as FlowNode[]}
++                                    edges={edges as FlowEdge[]}
++                                    availableNodes={availableNodes}
++                                    setNodes={setLocalNodes as React.Dispatch<React.SetStateAction<FlowNode[]>>}
++                                />
++                            )}
++                            {!isChatOpen && canvasActions}
+                         </div>
+                     )}
+ 
+@@ -374,6 +387,7 @@ export const Agentflow = forwardRef<AgentFlowInstance, AgentflowProps>(function
+         token,
+         requestInterceptor,
+         initialFlow,
++        flowId,
+         components,
+         onFlowChange,
+         onSave,
+@@ -402,6 +416,7 @@ export const Agentflow = forwardRef<AgentFlowInstance, AgentflowProps>(function
+                 <AgentflowCanvasWithRef
+                     ref={ref}
+                     initialFlow={initialFlow}
++                    flowId={flowId}
+                     readOnly={readOnly}
+                     onFlowChange={onFlowChange}
+                     onSave={onSave}
+@@ -425,6 +440,7 @@ const AgentflowCanvasWithRef = forwardRef<
+     AgentFlowInstance,
+     {
+         initialFlow?: FlowData
++        flowId?: string
+         readOnly?: boolean
+         onFlowChange?: FlowDataCallback
+         onSave?: FlowDataCallback
+diff --git a/packages/agentflow/src/__mocks__/fileMock.js b/packages/agentflow/src/__mocks__/fileMock.js
+new file mode 100644
+index 00000000000..0e56c5b5f76
+--- /dev/null
++++ b/packages/agentflow/src/__mocks__/fileMock.js
+@@ -0,0 +1 @@
++module.exports = 'test-file-stub'
+diff --git a/packages/agentflow/src/__mocks__/react-markdown.tsx b/packages/agentflow/src/__mocks__/react-markdown.tsx
+new file mode 100644
+index 00000000000..6879fb384c4
+--- /dev/null
++++ b/packages/agentflow/src/__mocks__/react-markdown.tsx
+@@ -0,0 +1,4 @@
++import React from 'react'
++
++const ReactMarkdown = ({ children }: { children?: React.ReactNode }) => <span>{children}</span>
++export default ReactMarkdown
+diff --git a/packages/agentflow/src/__mocks__/remark-gfm.ts b/packages/agentflow/src/__mocks__/remark-gfm.ts
+new file mode 100644
+index 00000000000..02424580e27
+--- /dev/null
++++ b/packages/agentflow/src/__mocks__/remark-gfm.ts
+@@ -0,0 +1,2 @@
++const remarkGfm = () => {}
++export default remarkGfm
+diff --git a/packages/agentflow/src/__mocks__/uuid.ts b/packages/agentflow/src/__mocks__/uuid.ts
+new file mode 100644
+index 00000000000..a1b203006d1
+--- /dev/null
++++ b/packages/agentflow/src/__mocks__/uuid.ts
+@@ -0,0 +1,7 @@
++let _counter = 0
++
++export const v4 = (): string => `test-uuid-${++_counter}`
++
++export const reset = (): void => {
++    _counter = 0
++}
+diff --git a/packages/agentflow/src/assets/images/account.png b/packages/agentflow/src/assets/images/account.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..a758a1db9bb56fce0adcd99eccddab5525b31184
+GIT binary patch
+literal 20187
+zcmce;g<F){_dfg#-Q6&xlz@~Vj7Uj$OQ#5e2*@DPLkiN3gdm|HAt0rsw4fkEDoWQN
+zARwLZp7Z(s{)P8k7Z>N8=h=I&z4qEG?sY%J8tAE$ldzCL5Jax2p<)C<IN)D#AR+?r
+zYya8!DfmU~rD5R%K@{ECA6UO<*?sUonUSjINMp|jNI!=s&XAv<-;IZl-F=)Kyqs@%
+zK5@z2mSce+PDoQl$>dqy=5N1j(}_0u9ltG~H@Dt&zwCnU!W9ulDylu<eKfVKf|ApY
+zv4*rhp||vM`1+<3Qr^@yF}3ss(5t92y^9g6e@LeDcPp<gBvgRF!Tv$^%YQa&c}M@`
+zj=m`5T+H&j9EKeItbkPh|M@319SL!7z?qr<Df<R{RW|xs=a$|TnI5&g&BlPNZ>(SX
+z9%>tiOsM<*p!?lK<J&Jd8<jiqE2^qTQku*BMYFv)ipvp3#f*JiL@x~n#<iRU%0et>
+zFsKc}PJB)V#b=Z@)iA{<f<vKon$k*~X@PL%l*T)^M^|UftdH)iQrg7Dv_|5i2JD%G
+zR}XgaWYq#6#YcC!;>Qz=+e6;y9~6cZ2_9MttOAcrzW-sB`}RjjsGvN9LQQ4M3C1a*
+z!mvs()uWyi=B(S;@T#(qKlrNV$dsj155F?ns9?r2*vx4AC(-h!(g<p5QYfX++QlvC
+z%d<{-3#)A6goo=N9RiIfaF3NA29>2>C^`5CuqV4~Kj$V<5r$N3)ANFSQ^$TkB}kVd
+z{Qd#fqv1kRY5=Q}5AT{mXtY@v)iqlqXbcPOVVoPzU%vdn4ga;FT(y4!@j*2ulFWm}
+zVIy=qpSm5cTI}cc^3h>2=gg##p{Q5yH~ol}W^<SiOecMKDR)0h%VI>fKEPZ5WU&qX
+zFy@>byhW+0d!fpd^JipA%Z@m~xbxP<t3}vOEkWk<BjP|_g{#*L7)6y!6h5jf*C>rK
+z0nHu^FBDZP3?2LHK|)`1Fh=1aB3Nd<*MMZ>w(G-DMCz;}tcgcmu9vYwc{rCM{`okQ
+zZV7~OLPiBEXyu~nCEd6((#6FaaTE>8jDlskP>IGGmm;j?=6JX6(<P(Faw_BgKqL9z
+z6&wsZq*p!~KJ=B6`Re)3&Gn*&!dtF$B~k?rP6P2GzQ;d!rvBeOsG5N4dj4}nDSM}r
+zo_Xlf2CRq&yx^uj*Zz+-|M8j!%c<q@)ppS3J3}G4^+)8NS_)T3uVchi-Z+41Vul(7
+zez}cKxtDqpK0m!s%{M#!TV;7w-Wueek7VLDu7Rjv(37h4p00wfzTXDd?;^+#UeMs5
+zSC`583XX7aI>I=^g#=yR)g5$0eOfMDq6WvxKTi9KUN~2j7E@_D!U|CnO@Gf-Typ=7
+zSYl4*=adUazdysNs%m1Gx?{lwkJbpki-1y~jGW}O;ztM9>E47>UMZFoiZST*pRd<=
+zpKavqNox^u?@7-d3lx^{i!!b6nrlN}(}$JSPQKSwR*)Qt&T_#c2drdp6k*&`TDojO
+z5grv;FtQB2yM4@M4Yo{h>FRgYf}T}iJD&4I(8-;9zs_$u%f7<%N<}j4!ASnPC%HIi
+zt}I2N4PydmlZ1FXGE<wqs_WQTJD)4~X7-g2K6#|0X)SXPL1O5+2qq|9UKZlc+fII7
+zC}xKsJ&`!bCP_F~H5?7rMQg?cu#iG0@O$S)4hDxqBm=3#${~slANrR*meud=ieQ(Z
+zQGg}eX(o)w>I<Hc%Ac3_yT&8U6Ge?_d~T#CDvzf%lc3I3s>kRH{5j~h@%6WgUon!+
+zhiC8XE;J-W$P+ZW0(<=3s}C*zLpxQ+9^f^#K?%mC9}FOaXLb$iadB>0rdsM;8x#!C
+z-ox@(QppCh_qa?q@}qDDDaZr$G*9+COCzY@Lc=i50-*Ka)JZp~;~oCLtR?nUNZuPc
+zH{g-$=Cx3=z7}@RxPNhCGKQ65LP`(MBE}=5va|@f5De#dit_wY;%jPE2W|FYTghV&
+zx%l{Ss8e1Ok&`RCx>9v@-KApNR5USR5*|_x4wjT-r<7w)IQ_&oK6R_OsE9&pA_2V{
+z9A!pwi#|gn*Z@Ifc&`Sm=*|0JuJmSzNPah+mf-$~M$b;ANwamWhHjktTuANu+6z@T
+zH#wTLq6IHDEBz-e9ww#}#jTYLQTX%%!UF1_UrEqy3ida8Y8%wNWwZ2=IERsJ9I38o
+zZzm5cjavvq%R=cw@@FBXUJ*ztL8Z@nWE`);D-AJBDH*5Tp=xS_l>v`jT|ZBXs2)Gi
+zrk3^)?z~s=FQvmn^wDjUb{INT^oDi|`#=LQYhU0*gA}VXQVsS6P^xInR!zYuhi+rB
+zr4nkHg`S0MIcK7-uJBSPxT&r$&ty<W(uCdW(pXYQ->PmD?3PwxSSjyH`Mp}aWQ;j9
+z;Puf=%W?FHtF>T$53A#8q|+hB$!k%QN6e$o>l&Y$w)#e9-G$WgdiS^E4$50gOO&^Y
+z+uJP=srLlzEe!oPxHBOM;Ot)Nl=9sd9qm-caJC7`$>Dv_SD;Xk^`z0uc^Nft{}x$d
+zJBmg}C(X`9-m<ldpq!nF>FZ;_XtZfB?Jm9;e*`9>2a{-(@~z61HC%o~CeO|zEwg3a
+z>4s%PCG_ri-0bSUTf*aSYHTbt>n}+;BG-Up7t*ea(EDq6`nT74s5&iCX`Gz_k}z^p
+z9=4O(7eUJgSXx_OyK(V@%v$#9+P;rBDK0cHXZvF9m2DVffnC(Q!2pcR9sQ-@#TTVl
+zJn)Eh17YZXUixuV)7|phr9S&5N-u+VKb-I{poR3rLbwakC(UlzULD<gw*1+zCV0jc
+z4Ay#h@TcenZ)nP}5>gDTt)&%oI8wNScfQ;t8{FshYbQ=p-1k%rBOu@1C^Z}Ca);f2
+z9bReGqK(kgAN?K>;@w*pinZrX(Z_Ym97c;DT$C5!L4N!1^jU9*Kp_XY|HOg`k_6Wi
+z=?j7)S}u=Cq^svd;HCWa4_SS*u4lE2!Xt@5NV;2cZ8bh@vH&M0br=n|;2HD!v$f_p
+zxjBk9Jdd7a`P<$=;Wu~iP9cb;tX3`{z+s~98(JyG9MZ5hGJ5(XIbi}qmwsTYNFSFu
+zAAvK@Z~E{l3SL?q5cuU1UIm?BdHuDsJ38<oA^9n+^RpuqBah*vn`T491Ztcg*m5}D
+z`ZO2arGXLd@50n4`y7-X_t#a3yCD%Amu&-2%$aV5aNhWMj(78Bz5Ty8ICj6C#rj?!
+z>|zpLj-)%psUyhnZ!kbK^s7v5WSu|IvWdONu@O7RV+#HFjC#8>-vV{$7#QM>_23C<
+zE{Q##T5SYGD>4$1WF`SV&&-W%oMv;;ngU+HTQJ=VI`kzuPCzDBzrfHY&Ry(spJPO`
+zxCCX@5PF>(GolPxwjns-ck|3Y1Q5!x7tDBhDkG1NgMAbH-Af`2>=&Q$#%d(k$!H2S
+z;K)lag>LLSJeyC!|JBnkHq*4#OFkvs`z8S&ZTRWk1lldYp*QtC7&X5@1o_(pe3h#G
+z>Ci#Rsf5sWk<Dj#e7a(B{O95xH-gU^K>_EMmnUJgdx|5h?QoEF(th(+=WBYsIPb*Z
+zx<+T4G$a#=Fz^f>*CpIGwIM!DLQLiUW$d%PkF4I8zm^;<*ltQ@I1B2$l%`8d;)tg&
+z2wBqRr|ffm%VIQ@eN=>``fs#pdF+o{P_q(3-6h}e^L@G9uOp)hJcbAoUn9!^oZ*)F
+zXOGOASXHCw(cTDESho{*pXsFZYOo;i$%LekzixoFUS`z}H;NM@3^&wTShX7I<JkU$
+z$HmpxUwT(XC361!qw)8jt9>~Ww@a3glV7vTh~H00SN;a}hl2|yP*v+|HSnuA;1DR$
+zaKUKYzc0XU6(V(`V^0MmFixIX>eUs?Bj#mKBOer+CR$13rTpg$CL!Y0{3WzZ4mM9u
+zJxm-L-SrVIi%893NLst}mE_ZB=7vWF4AfAUXCs0IW&{0jb8;<9myjiPKIUb`)q;O{
+zFr3R*GR3h0Hg4xdUo3wVeBSAj4O!$AzF2F}(237XRBp4M8op>=TqLXs%-ZGIWG_7!
+z|1T|wNDlo_f}0#V^tDyK$Lvso>2gQm;i^XK&Y<YY&XE%?0pG%bpJ)I2(y6vOCg!eC
+z!+kjh?>*v!>kQC_sjg|ll|IY@Sn6uJvAWZbv?=bJ=|@(fjEs!2S+*_o#&0Rp645E6
+zrLl(|Xs&^dU0UcMr``LXx{Ppt0F&IG(BU6Ty8}+LUIff{6qW8&*4E;ah8_}`1??pu
+z(~BQY*7T>Ri(Z)_h)(zuA%pkc=EKh&cDk>A73lTx#4+wJaG-!A-06{=TIxwlV9z5l
+ztzl20P`Zrsli#2(Cngoe-_gdfsY@I!mN)->ed2}q5r&&FhUt9ilF+>&x@Ty8e=}MM
+zx0t6d*k&rbNfj)^5rR|5&dBIzfy}0Fq*qkH2ydNi=U({+9n(UE?d{BrSNpb=BQw14
+z6%7((jZ|yNeeYr<)t+c8u2B-HZ{%-^yBwEJedL|R+CVyeg_wA<-m#In7_M$>v|-{k
+zn}%nPvw(chd7$xPqowzHql0baC~x)E(j)yI_rK>k+81RurGXXRhZsLcPt6Qu`r%FY
+z8Of58y<HGVmKBa!RPJaAjo66oEN}n~zqM;lp$tV7wO^dtpBO8stEj|)5s{XIFNNUY
+z=cN2Fqa<(M8*CM*=MK{YMj#P*bu}d_9;EUPNhe|b<Ox|cx&CL?_aXRIrDJT$4#-FA
+z$DtE9S28r!xvn~K6z}jMg1U^LyQMyC8`Xi;os~a|OP!LFn9_eRW_EYI%djdfW*bD4
+zJOn;tM3eA;L%2m8KI4)5-XaS;Q}`SHrFrY=(g-Jaw~l;>SYwEB{JBRU806-vGd=C+
+zmODwWO~^IZFAI(H)IT{Vj=ppL90>IL=u!tkaKc$iw;kvzPe3W|DIRAw=~*h79BL0M
+zeC)$3lJ}<Jl}P@Qz2T^X`Cd;05h*D!Z~5yI5_Czz!%AK?#)v_#{k;0)yjZm0z)>w^
+z&?IPep@!&wy&Y`NPC%xUny4iISjCLx@zvbFQYW@Pvz%gR+(Q@|7b*V|rv{U`i|GG+
+z<I{bXVHx*4B-tMAk9*&`zFHKQII+3u1z0DJ5;7;Bm_ub&_3CpZ5$zZJy#4b{9UTTh
+zXlfwz$1AO#K2<Gs+3Y&{$C(sL?Fsm(#Fs*kLs$w$Gl#uvZeKlNc06TjqNF})E?H(;
+zzWiM2Sf0^d8QR7D?}1?I2-u|4T1|C?Qvb!P;9<Nxd6!Bcgt0=K*Ncb!gwLBBE_^Ul
+z%PsNDpLpj|U-}1Y82cK-Af5+5d;3%ui!(Zw%sR#^UXTcR4HEkmzJ9HW7=*1TrEJ&#
+zZYglhq)=`LwujWod6#n|oQpCPYF;{G+*{CZyCEgQ-qC#U2*X6E?KO4#tJNDt`7j`O
+zLb&+dBp&tBrSp&d+Wm!4t=JkJ+2E!Se2I{ySq*`E!Ux<yU3yQRI28XQ=Gsvb<LA0#
+zskl}if$7+*i{I8@KEtsNyF~4AUZ7y##yk3mF4)_Aae{t*I5#{3=PR%(Z}is`w0KD2
+zoq%>E!QLJ49`91E0Fjo>^?Y0?Pmi?e>aTvOlL6{9^dlqF&Ak#){3p6IAF|2%aTIOp
+zL~RT3ISmnnkafsP>;T)N;U;qu;qK_S*to6HFT*Lz`+DalP?!}sG41+N(X3$za&Y+E
+zjA1B#;A9MaI%zEETo7B4e)nvj*Ed$M!+H-!OiWr-_-*>=s!RI~Hy4){f&jl6WIwu=
+zVNaeqE;gub-P3vC1S`}djrL_giDB3%o=2%pF@ekmzvho8Vl4e5<e=o5&jSw+0^!6r
+z2jBWyJ`5VpmZZ3ljL(i%j0}rN6+hb-M~g#{meBBvQa$WsnmVo0M!0G^5}!^H?H6el
+z)e@_>%14kN8Fp_9Z_oiHr*pPAGoTDGY(R72;!6Y?{hX&Mv1t<Gz{_KpAgVBiBtefz
+ztWxre)2Zhe-hawGl9m`d-+YOtZZGzFgT&hd(Pf-jODW_q)Y0*#o_y5pSE(;o^Q0(t
+zclU&h>BgDoHQ$dDgLk;@brsb@MkPMhUZZp}`R89!UxtV0zY!+Z(bcuRKP=ySUwBrx
+z-07#JHUbB-_FACB5UHs9epwkS<$<6_Nx`3x1QHxz>pJCWr9AQS)e6xRj2w}ih<99f
+zZQke@N!?e*c^MCk%T0~}Ur_P9;lXyVaVZa#@1Xv0hJv6KZ0woLe@T6!n<qCPF4b?_
+zapvVt{o%BZavI;hA8R^d4lbQ#^~Z~~Af!AJhL9$i9&sHP`nmF7V}4Ai<d2Tf#}N~3
+z63-hR#-f@3djqMZo0%x)!;p2E;`#C)?TJ&ki1}EFWbzMlXua&_{xu942)yn($KTvs
+zclY$Lr^~Z3<>C+u-S|R=xu6xdw@<x~S9F6_OpKTrw<ome0yytgG&6#m0YY#KX~d4S
+z-d-^|xg}WS<h>`j7q~m^N_)l1=Ti%PPx)~wgCXK0E2V*x(vqOUQw!o1`#>GeW6UJt
+zf0CTc36dET37k>!Tp3wfisw5bW)G!Z|C^UYN^Nh$q8LrZ!g7r{Y&~05HOe9Tcst{|
+zwhY7!)b~?L?5QCc>gE@+{)8{dt#XD<x_Nnma0kUFd-T*mGdkcTtIbHeIfF{p%_R>_
+z_z@3i`C=I%p=sKi)(E_pv0#d~^~d?{H`Sqm{+9-hQfzq|cek*zeUIRM&rT1I2A0YT
+z&c!O=3Qt8fD)zy5l0A{g_#Pa^tvc8!HA>t`Qb)!hs>~|gh)F^RDJmk63+4nCxMgH{
+z_(uHEvv<oYu>tY>T2R%#;wW@qm;rJt2w%4mY6}hj?+Frynq;nn4VVB?6Rk<RTp&<p
+zrh}~{QD2D&t%UEqV3(jJh2U>Ol{F=xQTQ|T*#{^&R70DQ;~R-yf-Mt>b6>l06rVqg
+z5;;A5pRVj?*$U2yJ#AJ2ruC&A)sp|z4y=0(oKpOlQPF$hFTqaD_+lpsK=0T1RO23a
+z2~-rgLJ~A!jXtNl$YwE{kb(3v^#h+TiJk5XM*0tcHo717Xxhr(kk{JVQ@L})_V|{^
+zL*CnXN^00g0@{s`it5mIp4#}>;v$dg`}eOcpmi}|lT74R`;U3se6Jho$0cNlK#(Iy
+zviyO$c{S1m<EZ=Kq0V(4<?Y0_<^X>z0|d-N*Wq*WS^u|)u&}u_%7_bS2EcJhCj1}N
+z5WojQY1xEZDou$!H&wB6JsoHliRlobKB!4Hc)NbkfRzUr+(JFW@5Zl()2Uhf8{S-K
+z9w-MNMFGy_xiM8RPKyOJFd~yz*JSxE@J>U70*OT8b9^9)v2leL4lf)<hCSQSRK}y`
+zJO7Q>O{g2OBX6;|2{B{Mh3l+w{wY@UxP2m2X(hw|bnEu~adImHz$hILA2YDSzDp~>
+zzB>SS3xB7%x8dtsgcao5H;+14{USevAOpJAn<?UfR-7CDTVv4&N?-lI2Wm>hj3~sH
+zA=-oHoE){$KURb9Xvh`+Q?;OpmTh}$9uKr^r}aYhs>I$sJ(hrz2fO2&gS?_60D<u=
+zAw})a-NafpMX|7m6*PE4j5>cl$pTU;=ey=lqaHyL01Jh``Q{YIfXdlWtFI>-$>H1J
+z%E&m_>u_m`0OPRMM0^;zozdDp$#UCoGc8_m+)3*Nd3GpcpZ@<&N=NBiu_?5{EBR=S
+z@265sK>YDhXklH+{n||ly#Gu|GiAB=AJDY^qpL=h{Zo=@UKUh50E@Sb1%Ppb+h!Nk
+zX0fkN%;NSI7#{;E)S&IYnbLYG4KN~Ft9AysPDJ>u$p4KQ3uswh@!Ov6H->##lLB?)
+zl->{GDmHLS9l(#loR)1{)kK2F9D}wR=SHK59b;ExgDb(%A{*oed@wwW*Ajx}helKh
+zxne$f{OiNP5P3EIv;yhWOK?Os7uRcWQC1S&_v}`+ZC{nm01bw}`)$>x(;k(af_=fg
+zwpkaqs2H*f`AiM%c~qDUwg<USv%&^KA~>CZ@~H*w^Op~fGR%q#QLNc1o<AFW6i7&;
+z{N_!k1z1r!0D@KjV2kK<8^-12Xjn`WK~qB>9;u0ntH4}&#w=T*pv#xX)+$9#b$er;
+zB|M5&(m-hJA*Hx=BZxv3&UY>ncAhnJKqm}I{e9O@_BIa7%ywz?{~Le(osAi>B9g(_
+z-yc3%x#|Y(iR9j5DE#zJ3DNf{`0N!8r4shNVsxhqnt3)jS5$o2YS!NhdAWJCPlCa_
+z4-}3-M46(gXM=?(Eq!=tPZDq0S@FPOT0;L928tyX_>9cWxk3s_3|*?MT1Z>`wz3jo
+zZ&w&Z|Nb}p-Qpha3>4!zc(rZCM+O4a=ES}B^h5|cX&HJYkU^n@4JL_#K?3lF-Zh0K
+zH%Q`@hkNVEsU?Wn>Bn=zFO%?5h>}OGqWQ0z%g`~t6DsN-+*Zssg{m?WVO0mWK>!QF
+zhUB*^mk_}w|K)yKftET5rCGMe)*$-UH(o#E!BE|o2N}ZmqdA&e8f(w46j%)!JJb*a
+zhAo4KQ}YS;I#Ls1ios^!`sg9>|65R1sqIGo=ijTJ<3_w4C0}C7`Q??|E7pmBg3b}e
+zmGN2)Wbk&{;Ju~`gmNjch0QQru_*2HcvL->JJ6SuH<XnFBFTauLEe?PDVRX|aIK3U
+z^QBYI4R@8RgVPGTmwWyjGhOeTK|3Yc6J)f*Xf364NeGgAHfQyVIXS*As9fA<+cup-
+zu^n7G#JA{!RwMy5U0(}vgbrk}Npv$-G&*#D`i;$zGSxo-X+RqPHX~i+lFagN<}eI8
+zy4unOSqFp)ymai@XM&~&7eY5kfD%ZmL|QrFIMCkYW{-=IivD%JE_IGaU0^=Vewld-
+z4D`QDFrBLa2F-^B&H+<|>9{9!%pSZ$#^c^Bj2Bp2z6}gt`^8XZC82%K&2v+srp01P
+zX-$y*9!#>j*FJO#Ly|!#0<)k{FGfSGU|A2Vvb0@fKo#IW8}sd+K+Q8b>B~b#9)?~B
+z5>DU+M|cDjnuQ-Ir;qEJ3Zw@{)K5DkpP8rxTYbr|(0d5#A}2P3sG71+&F7qRzz5kh
+zww%VgDYgmcFQEeehWt*~H5Y)=GbR>A{VuH#eU$ZmW1tPiY&h_xsRsHkKAL%vjf}?K
+z_>;RkrNH`uF7Eu--_SE|w|A_iPUoFZ?8`x7tqVelj@F^*nGUXdi4WV(xuj67cQ-qR
+zX?acFs+Ru!rF#Q1o<qQ1b@Z~7wbUos6Wko92M^^q^B16*$>!ak&aMw1rX?zeyaWE`
+z>gbP4!q4cR(U%oqY8x>1SI6saws`hmb;`D84q2ombI*smDchaUJqpmYrO~UtZ({4&
+zz+Z@;v4}P(FHmFH2m?3&{#~e;I6;dKjDVWj`B$GY$%ZZGROYZ!dmKLM6K{{l9kN18
+zL_dr@DS`F9MRasD14dw(pM}NJtGi)n{_#Hzb=m0<m-{ouAl+$_1p(Hx!p(Mu1}-j7
+z&`FH8peQSUsAA*6qbKWIkEGkfZThvZUuk(#1-5D2{GsN)?5)ni#{jhQ&Fx=kr$ovA
+zDT3rqj`^P*dGI_H=HoaV)V7<?$ZAhc^e)?D@KCr0GJ0%UYxNMb<P0%rugPRjvUD7u
+zEWOeF$<0v*Za|37j3io|qByK&Xeet+bB%Kj1l~JcTVAvHg|?uo+}HpJ|H_=<y?$ME
+znLF4=vgBVw0K#jlpHP#hb5BdSEsC7n7={(HkAAOt!-WX4W<t>dFtYMp9s5jU<~;wJ
+zUZjy0g5m^wAku5%LA8Ue-3P)^SAw%m_e+r!dz9c#I?>$aTlQx|5Gpn!Gb6Ts)lv=`
+zWlMOJ0S&<XE*9wJuHsWhri%(Sj#@W14&*LV1Mo<pgY0*!4I-lpOLEWy0Nagc6?k^n
+zEC@2ml@tK5U^;H(eHVvMg6!IcdU~HPeqh!b*xc1;u(|7P-T({R`5p)LfN|NAoh^SW
+z`=`Belf^kT5fsep;C!0{J}b=cGBr0Pb}{y@XnTVC`!XsGDpwCq$g*tc^FYh~9Gl$e
+zGbOzYBmeVMTb-*r=tC(HY4tO_sw%a_YIo;9tgvh!BG?H&xZmEq^xAe~ELSPRqpwa+
+zA6SR%;!YoW!~!9E63>mS5l0~=rYsFHD;;#Ngx{Gz7^aR~z6GxHJ(-46UWmu;?YrxL
+zynjR;6_?d0BS?s6K00x%z6zuSeiGPHYJm1k2Npky^#LQs0Tj|3nUsVlri;)H-1w8T
+zyKu(p-IwPb^MWKT@h%R@VY<Wi$0K{Ya&dKw`n7wiD?_tba3>akJMNqI2e<JzQ-{5;
+zwLIPK_jkF#$L11=%C=@E=3#NeXRL>rCYtK9ITO7rQor`H0zm8YASX4oH(}6dN@GnX
+zr>Ki0FLctb#@{#$oLj1gmA2RA55MB?oBE26tM(^4wbkHC8kbQ8K+Xy2<*gWEj$3q{
+z0vKU+^z`(Lsmlv`K0TJm@tehFqDGWw=N~-1F<{TFm1c;+(TBfGjoLRYz`dUXO}aL{
+zrg~e-&UIt|4Yyn`pqZtJBWW%5*S33o?(W$CE^h2Aix8Um=V6e3mW0MpFpK_wTmY_t
+zD{nkhfQ`+c=r`*-wN^0Sa%5()cZ&xIZ!9YPkxrY(VQB9%LXqH2-1Ci9{)MNk&0j{6
+z8Z0dHO>6vQJ2Va7JHa^Lm$_Rv-Qf$eW<hzQEfV`0rQ|QYBo9IB=*!#q$gwX9)OM4=
+zIy^)Fv9TY|SbcA=Nl5JSj2p~q=LGlxZjw6B``EY^VZ>LGAzU#HfH}vr<R|j#TMzle
+z<lmLm;M{Xjh(7S|yP*QESdgWWtz;VQ)c`;P1}aW@?<X~(Orh}74@k8~*4HlEpHb_{
+zcsC>IHo}wSrz2UbZK5~c5nu%JO+8u;vfCzx4mAj0cYfa0-FtW1*V;C^;KT~*dt~OY
+z>tnZG_xC}>Lk<q-Jv!zLw?BN5V`n`&Kau(s@<$Rp%}5;c*RruN`iRUxl933v=BD6f
+zq$Xb=P#;PnkiFBpxL#M?q+$Xe-XrPUu${ACLEW^+juX-t0h=NzcHwgKfMO&Ci5we@
+zle$(ZZEk|%3<od-ED#k)PpMad0leXP6!8TzL|U~9xr*)yE(Mlhn?hHKHn)$o`!OsD
+zrnU4^Ss4zb9cO7%yA*1UMrn2G?yP`i0pRI(07CGd>;9L5y{}q|Gi~k)k3V7x<c}sP
+zAr=AOPIf!<_B?gtRH8&EIs0dHYp~(MlHc`t9E`AysgZRoV}TX^P@UJWX)+nMU&ceZ
+zzaF!OhVH<v(>^c-KF!kXmu2v%+0R?7Td~462ta$<5Wt1GPF?-ayT2RbCcSBxNB}5)
+z#63HUgz@@k_bFC?L7vC+Z3zP}kNjFMH}35`i=UfbBii@nbsoAD$q&b21$71t+W{}i
+zD)eqgrfz3H?GjtQ+~p?YNVyL074`U4Lm2usn7P92aYiCqgk)p8Xpgrebyx{hHfmlU
+z8KNr8&aNQ9KS0Cv-bM|DNaIfZ_9Czrl$Y!nb?sHnIQ~~)``P_{Wwggx*V7R7V%zIC
+z^gl8U98A0>-Qxi*vH1UM^lL*Hw8bYO0CSPv$O|u+dq!~Ta!sp$R}&w9#e8r5?Ac*C
+z{eSUtESROj#C*K6sOT)Gq?if@=3v71qqTkrLD#?m5Cbs^@@^4N%^~>+C^7u-e*Q<Z
+zCMb1|07lQY+DS%=znID(_#<6GK?`eaGZ+G$H9gC&aAN7oBuGWm1tXYQDs~nx-n=+S
+z>kT>!&BgY&<u5u!p6xIA)h?!amK5*TD<_S~7T51{v|wA!@qSzqMxZsPBhZS^X@bz!
+z*VfnX?9I~e@6FOvH+m9}WHUU|s@NSIvRf==G;^3S>#(Nipfr$tF_d*YtA@XP1n!P`
+zb!3!_P+8Uj4<Vs%#@IuL$;~A%004<E^-vR$Jk?U)d$GDI-FjxmZX2-RQ+dA6%3(V=
+z^;*k$VY%o+`xfZ(xlxir%-=GS|Iy-K(45!fu~7lM!T3Q!7sjV=vE(HWH8aKzmm?uT
+z#QX$f)_OD?(0b5kIX-c6A=iv3J*fO&>w*eS3}zXj@7S>}9gl;;OFlfitD!;lW`rqm
+zY=kX>R*x+VSQSR2|Gs*Np!}&lE!MTPn>UbGRXxUN%o>r;$bV>la<T^ce~Hnci5w0Z
+z(rl$WI4CNN@a(EqZ1=KYgt)g6A0LMT)7|Kg@wa0Jwi;`<W*o5%q(6I49ai328P@dk
+zH?40~Ul?rEFV^w?0V?+Gscaz{H7w~7mBZI+BjGec#Ffa`QZq?Dg`z2ZxO}|q$k;cO
+zA3U(zk3ATEsnsBrF#X{z+wDE=T8H0{K_(RSEtll``1nS~AJ)q0Nf}?yUZW1HKE+E=
+z*9K{6Ss(7!>@WnaGdXx_>cscWzrL~W(+k>aG_jiE8X7UmLCSPAX^vF1v;;$SRP^+R
+z#i63y+<3a*s>&)nPPeZ%ay!mOKJl5DN*9)t(BQWW)wt-(f>`z%R88wwcYOry@8#mY
+z-JEGcW+54hhQXCBNXuz;O+TFW#GQY0c0XK>^zet=WL6LeStliz#Brw|9Xg2Z^N<WA
+z)>`F9EO!!o{^KbPE03GX_2dPiU+wh<TAA*|LbHG+5~hi(9XDvSy0f6){sPqUOHcC4
+zV^xpb6aJK>8FbdbewkUf?|Xvt_yp>Lb7i-n!xc*haa0Y(l|zwJNuisEhn<B{?WQS4
+z7?3V-6hnA;AAhDZpX`8krtfUvyG1yc7cgwwwcbS#8|u%qL3^yd8AA$9_WICHEMS-1
+z*8gKKl|dQ0#}7QI!p*4^8jgI@(h%HC>y1|rs=T!|d(rA85mW~^K_PBc-HiVs!}$(A
+z@Qb7;?BqcnvX$B|4n=0K<wup>k}1KZI>`L=#`iXNQPSDl?x$n~Vmb)Q69#;9t-I>c
+zNrE7%-Q&uCUiKD*NF3$=b;89^AVMz(($z3@I^LcR`1D`%h`s0)Xtuz3?)ZOJOzOA9
+zv3~;uwJ=2mbUmG++^n)~1YKc6KTtn(Y61obqd}4~k1Y^L_*S7^W8syVd3#U-lBviE
+z<YF*E9&g(@>8&8BGYV}nuog^E${}#0A{hVK7an+Y*#~n-pz!0O&jZ0y4m>eyFo!gL
+zLodOlfzhiyZb1H8<Jur1g{ZLy(mSQJbi{(NM37_OQ5Cw~)cokj5LAz3F9N6o=jkgz
+zQ-XQCvPw6*1tUrszALZiL@Rtj$N<CA7Dl;@Xy3C`dW_^7919-bQvO}K6BX_2uK8mz
+z1MqDq`f^!EsY`m-bn5B1p?x->5XRYknf$4&%uA;xBo#NHc9Er|h>O-Yh`Z+1ZGAy$
+zeLiA66ex4E`Z0Gs>GF+dsn0h{;m7};Hr7Yt(>^lygR*fizZo3eygvW_X^ro#TXftH
+zTVJM>jYn>#J&IyY@3Vly6Hh6HOca;wEG_gk$=-gVVN8rNYZ9=(ff&?6BBMx7r$FxZ
+z3U`e#nF@5@Q)mkA&}#iAU0+Jv?O61vs<O*85uW{7{2B3?zD2-Bc9WIPgyJ5#!L49d
+zi%C<t2ieyES?1nH>o^*d++fO^A<^4cmp==4S{Ca{{gmfLu5&pknS={r)^tr9er&&)
+z44ZA2KS@v{4_4Ro|9PQUZ3UYCSaMJf;9A^MEboA6Y%W}FyzM@XbY5Fi7)N(swJ8kz
+zt}d>6)A+e2*;y#Q=~4W55+~>yq=<O~KVChcpFY3@G+S8)3K5)$<5x~-IWuO7Scrmd
+zHfTm4eEQq;+lFj@)3)_1Vep{)YEVMfr;GjIUDd7WoC#@`&YM-@^qq7NbN-2+6>Cn-
+zpRt4K!)-=^-|3Vd|Nh<ZjkOZ`Maxc`Ig=Ze3CI<NwwbBfK3w%7cyk?sN7obj<AgGA
+ztZ#H=o;6Sq{2I&f7(tc3QC@ns-&y<Fw=`q=<csCz>3#TM`w!eI3xcw-$-qY=&ZQYi
+zo+%W{m!QTA=<S?V6&IlxQGk4FZ@sU0eM3;tZZAmv%6fb1)BDny2kvDb3iltm_Uu2X
+zKD{uVZgafz^!=|GwC+jGZ#l_m#CVC+W07+6Q$Md#=l};>9te7qzELc9d2JHixpK5G
+z_@4R6`dgHBm56&>U{2M+M-my_@aI?c($dBEx0(cwpGdxF{~3N7Y-(gUz+cw%i=sa~
+z`0TRQ4ncgv2xe3Ij|}ww_3mv*ubhr#V-MsKBT(nxj>lin(yPklLJ*UzaYti4PT-Vh
+z|Lnnx!KaYhZrVa6JSqN%f~9MKO%-?#G?gjARMf#|!}`c(_y|rmZ$9s}>*qs4b{#If
+zbgMWTS;J$d38oDKbDs#Etw?J^|2#H%B&6bGT7?u&b#Y&x%SabJ!#&nS1wh#1)9t)V
+z)3Q7ZR-)+wgIqMkR@?k3D>-YGV%VpwjgtoRd&_<`Fix}_6*ZQyHSju@&Dr&y;DxPy
+z<7_&6@q0qw1lw~3sNC<=)S8{^ig%#y#F0B|DOSmO&dV{ONp&8q<YyJ5HSclAGa6jq
+zRjN8Ui?9f}eYc#8nT%$rm%91-V<YTa19{Ew$J6YrKO0XdFf)4@-G~m?xkX*H(tsbf
+z#2@s1bB*o}(L4+0+Sbdb-BAOGt7{l0*wAC2;;NGt|7?#0k?)O!9=al~)#d8OzPLH=
+z8>807&ogt>#<NU|9(&?%9GVq2yw;TYsQ>W0BH+lO*GeLiJ@*R4jrMXPBk>Kn1cG1&
+zE*dVfshI)n^?YAQo^UUp>5Fk0F63VxS-P<r+_Q}RnJQtjEuhvr%#HnJ^U&E-^}v~$
+z<e4-tSKu@66ZGv)arg!|U=?JQ^f<rmGV*-7M8)x*$>+zz>~tT%soCJFBG)bZWf6Wc
+zx2cAC6SO(k8b`|$S~=C!&36S5n*3EQYZ<eL2LvcOz!PEi`SM8T(+22wj>oyZ7_9O9
+zN3r?41|C(>R9IW2hDfc~XY){6qaT+WOyDgu1_h}xI`xU(n6&MF#**jTt3}6n8JB3#
+z=Pmlwwle*}jrK68ojCB;a`$7>frx{>j3;>(CWq5cF`WMaeaS*03nLjuN4Q=ff2@@J
+z`;onzwnzGm$3et5VY=-J?$e;W=c%n#VT~qFI>_@rHU(iU!ALCF`7S+ja}M{|4#Q^i
+zS~zORuASDwyX{k(!b!|(PQa#ZE$oD&>N7B8oR!Ev77vUp?^#wbA3X9a2({|VaiCwk
+z?)S?+@1j$*#3?z9WzaqOYBp<n@APe0O<kek%%MMT#?V|Eh4O>Fms~b`)nKte=o|nz
+zwKChOKQve-?GOaa0y1)R!RqA7lm7f%-manbQVoTTC133rzvBy*uBt^P{WhO!ew>SB
+zk^l)JT&uK4w3S2aWLXI5s&nnZuP1_eTuNxe0sBFt^|V*<UoB|GpG{tKol%>pZmYQy
+za_e4adEt$i7fel6)#88MF=F=_z^1bSb@EuOusVz4NhP0+FNL*JG-#f3(9poc_LtNh
+zkM-a12*}}0v}lh`Zr&Thz)568`GOvWcq}0v!*vvZ)BC$(SskeaVtPes8e7HmWw7_6
+z$2~=hOi-CC4S%=azx`OOZdifZA-Krkl^vO1+8iB>)L=~|D&e=uRQ=-$uovKoVW=m(
+z_ivaP$fA`JO*KqphFjMNB74;U*@DAGmQ9029I{v&R`j~hbiI-B^KbNZcm=<?R{6hE
+zmBg!eja;73kxZ!oOw!Q&`q3DW7T09VGRMNkE|F5H(JmV5Tndh|@b%kIsG<veaDa*g
+zW<K?E9MXEZCHy;6iMO$sX?~mpCg^oW!M4wIL)ZZ@QJKf}S!Sh)bTss*06^8&Sccqd
+z0x<5=mj$A)8$3l>4GbE-AC{}q51DDZZ~?3rCd?~-hU3}_b@D6Z^q25DOu~P}jOb(}
+zD#J=PbAOv3><mpG9q3^Mew&szNL7_Mim&0}2{53rT;kwVf?0ej?)=h<^wMPCZO!cF
+zb$%j}gOA6{g!Ply6?c1!-xq#-V~f!9+eF^ZGd|op>kk2pmte52fXLGYjhWZ-_*6n*
+zf}&I2`JR~@5$>A?7y%X6a*xgp-uDZ+x6A<J;sJ~Kl6QSxz2}@UIY@w7WQfH&v6tKJ
+z`6-cN9Wt}pK+ECy$C&t8(!JOEIr^&n3aezqYFFjO$u}z%v~H~wH@vn$7-b1|IzL=n
+z|J0`>ienWN_ypINm{bwc)G()_FR9dr?rXVVUS!u_`+7MxF@QKykqOU3d&f}FrsYJw
+z_IdNVypDnXL>29w*qgk*Q&aY-uk}iUkn67ljEL>JwBz{)=z#_y<^|VVj-;`_p9n^)
+z0VhmFeTC==x6`S24C}nI_iWQneZ8jo#yi1Lho!?Qsg)`aD`!8;LNIRLkcBOS4LuB7
+z{t6LA*K);h??AyTVR%&8P|kJto!x>0wNbZ%nUIceW-`v6KhX4Or7}Q&!GrEuAC?bx
+z-QG!|E?7@j$vZt`>!DoSli#!XIca{i*<#*uE;8LH0)H!{6`me=zFo(!RT^RNcQ2L@
+z2Y&nBW)X7b`(IcLsF<0V$JCeNJFK6VweNyd?vtuuR7f#l@tpTdf%8T8=G@>1w-*Gg
+ztc=HU3GUcLi^z8zaKV{LQ5-`9*^KXgZz$}9X@&wUGU&iRJK!S9D;iI`pKC+hFnCFP
+zr({>)cQZVJz5#IZ)VZo;<<iq|F4(}>IInm+oYLX+;ZbTAFRBL@Pr0JMy(B0-Hhpof
+zuW_G=px~+8#*yjkC+fAxykUg=^`P@6EW&`@fIV!-xSUv4)&T48;KXsUT`xl~WR3VJ
+zvH-8ULijl@^H@?u9i7&#Wq^{<;pa{AKk15VAa}1Q`Cu^O1lzfb`9ezY)AE8f+Vdal
+zmR6_5(eIwNb3uE7(s>q1yjtdq8kY$^*QDJv+`ILY#?d$Ro;iw6vT$U6ipKB!yKG7A
+z;Cp4(Nrkzlo|Y~J`E0jPr)YWuwYA=mF6J=mBkz4RBHi`d@qD>6J=$yiComM?Iq$^b
+zcaD_wP@XmzxrHGUi#2oeq9m`Lz{7dE0C*4^tMfwjG(83D<bSeQ0ruhj0F$1`qz#rS
+z1^`XH>Sn$da*bEqg{=OP230$@Zp`nzP_J+!oJU3jL6Snf0oq!V-vFXlVvW#JCxLq?
+z^<yK_2^12}1BGx){yU}eGoHC^;H3#7>%L&IST1E~5eIQB+1);3Cxe~d2leAD!JKyS
+zPp1Wej;{cl=uQNFr+%bW@!#++e?S5(xf(ajzBprJU%fk?I3FWMhIlAU(s4@g&D0m%
+zhzCfWp62&%tp6Id314q7@k0v9nay6&RTKS?FyPsJ$(CpNussmn`&?nvP|9>_A%S&U
+z)%UYJMnK*8J5Jzz|C1-hxg@^vJdpeiQlE(2uDf$M_RHS><+SSdha3!mZZ}S>^qOlR
+zTb>}$tWsS&I1QP{6YK3tZ!wjAl!&C-VCR`*D*xxU==2y{tEmSr5;Thm`EhYvs@PDa
+zOcT1?@scb$&1q3F6SQ8_vXs$95c*Q8LqXYC?w0T$RVJA~3hzAGhC}8Vi4t~WC1YaZ
+zY1o*f>oqN=PYhp`pWz9(O34B=+=!iNxkUzNzB_&8oE1fcVS7%J5ZlA-XP2~d%mi+`
+ze1(31gkH-(HyLspsbW;+Mvr`x=31dsKQ+X$@?zv=Y5L^{Wa3@fhzPIK-&0%;UO7lQ
+z?gGXXy0~Vg^63L__WDV*_fJXQ>-W2ieZRS5`MOiJ&~c&gSMtZPME-EaZ~*%YmU<1s
+zNmHb~Bf;Q~QGO9-5UA*?PSg-uf#LR;65yBa{l9_9#}Atn7aW10EFk+~^1swXi^rVn
+z?G1#vR#)HsF?k1VNKuS39DVIHTj6eb57fV(qJ5ws9WCpp@63KSJB1kcQFa47NV}hN
+z&&s&EgDN<QRTy4;ha}TiA$e#mHfiC?US7@Wv`OsIqMeE($Jg_%AajOLJ(afJC+681
+zEmYL8!6n7@E&!BTpht6+xj*Ya<a($XM<7@RjEdp`zO1*~V~Q@vB5(sv+IFU0zYa<v
+z@9CCq19nstAf*k1yUNw*v4$h&ru#kp&kaSRNeIKF0^^Z&=X_)B7lw>KY&NL~PCycE
+z$T2`1DePHk`13TN0X38@P5^>#a-tHQSKV-aSQvjoTH@#{J6=B9q2C=rc%-PL9hv>V
+z4&UD;e9zX<xr*{8rH;Yri?_NV<=ryhW8bn8fT6<nLFEhWln<Y|en>pMv#_d7#m*`M
+zj}WlOSC3vQnfof~xmRV><h=jVWm!k{RJ=PxcATB`lu~SceU<C2ZXb%aU#p*!<k^Lq
+zi{n1;TdjT>6ON`a|1=;i6Dew;{kFGuJ{RZ$#zZpdw1re7$+%BvBTrnIn+_TY9&06i
+z<TFDM!r|aeVXNQQL94EmPVanzo+xoyi-X(PT#xX<ucxxY&kdXYF(rLCaKlg`k!lx?
+z>;0)|9|&FNg@G2xa-?A8zt#!{WQZfi#7?^`02fcEoK;d{HA<_$5PZBOmff9@Yd`Sy
+zs<4Jir+p&`=oX2$v^t`M)G9*8NANaD%OqHS(oyKcu`dg&jdM)z3Ifx{w=9yWT<Zau
+zRuPXE0ii>mNS3mo(<<p**sbnD;;;Ko!cerE_w)}ae%kI9f|r_SZ8$wqNd@ke0DqzM
+zRwp@e*N%n9nAS%xD^Ur2@Fs?~CPcZH8ncOQoqqJnZa$KshCkSwSmP16se<i?PIjaZ
+zD`MX>a5F0Kfsv(yHtWUP1m&N*Jf%)lhWx76dhGXk)pUvER?e!vegPC6zPf`1G&R&&
+zC#-kQv!~Q=Bf*;TWmUNQ$lP2YKMYW2?6dcq^MuLsH~|fj;9E|NJmw3y7-eyJpOv!f
+z2TFc-AJD&iIhFg*CLF4PnEJPB-X{-3K}UxQha|(lx%NyW9we#<J;1h=X;><9b=|Jv
+zF+knRmRc3srN&Ta@>r63!Oivy+LP<0bbTX|4>-gH*4Z#*Sj7-{_cD&)akiH?tsr-{
+z3I-_e>u@BLP&0$xqKvH6?z_)uuJsOch^$E1qi5&pyX0H$cXr{xGB#ketKU)*y-?_y
+zgde}+&7t^|ydYJ)n>}xTSy7NW-MFKRAfP@-9@n(c7?yA}6)!wcogYT^*~7#l$KXNo
+zC=Co7t{ziFS-UrOql9q3-EuTF1yeRdfzx-hsIUb5PP$A9$76**Z~3*=Ig8jQLw~wD
+zW$ypfvb&Za*4~X{j{=y?4c8dY#sV=JfN+q5R-eip9Sag3QL2t!HZjI?GJBu|+-U=s
+zZj@8#$)WyoNA#-@xh^L_Ert|7flt?7Ac-7dV&UP4yNJ8yI&=~)iQxQI+IpzjA{|`x
+zvl4gVlnS`nD11e8EX$rerr?+O<|f7qk5CgBn(fW~ujK}r=j$y-^VKK<dl=Q~V<H5z
+zVk9yVWL%=~u$TY~lR23Z9VRX~E`&xqGVWy?ItW9H^~X2hUo3E`({cph5izayJr-jn
+zJb<o1aiU)kmWZ#IJxMj^bL-!@CYm~CKpXuwLG4*kJd%uORURL~04W78ttLU7pSFje
+zAjEc-Yg55Xal+4|xIXY}_d|tmd9Mk_r0P)*m_v9LgER{7gnSo?B71i{lLeB=5WO+q
+zj>97w5UL0jPA3>uNqUY*epvUFN*KSqB)#}U;EN0C6mT^hVN_{<@Hi0%@&Y&Un8(yK
+z)i}AiBJ`vk={mEwh;gY&QOWg@;o?-bmuoDy@P?D^zYwWhyXG^gf+2#Ee}JzS6);p`
+zFYpy()P;7Vjvl6cDB+<>Nd_hz^DQ~_FhKZ@DdKJ+Sfq%qhY>WiB^>WkanqnfU!3zR
+zdJN5x;?k3%n0S8%oR#qN09(6{$4!$d{Ub69`i8?9iLa<=*@eT1LXMK9eI(^KEYxO~
+zCHhS5fEMrjWF6O4dKVAyBw>wDVmQ7ytNr8W*32A(O*M0&#ltJja{r{@*FYNIE%${V
+zse4hKCJd*?E2>0m+_Jy<ogm&kmCDr|x+V~_-ThKbCPDp*23%OF$7M)70fCbrF|Zi?
+z&NI53DnfowCLzEYOHnGaAtutNQebnfN1_yaaORz{IUGdwJ4nG>27sFv_nu5DF5m?`
+zV_1E1PeK#~4vD528jcMuc7UI%Tuu0;ufHyVsI1f2gsw!mJ8Ph4FYE3<zv^CcqI$_D
+z#2gkwHm2VWLF`G#LxzP8upQ|Hhtw>6mJ}|3e{Kl_>jyc<A2}Nr<seTmvo!wbfnRL*
+zDd1JbklmLR-lvvl>_ltruLw}pLeJ*xzr^*wIml?0qh`MDVDMu7K&tbLrfnb2yedX~
+zst16)5_feh>i|u1z`(l;9}<Ra`@u60C66L^kMvTi{4QKn%(|C1t__;H$hum!RmmUN
+z0HdJmXh%(1iOe>np|bUYRX`pGQm?oT?h+@EmYY-ynW>9JbX?IIo+&$VQ`5k?az2}x
+zMZ2P)ZZNrY{W@*4zFR7GQ7^-b`|9%zt6(pVV5GL-D8HAEThV`yMlV#>1iFo`+uT${
+zVW%aJ3Be&sVpQ0Ph#_MTk;k$3p($hpdrTuA)rTB{xp_tPRifkQ*kKSI5E1(ze4YC|
+znTY}7M%1kXXG3icwSuE;QBi<J_P%(ftfLZ5x<xAj55w<_1COqW@BY+)7L2Bv*cg<H
+z?q?lSrTkD{Q75+eZ<Mz3BP%3<t!sgRfHwA4bVv2QU_^ZfUxgmOSp=+e+oBBheRViZ
+zcZVQ10s)GMysnlggk^V$3pW8710*_XP&8qATItEXNB+92A}amv^A`j}od1mzIVE{)
+zabA!UgJ58z<_idR2C|bDkk~GoXg$K=gv|AxWA&jfqkLZhCXhrzO-`i<#O-PHc)NU1
+z#R;~zk=-pAP!Znm@Gr153s_TZH18>1BOCalcwAh_yb<!k>kPz>KqrepdYAgTDsUe>
+zVnzrQ0anK*J2V~-6CtXUUA8VBsOGaK%C-w<Udj^5$lhxTCLl(OlKxE17p2!YHsR#v
+zCQ$^ls;Gb~fr^O{fNCKsYHIKmI>gOg1cBbCiV7VHt4eMzwZlkqZf*`L2HGzPDDVM#
+zr*_wpQ&EW|74^#-5`xl}zz=}RDRq9ptI?9Xh(e~j`x#U6f5NZS+#i{~#=QqK6Z@Mn
+z+jXk04F`Wkz(5oHT>zYU-b~};cwOwobade2VHNL)kCnnVQdD~um=~{Ea#~epOc}0O
+z@{WHG47;%K^9Thuu*Qxp2GIU(9cAf4$5m9|26}op`vAH5pXl?vjp{9>Sn>2)wxls+
+zVc}rpqo&;dMoxQp1X=9SfMcxv&3;)H8-ti%9ZH?Ts`_n1gDC=+ItBB~1AN?p)g7-$
+zLqbF9RFj7lVA(G7l>DWynjn`dg5eO6qOxvgPMB)h&i(Fz5rJcCsa4%SO`w;e|9?+S
+zO-!_HJF03e{u^qUd;c#z0Jw{e1{JXrZ%d0<R#-qWWs+dh%#~z#IM#w@i?;Z_3^frq
+z1pwPZ<3pCa4_5v&NRgOfm}~Vz)TE^Z4mGo$djfzye^6!8wA~}XZpBb!`^lF-O#m4y
+zH$rlOH>zt}2|T{l@$3vYW=f1g|LN|<9|AMMQkAKxak}j^tQV>NRA{n)swEiccR*`R
+zu#R0Q&E1NkLQg`;6b5`B+`@Mu1W;<h--v)hD)zAp)k!_owCzwkPRfn>YQ}S(TG%iv
+z$ij(rdnr!?_jupiHTpLFcjKMswyE3NMS_yZZh~n`(l?1ZFRKE3_`ywlX~~+~ONwG>
+zS0`WrQ=$!ux~-n(vYttAC1V}=&n9t>#u=WR&*-|N0Y$8rX++y;y9n4e=_0_+1|kC^
+z8t>$mO5$PVA$jQI8NNd{l`3WRpU=3S*>P)~uRf;Z8b0>%Pn!!BDU|XTGUpi*gKrm5
+z%sQuOpq626u?C{AdT`LC+3F?MyX4!7=5t=PO<-d+=geGI2fsjB0-70z9GtRXm3-E4
+z&BcZ2Yme;)C6&3YtBxhy6CC?)@X^s-tVfqf!r$faw|U5W=&|_3iW}#!dM^5t(aAr*
+z^s3&!31OhLAL4fGGQ*{^i|;s@E6`Bq<i=%sBI-&U7dMbbK@Fl+t1$Mj6ex!B<~vQj
+z{bSIeemGCbood?PE_zt`ixcD>@>kol8nZn(oJtl~DT#$13FIR$`Z>9k{=D*^iaAl#
+zs_+Bqz(&l>L#AD)k<crlafW~E9z}{KRz`{W9Pcv{VbFI9$?aGmjiMs<Pd7ljy~m9n
+zPFo6dfKsS}GbtPhZ|n#BQHZzqEX#+u5O4;lKQ`jbrt86=lfUoPFwt8e!5fIv+G|(6
+zeC}T26r|q<TYwv3qde72qg^`4W19$`^<Ip`ao{Mc%sMoE-2H(o3cja_=`Rt3Md1S+
+z()m;!I@Df++H;9pF?Jjv{o)p#K3;s@R|%mNAA0-$ev6jH0rO>B-zo&mjYU*z|D2j{
+z*l|4`_lBxz%MthAFMcI}oM?2+xI^=tBMKw|b$71P6TK9zd`M?UY;gRvD?shKfxkT|
+z9kl<vKjD=1-p>$a5XnH6WMcjC+((hQmXr`O*%JQz?zt^C(`=jn5Lh6&(9;p&AuMe7
+zcu=PY1+=Uq*k+CB{@mDp!n`-fI9HY&6Y#y!ucNc+ZwMEBNxi<$5%?5rjyJ)wPlr+i
+zrOVm=dwr+BYU~Uu%aqvjr$3VChc6kBe`Y_DM04Tf-$f`ERy?#AW1|%x#<x#JX5v0d
+zO88w+t^RXaII>?Apjt&vCLb&CJm*fue(6Sge0YCQ9A%o+aUIU{-5akH@?f|m=q!6#
+z0~!p^)~1q}ymbVqeQi7*;?K6PaMe$;N_7%J>_ZFBG!S^;b?_0t|HLTuQX(#B+75jN
+zxR1fk3EzIfQ#NJp?vf=?+e~Dd&2Qy$C|+D%#|Uise=K`M+;PQ<;(?-Tq_!i&W*jCN
+zvKA)XuU@>knwxFAnzWhnW(#fWSVOi|ZUxNzY;b;Bv#9vX{{L&`%-^A2yg2@`3}vft
+zS(6*tBD)rht&$}fTh=kiC|%o-=8lXhbTe8+wlUehWy@Y<#4sp?m<id98Ny^RlYN<n
+zJNNrHe9y1vIp=x3pL5RhoL|n#xho!UxkFG!P+bn+TRdqidECMFxthv}<UN7u+U!Fx
+z;nS`WvdIFHkycjWaCv#i6!%k%$wb~?Ed{>h-3Pzp1wVUweQCmw7`coey3zX)Yi8_N
+za~hjbr|W_^B9Ps-DxfeCP2n=xwtEm`IrX|zyD!?no_tA3?K5FEK^a=48-uYlZS`xV
+z*7XOCRpp#9pUe?A4w+9cz7V{{EJKgpDMEZh^$IROv8v6SKS=Til2X@dRS~_7L{&UH
+z>-ep%u6lN3m1aeS`zA=76b0n^Q~dk}O4#)pX2<d#J%AkTx(uDhO>`;D{ihu`s>Hnl
+zCH7vE#(XbI;e;E@;SM8zK3+M&G^tK>^eIy8q6q)eHZv)aVfocm9kEcAv7U{g9Ud!O
+zp)PZ64m<uz($Mw(;8j9Yby%kwyqud>Hrb%8l>3cU&h{G6j4h{`m<m@%8qs<My1&Fb
+z4sy{sK4qX+TTek9+E3wA3=nde+~aB1$=J}KX`c!#LO7ud?z>$wE%92<3FKp^^E0j)
+z<&Vgx9Ka};10``)G=`Czmd?3kLz%GPu-ed9!)xSR!d7slUko1;RnG5)<Dd7Ij5jUh
+zd_9l8S;v-CWFVVKP~H9CtKB|};KSIex65y~whD@4vGf*M;B+~uX@33oK%>sijlSzL
+zKCM>vET8hVy%Rig@}lF(p)90)J;IehEr8n}?-^0Yc+k1LsLIzd^FsKnU6zr8boPQT
+z8ZS+YEY!@o%_~yv^y(v<dM@hW(7r>BMxWKLYHNCAifUR|!)|q3k3L}KIn)PccENr-
+z*kzKS5FDtaBt)8-2Ca6bCfxRFa}>|kk}*-BzPAA%>@-UpgkXJS8x23H6$Y7p>x98V
+zz!)rjE?U#Z2i{*U1z|bU6oTG-Ah`68`c*H;>v(kLdh^Hw6)b)ew#<oMoP3Piqr8`<
+zU8up_Wx|WVB{&JJr!N$z<>Xhl=A7=n!^##p-_Iz!IS@On+vJ24T`2qS$8V@(^#17J
+z8wmDTMaL34W31Mm%88om4jWQ_0uMoK=fxlC0#ZTb8Xq(Gx$aP$S2{bZjJN9aH{GcY
+z*2yh=n({r^`iGWVU)j(GUWzmnr*Ux%>4UK`8Acb`V-QH@80)hMVaZ9FwNx+|e<Qo8
+zvNQ<O%03#a#{(O1LXKvNBs@IxNm$S!GkWHnlt-4PuS-$F>}4rQnc#_y0Q_py)eU3D
+zxeFPCJjfqq&c#@p45pk@Oz0G9qERoH44a&$62?)7Aj#^%(q%Qin{I~N_A~_`!axm5
+z%?}ORq{jEmsI+Mrq)u#2JfH213T)~_i2}_yuG-7c777Zama-15bBJ6tOG6K%gn;I+
+zi^U0ptHUJ2h?p_{?#r8-6(ONov0j6wG;Lrl$4>YQeD$me_~Gz85mbuhQ?wuUsL4l2
+zlZv!VRSsE_e@2SbFm0<RSHOa$DcW&b!vkEpj?Bm6w8Yp3pxgeD$Y;tbqkz|owVpN}
+zlh5w5)a;Z=P+%_ez2duDPx6tv9Eo=97a(>17&R;>cd9CFZB`i$OefoKJywQQQFbKS
+z@i&2PK7}4aavIU=*mjtJQI2(9RKwjCL^xfw?c|_m9n%#OURY$n!@WyR6-7qzW+w=P
+z^$*qq=Cb#^v^}7A<U2?CfRd+WP<(_2dcW~8pQ7-2awwjWo1axVjuMTlM71^2yI!z_
+zQM(fD-vfYdXYpHpW$riI3si_*Jipeh7*&N1#B6H8REK?>v8Mhn+Xku3ht?%F|B5tU
+z2!*w8Y?SV<Q(%?ATzuE7%!<4Z*7qYa_2LXK1mC6wTa4_9(v*ydvcQ_vm0_4i?{b4d
+z$QqSju~s5Gs-Yg$5Voa|P?xe4x87mN+}ui-eRfLoT|%(kGt4%SbYjve6{3q-+PT8P
+z;OJBSAjKo+M=HH%=0=hnL43AmkgfXvwf>ce@b~<w*gb3mm-zACz-RrS`ZVc179YJo
+zePQ;ZTGOdH&c11fh-H37jqm+*{D`dyg(od);a%W%L=oZv9HdAQFCwhyRCumgrjEp2
+z_ejzO#ra%V?&IE@62Z0R#rl`BWp_G7fN3{BB;&qFfW?JB8;z9tyH#HYE=e`9Rboa6
+zoEMkQ=>c>Mvz*mzB;C<^w(-{NMgBlT^+gRl6=yWkL`8|cd5i_C-SDf6dD-}D(txT(
+zcor9$_HsiQG;`!QZ0WBZUJ8AHo)H}4K~65-6gRB5eZ?XQxBZ={QiWSqe-gO#2Tece
+zf)H@s+qF|c3jTf!*B6>u1R|k<<`80(H&{E}_u<>^8DE-yw}cq5<8-0|YQD%%)d~8l
+z(!WL(n0pN|G`snlyJw493L(K$F|t5JB1tyntxhZCcEdGq%|8k3(~4N6Ey0=0H6NgE
+zH-Aw20X{VTj1O?_VFnR=f?u1Tt&>-QDV2RgNv3vMtF#0_C?7p{a8{#D7dOZ`+%`El
+z(B@@`m>w0ya<I5Fg%tvI6)M^hgFZBvrIm5IgdIUS18o=I;yFG{oVS?JTL6nSKH&ox
+zyw5sM*WN_;s9yT1bGSbbL4K7GT{+&jkhs_<#yBZ_R4EAWb!XMHCKoJQV#vu|^rzp`
+z6ANY7#zY4>QuZFulDkid0ZAEMYgw8XwcqN?xc@EEt6Fx?-Oa%cX@?wmJ~$X1>Flia
+zM+zQvsriiiEK$ZbB``5h^z(I-JiAhBYwJBBVJuNN{SmB%nkIQ>86~|j;h7!EMl7vT
+fMS=gP9Th(i__;w}=Y|N){hQbBD#WV#vVX!qr|&tN
+
+literal 0
+HcmV?d00001
+
+diff --git a/packages/agentflow/src/assets/images/robot.png b/packages/agentflow/src/assets/images/robot.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4fe920a969df239010fca35d0f527ed642a4ccb
+GIT binary patch
+literal 16382
+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%0AR$uJ
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/packages/agentflow/src/features/node-palette/StyledFab.tsx b/packages/agentflow/src/atoms/StyledFab.tsx
+similarity index 95%
+rename from packages/agentflow/src/features/node-palette/StyledFab.tsx
+rename to packages/agentflow/src/atoms/StyledFab.tsx
+index 63d0f201b1d..ffd1b9f64d3 100644
+--- a/packages/agentflow/src/features/node-palette/StyledFab.tsx
++++ b/packages/agentflow/src/atoms/StyledFab.tsx
+@@ -10,8 +10,8 @@ export interface StyledFabProps extends FabProps {
+ }
+ 
+ /**
+- * Styled floating action button with hover effects
+- * Supports gradient background for special actions like Generate
++ * Styled floating action button with hover effects.
++ * Supports gradient background for special actions like Generate.
+  */
+ export const StyledFab: ComponentType<StyledFabProps> = styled(Fab, {
+     shouldForwardProp: (prop) => prop !== 'gradient'
+diff --git a/packages/agentflow/src/atoms/index.ts b/packages/agentflow/src/atoms/index.ts
+index 5bd97f05706..00c09c96aa7 100644
+--- a/packages/agentflow/src/atoms/index.ts
++++ b/packages/agentflow/src/atoms/index.ts
+@@ -17,6 +17,7 @@ export { RichTextEditor } from './RichTextEditor.lazy'
+ export { ScenariosInput, type ScenariosInputProps } from './ScenariosInput'
+ export { StateKeyValueInput, type StateKeyValueInputProps } from './StateKeyValueInput'
+ export { StructuredOutputBuilder, type StructuredOutputBuilderProps, type StructuredOutputEntry } from './StructuredOutputBuilder'
++export { StyledFab, type StyledFabProps } from './StyledFab'
+ export { SuggestionDropdown, type SuggestionDropdownProps, type SuggestionDropdownRef, type SuggestionItem } from './SuggestionDropdown'
+ export { SwitchInput, type SwitchInputProps } from './SwitchInput'
+ export { TooltipWithParser, type TooltipWithParserProps } from './TooltipWithParser'
+diff --git a/packages/agentflow/src/features/canvas/components/TestFlowButton.tsx b/packages/agentflow/src/features/canvas/components/TestFlowButton.tsx
+deleted file mode 100644
+index 61979447170..00000000000
+--- a/packages/agentflow/src/features/canvas/components/TestFlowButton.tsx
++++ /dev/null
+@@ -1,47 +0,0 @@
+-import { useState } from 'react'
+-
+-import { IconMessage } from '@tabler/icons-react'
+-
+-import { useAgentflowContext } from '@/infrastructure/store'
+-
+-import { StyledFab } from '../../node-palette/StyledFab'
+-
+-export interface TestFlowButtonProps {
+-    /** Called when the dialog requests to be closed (e.g. after clearing chat) */
+-    onDialogClose?: () => void
+-}
+-
+-/**
+- * Floating action button that opens the test/chat dialog.
+- * Only renders when the flow has been saved (chatflow.id is present).
+- */
+-export function TestFlowButton({ onDialogClose }: TestFlowButtonProps) {
+-    const { state, clearExecutionState } = useAgentflowContext()
+-    const [open, setOpen] = useState(false)
+-
+-    // Only show once the flow has been saved
+-    if (!state.chatflow?.id) return null
+-
+-    const handleOpen = () => setOpen(true)
+-
+-    const handleClose = () => {
+-        setOpen(false)
+-        clearExecutionState()
+-        onDialogClose?.()
+-    }
+-
+-    return (
+-        <>
+-            <StyledFab size='small' color='secondary' aria-label='test flow' title='Test Flow' onClick={handleOpen}>
+-                <IconMessage />
+-            </StyledFab>
+-
+-            {/* TestFlowDialog will be rendered here in Step 9 */}
+-            {open && (
+-                <div data-testid='test-flow-dialog-placeholder' style={{ display: 'none' }}>
+-                    {/* chatflowId={state.chatflow.id} onClose={handleClose} */}
+-                </div>
+-            )}
+-        </>
+-    )
+-}
+diff --git a/packages/agentflow/src/features/canvas/components/index.ts b/packages/agentflow/src/features/canvas/components/index.ts
+index 6022dfc98d8..2b727dd7bd3 100644
+--- a/packages/agentflow/src/features/canvas/components/index.ts
++++ b/packages/agentflow/src/features/canvas/components/index.ts
+@@ -7,5 +7,4 @@ export { NodeModelConfigs } from './NodeModelConfigs'
+ export { getMinimumNodeHeight, NodeOutputHandles } from './NodeOutputHandles'
+ export { NodeStatusIndicator, NodeWarningIndicator } from './NodeStatusIndicator'
+ export { NodeToolbarActions } from './NodeToolbarActions'
+-export { TestFlowButton } from './TestFlowButton'
+ export { ValidationFeedback } from './ValidationFeedback'
+diff --git a/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx b/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
+new file mode 100644
+index 00000000000..b304fd415aa
+--- /dev/null
++++ b/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
+@@ -0,0 +1,99 @@
++import { useRef, useState } from 'react'
++
++import { ClickAwayListener, Fade, Paper, Popper } from '@mui/material'
++import { useTheme } from '@mui/material/styles'
++import { IconArrowsMaximize, IconEraser, IconMessage, IconX } from '@tabler/icons-react'
++
++import { MainCard, StyledFab } from '@/atoms'
++import { useAgentflowContext } from '@/infrastructure/store'
++
++import { TestFlowDialog } from './TestFlowDialog'
++
++export interface TestFlowButtonProps {
++    onDialogClose?: () => void
++    onOpenChange?: (open: boolean) => void
++}
++
++/**
++ * Floating action button that opens the test/chat panel.
++ * Only renders when the flow has been saved (chatflow.id is present).
++ */
++export function TestFlowButton({ onDialogClose, onOpenChange }: TestFlowButtonProps) {
++    const theme = useTheme()
++    const { state, clearExecutionState } = useAgentflowContext()
++    const [open, setOpen] = useState(false)
++    const [clearKey, setClearKey] = useState(0)
++    const anchorRef = useRef<HTMLSpanElement>(null)
++
++    const chatflowId = state.chatflow?.id
++    if (!chatflowId) return null
++
++    const handleToggle = () => {
++        const next = !open
++        setOpen(next)
++        onOpenChange?.(next)
++    }
++
++    const handleClickAway = (event: MouseEvent | TouchEvent) => {
++        if (anchorRef.current?.contains(event.target as Node)) return
++        setOpen(false)
++        onOpenChange?.(false)
++        clearExecutionState()
++        onDialogClose?.()
++    }
++
++    const handleClear = () => {
++        setClearKey((prev) => prev + 1)
++        clearExecutionState()
++    }
++
++    return (
++        <>
++            {open && (
++                <StyledFab size='small' color='primary' aria-label='expand' title='Expand Chat'>
++                    <IconArrowsMaximize />
++                </StyledFab>
++            )}
++            {open && (
++                <StyledFab size='small' color='error' aria-label='clear' title='Clear Chat' onClick={handleClear}>
++                    <IconEraser />
++                </StyledFab>
++            )}
++            <span ref={anchorRef} style={{ display: 'inline-flex' }}>
++                <StyledFab size='small' color='secondary' aria-label='test flow' title='Test Flow' onClick={handleToggle}>
++                    {open ? <IconX /> : <IconMessage />}
++                </StyledFab>
++            </span>
++
++            <Popper
++                placement='bottom-end'
++                open={open}
++                anchorEl={anchorRef.current}
++                role={undefined}
++                transition
++                popperOptions={{
++                    modifiers: [{ name: 'offset', options: { offset: [40, 14] } }]
++                }}
++                sx={{ zIndex: 1000 }}
++            >
++                {({ TransitionProps }) => (
++                    <Fade {...TransitionProps}>
++                        <Paper>
++                            <ClickAwayListener onClickAway={handleClickAway}>
++                                <MainCard
++                                    border={false}
++                                    content={false}
++                                    boxShadow
++                                    shadow={theme.shadows[16]}
++                                    sx={{ width: 400, height: 'calc(100vh - 180px)', bgcolor: 'background.paper' }}
++                                >
++                                    <TestFlowDialog key={clearKey} chatflowId={chatflowId} open={open} />
++                                </MainCard>
++                            </ClickAwayListener>
++                        </Paper>
++                    </Fade>
++                )}
++            </Popper>
++        </>
++    )
++}
+diff --git a/packages/agentflow/src/features/canvas/containers/TestFlowDialog.test.tsx b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.test.tsx
+new file mode 100644
+index 00000000000..ed1f902a21c
+--- /dev/null
++++ b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.test.tsx
+@@ -0,0 +1,380 @@
++// Import after mocks are declared
++import { fetchEventSource } from '@microsoft/fetch-event-source'
++import { createTheme, ThemeProvider } from '@mui/material/styles'
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
++
++import { TestFlowDialog } from './TestFlowDialog'
++
++// ─── Mocks ───────────────────────────────────────────────────────────────────
++
++jest.mock('@microsoft/fetch-event-source', () => ({
++    EventStreamContentType: 'text/event-stream',
++    fetchEventSource: jest.fn()
++}))
++
++const mockSetNodeExecutionStatus = jest.fn()
++const mockClearExecutionState = jest.fn()
++const mockAbortMessage = jest.fn().mockResolvedValue(undefined)
++const mockGetAllExecutions = jest.fn().mockResolvedValue({ data: [], total: 0 })
++const mockGetChatflow = jest.fn().mockResolvedValue({ id: 'flow-123', flowData: '{"nodes":[],"edges":[]}' })
++
++jest.mock('@/infrastructure/store', () => ({
++    useAgentflowContext: () => ({
++        state: { chatflow: { id: 'flow-123' }, executionState: null },
++        setNodeExecutionStatus: mockSetNodeExecutionStatus,
++        clearExecutionState: mockClearExecutionState
++    }),
++    useApiContext: () => ({
++        apiBaseUrl: 'http://localhost:3000',
++        token: 'test-token',
++        chatflowsApi: {
++            abortMessage: mockAbortMessage,
++            getChatflow: mockGetChatflow
++        },
++        executionsApi: {
++            getAllExecutions: mockGetAllExecutions
++        }
++    })
++}))
++
++const mockFetchEventSource = fetchEventSource as jest.Mock
++
++// ─── Helpers ─────────────────────────────────────────────────────────────────
++
++function renderDialog(open = true) {
++    return render(
++        <ThemeProvider theme={createTheme()}>
++            <TestFlowDialog chatflowId='flow-123' open={open} />
++        </ThemeProvider>
++    )
++}
++
++type SSEHandlers = {
++    onopen: (response: Response) => Promise<void>
++    onmessage: (ev: { data: string }) => void
++    onclose: () => void
++    onerror: (err: unknown) => void
++}
++
++// Simulate SSE: capture handler references from the fetchEventSource call
++function captureSSEHandlers() {
++    let capturedHandlers: SSEHandlers = {
++        onopen: async () => {},
++        onmessage: () => {},
++        onclose: () => {},
++        onerror: () => {
++            throw new Error()
++        }
++    }
++    mockFetchEventSource.mockImplementation(async (_url: string, opts: SSEHandlers) => {
++        capturedHandlers = {
++            onopen: opts.onopen ?? (async () => {}),
++            onmessage: opts.onmessage ?? (() => {}),
++            onclose: opts.onclose ?? (() => {}),
++            onerror:
++                opts.onerror ??
++                (() => {
++                    throw new Error()
++                })
++        }
++    })
++    return () => capturedHandlers
++}
++
++function makeEvent(event: string, data: unknown) {
++    return { data: JSON.stringify({ event, data }) }
++}
++
++// ─── Tests ───────────────────────────────────────────────────────────────────
++
++beforeEach(() => {
++    jest.clearAllMocks()
++    mockGetAllExecutions.mockResolvedValue({ data: [], total: 0 })
++    mockGetChatflow.mockResolvedValue({ id: 'flow-123', flowData: '{"nodes":[],"edges":[]}' })
++})
++
++describe('TestFlowDialog', () => {
++    describe('rendering', () => {
++        it('renders welcome message when open', () => {
++            renderDialog()
++            expect(screen.getByText('Hi there! How can I help?')).toBeInTheDocument()
++        })
++
++        it('renders input placeholder', () => {
++            renderDialog()
++            expect(screen.getByPlaceholderText('Type a message...')).toBeInTheDocument()
++        })
++    })
++
++    describe('sending a message', () => {
++        it('adds user message on Enter', async () => {
++            mockFetchEventSource.mockResolvedValue(undefined)
++            renderDialog()
++            const input = screen.getByPlaceholderText('Type a message...')
++
++            fireEvent.change(input, { target: { value: 'Hello' } })
++            fireEvent.keyDown(input, { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(screen.getByText('Hello')).toBeInTheDocument())
++        })
++
++        it('calls fetchEventSource with correct URL and Authorization header', async () => {
++            mockFetchEventSource.mockResolvedValue(undefined)
++            renderDialog()
++            const input = screen.getByPlaceholderText('Type a message...')
++
++            fireEvent.change(input, { target: { value: 'Test' } })
++            fireEvent.keyDown(input, { key: 'Enter', shiftKey: false })
++
++            await waitFor(() =>
++                expect(mockFetchEventSource).toHaveBeenCalledWith(
++                    'http://localhost:3000/api/v1/internal-prediction/flow-123',
++                    expect.objectContaining({
++                        method: 'POST',
++                        headers: expect.objectContaining({
++                            'Content-Type': 'application/json',
++                            Authorization: 'Bearer test-token'
++                        })
++                    })
++                )
++            )
++        })
++
++        it('skips send when input is empty', () => {
++            renderDialog()
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++            expect(mockFetchEventSource).not.toHaveBeenCalled()
++        })
++
++        it('does not send on Shift+Enter', () => {
++            renderDialog()
++            const input = screen.getByPlaceholderText('Type a message...')
++            fireEvent.change(input, { target: { value: 'Hello' } })
++            fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
++            expect(mockFetchEventSource).not.toHaveBeenCalled()
++        })
++
++        it('calls clearExecutionState before sending', async () => {
++            mockFetchEventSource.mockResolvedValue(undefined)
++            renderDialog()
++            const input = screen.getByPlaceholderText('Type a message...')
++
++            fireEvent.change(input, { target: { value: 'Hi' } })
++            fireEvent.keyDown(input, { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockClearExecutionState).toHaveBeenCalled())
++        })
++    })
++
++    describe('SSE event handling', () => {
++        it('streams bot tokens into a message', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Go' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('start', null))
++                onmessage(makeEvent('token', 'Hello'))
++                onmessage(makeEvent('token', ' world'))
++            })
++
++            expect(screen.getByText('Hello world')).toBeInTheDocument()
++        })
++
++        it('calls setNodeExecutionStatus on nextAgentFlow', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Run' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('nextAgentFlow', { nodeId: 'node1', status: 'INPROGRESS' }))
++            })
++
++            expect(mockSetNodeExecutionStatus).toHaveBeenCalledWith('node1', 'INPROGRESS', undefined)
++        })
++
++        it('passes error field on nextAgentFlow ERROR', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Fail' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('nextAgentFlow', { nodeId: 'node2', status: 'ERROR', error: 'timeout' }))
++            })
++
++            expect(mockSetNodeExecutionStatus).toHaveBeenCalledWith('node2', 'ERROR', 'timeout')
++        })
++
++        it('shows error message on SSE error event', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Oops' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('start', null))
++                onmessage(makeEvent('error', 'Something went wrong'))
++            })
++
++            expect(screen.getByText('Error: Something went wrong')).toBeInTheDocument()
++        })
++
++        it('updates chatId from metadata event', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Meta' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage, onclose } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('metadata', { chatId: 'server-chat-id-xyz' }))
++                onclose() // finish the stream so loading=false and input re-enables
++            })
++
++            // Subsequent send should use the server-provided chatId
++            await waitFor(() => expect(screen.getByPlaceholderText('Type a message...')).not.toBeDisabled())
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Next' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() =>
++                expect(mockFetchEventSource).toHaveBeenLastCalledWith(
++                    expect.any(String),
++                    expect.objectContaining({
++                        body: expect.stringContaining('server-chat-id-xyz')
++                    })
++                )
++            )
++        })
++
++        it('renders follow-up prompt chips from metadata event', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Hi' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('metadata', { followUpPrompts: JSON.stringify(['Tell me more', 'Explain further']) }))
++                onmessage(makeEvent('end', null))
++            })
++
++            await waitFor(() => expect(screen.getByText('Tell me more')).toBeInTheDocument())
++            expect(screen.getByText('Explain further')).toBeInTheDocument()
++        })
++
++        it('renders action buttons on action event', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Approve?' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen, onmessage } = getHandlers()
++
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++                onmessage(makeEvent('start', null))
++                onmessage(
++                    makeEvent('action', {
++                        id: 'action-1',
++                        elements: [
++                            { label: 'Approve', type: 'agentflowv2-approve' },
++                            { label: 'Reject', type: 'agentflowv2-reject' }
++                        ]
++                    })
++                )
++            })
++
++            await waitFor(() => expect(screen.getByText('Approve')).toBeInTheDocument())
++            expect(screen.getByText('Reject')).toBeInTheDocument()
++        })
++    })
++
++    describe('stop button', () => {
++        it('calls abortMessage when stop is clicked', async () => {
++            const getHandlers = captureSSEHandlers()
++            renderDialog()
++
++            fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Long task' } })
++            fireEvent.keyDown(screen.getByPlaceholderText('Type a message...'), { key: 'Enter', shiftKey: false })
++
++            await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
++            const { onopen } = getHandlers()
++            await act(async () => {
++                await onopen({ ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) } as unknown as Response)
++            })
++
++            const stopBtn = screen.getByTitle('Stop')
++            await act(async () => {
++                fireEvent.click(stopBtn)
++            })
++
++            await waitFor(() => expect(mockAbortMessage).toHaveBeenCalledWith('flow-123', expect.any(String)))
++        })
++    })
++
++    describe('chat history', () => {
++        it('loads and displays history from executions on open', async () => {
++            mockGetAllExecutions.mockResolvedValue({
++                data: [
++                    {
++                        id: 'exec-1',
++                        sessionId: 'session-abc',
++                        executionData: JSON.stringify([
++                            {
++                                nodeId: 'start_0',
++                                nodeLabel: 'Start',
++                                data: { name: 'startAgentflow', input: { question: 'What is AI?' }, output: { question: 'What is AI?' } },
++                                status: 'FINISHED'
++                            },
++                            {
++                                nodeId: 'llm_0',
++                                nodeLabel: 'LLM',
++                                data: { name: 'llmAgentflow', output: { content: 'AI stands for Artificial Intelligence.' } },
++                                status: 'FINISHED'
++                            }
++                        ])
++                    }
++                ],
++                total: 1
++            })
++
++            renderDialog()
++
++            await waitFor(() => expect(screen.getByText('What is AI?')).toBeInTheDocument())
++            expect(screen.getByText('AI stands for Artificial Intelligence.')).toBeInTheDocument()
++        })
++    })
++})
+diff --git a/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
+new file mode 100644
+index 00000000000..ed535da8eb6
+--- /dev/null
++++ b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
+@@ -0,0 +1,506 @@
++import { useCallback, useEffect, useRef, useState } from 'react'
++import ReactMarkdown from 'react-markdown'
++
++import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source'
++import { Box, Button, Chip, CircularProgress, IconButton, InputAdornment, OutlinedInput, Paper, Typography } from '@mui/material'
++import { useTheme } from '@mui/material/styles'
++import { IconPlayerStop, IconSend } from '@tabler/icons-react'
++import remarkGfm from 'remark-gfm'
++import { v4 as uuidv4 } from 'uuid'
++
++import accountPNG from '@/assets/images/account.png'
++import robotPNG from '@/assets/images/robot.png'
++import type { ExecutionStatus } from '@/core/types'
++import { useAgentflowContext, useApiContext } from '@/infrastructure/store'
++
++// ─── Types ────────────────────────────────────────────────────────────────────
++
++interface ActionElement {
++    label: string
++    type: string
++}
++
++interface ActionPayload {
++    id?: string
++    elements?: ActionElement[]
++    data?: unknown
++}
++
++interface ChatMessage {
++    id: string
++    type: 'user' | 'bot'
++    text: string
++    error?: string
++    action?: ActionPayload
++}
++
++interface NextAgentFlowPayload {
++    nodeId: string
++    status: ExecutionStatus
++    error?: string
++}
++
++interface ExecutionDataItem {
++    nodeId: string
++    nodeLabel: string
++    data: {
++        name?: string
++        input?: { question?: string; [k: string]: unknown }
++        output?: { content?: string; question?: string; [k: string]: unknown }
++        error?: string
++    }
++    status?: string
++}
++
++export interface TestFlowDialogProps {
++    chatflowId: string
++    open: boolean
++}
++
++// ─── Constants ────────────────────────────────────────────────────────────────
++
++const WELCOME_MESSAGE = 'Hi there! How can I help?'
++const HISTORY_LIMIT = 10
++
++// ─── Component ────────────────────────────────────────────────────────────────
++
++export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
++    const theme = useTheme()
++    const { setNodeExecutionStatus, clearExecutionState } = useAgentflowContext()
++    const { apiBaseUrl, token, chatflowsApi, executionsApi } = useApiContext()
++
++    const [messages, setMessages] = useState<ChatMessage[]>([{ id: uuidv4(), type: 'bot', text: WELCOME_MESSAGE }])
++    const [userInput, setUserInput] = useState('')
++    const [loading, setLoading] = useState(false)
++    const [followUpPrompts, setFollowUpPrompts] = useState<string[]>([])
++    const [historyLoaded, setHistoryLoaded] = useState(false)
++
++    const chatIdRef = useRef(uuidv4())
++    const bottomRef = useRef<HTMLDivElement>(null)
++    const inputRef = useRef<HTMLInputElement>(null)
++    const abortControllerRef = useRef<AbortController | null>(null)
++
++    const scrollToBottom = useCallback(() => {
++        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
++    }, [])
++
++    useEffect(() => {
++        scrollToBottom()
++    }, [messages, scrollToBottom])
++
++    useEffect(() => {
++        if (!open) abortControllerRef.current?.abort()
++    }, [open])
++
++    // ── Load chat history on open ─────────────────────────────────────────────
++
++    useEffect(() => {
++        if (!open || historyLoaded) return
++
++        async function loadHistory() {
++            try {
++                const page = await executionsApi.getAllExecutions({ agentflowId: chatflowId, limit: HISTORY_LIMIT })
++                const executions = page.data
++                if (!executions?.length) return
++
++                // Restore the most recent session's chatId so the user continues it
++                const latestSessionId = executions[0]?.sessionId
++                if (latestSessionId) chatIdRef.current = latestSessionId
++
++                const historyMessages: ChatMessage[] = []
++                // executions arrive newest-first; reverse to show oldest first
++                for (const execution of [...executions].reverse()) {
++                    let executionData: ExecutionDataItem[] = []
++                    try {
++                        executionData =
++                            typeof execution.executionData === 'string' ? (JSON.parse(execution.executionData) as ExecutionDataItem[]) : []
++                    } catch {
++                        continue
++                    }
++
++                    const startNode = executionData.find((e) => e.data?.name === 'startAgentflow')
++                    const question = (startNode?.data?.input?.question ?? startNode?.data?.output?.question) as string | undefined
++
++                    const lastWithContent = [...executionData].reverse().find((e) => e.data?.output?.content || e.data?.output?.question)
++                    const answer = (lastWithContent?.data?.output?.content ?? lastWithContent?.data?.output?.question) as string | undefined
++
++                    if (question) {
++                        historyMessages.push({ id: `${execution.id}-user`, type: 'user', text: question })
++                        if (answer && answer !== question) {
++                            historyMessages.push({ id: `${execution.id}-bot`, type: 'bot', text: answer })
++                        }
++                    }
++                }
++
++                if (historyMessages.length > 0) {
++                    setMessages((prev) => [...prev, ...historyMessages])
++                }
++            } catch {
++                // history load is best-effort
++            } finally {
++                setHistoryLoaded(true)
++            }
++        }
++
++        void loadHistory()
++    }, [open, chatflowId, executionsApi, historyLoaded])
++
++    // ── Actions ───────────────────────────────────────────────────────────────
++
++    const handleStop = useCallback(async () => {
++        abortControllerRef.current?.abort()
++        setLoading(false)
++        try {
++            await chatflowsApi.abortMessage(chatflowId, chatIdRef.current)
++        } catch {
++            // best-effort server abort
++        }
++    }, [chatflowId, chatflowsApi])
++
++    const handleActionClick = useCallback(
++        (elem: ActionElement, action: ActionPayload) => {
++            // Clear the action buttons from the last bot message
++            setMessages((prev) => {
++                const last = prev[prev.length - 1]
++                if (!last || last.type !== 'bot') return prev
++                return [...prev.slice(0, -1), { ...last, action: undefined }]
++            })
++            void handleSendCore(elem.label, action)
++        },
++        // eslint-disable-next-line react-hooks/exhaustive-deps
++        []
++    )
++
++    const handleSend = useCallback(() => {
++        const input = userInput.trim()
++        if (!input || loading) return
++        setFollowUpPrompts([])
++        void handleSendCore(input)
++        // eslint-disable-next-line react-hooks/exhaustive-deps
++    }, [userInput, loading])
++
++    // Core SSE send — shared by handleSend, handleActionClick, follow-up prompt clicks
++    const handleSendCore = useCallback(
++        async (input: string, action?: ActionPayload) => {
++            setUserInput('')
++            setLoading(true)
++            clearExecutionState()
++            setMessages((prev) => [...prev, { id: uuidv4(), type: 'user', text: input }])
++
++            const controller = new AbortController()
++            abortControllerRef.current = controller
++
++            const headers: Record<string, string> = { 'Content-Type': 'application/json' }
++            if (token) {
++                // API key auth: server validates via Authorization header
++                headers['Authorization'] = `Bearer ${token}`
++            } else {
++                // Session cookie auth: server validates the JWT cookie
++                headers['x-request-from'] = 'internal'
++            }
++
++            let botMsgAdded = false
++            let nonStreamHandled = false
++
++            const ensureBotMsg = () => {
++                if (!botMsgAdded) {
++                    botMsgAdded = true
++                    setMessages((prev) => [...prev, { id: uuidv4(), type: 'bot', text: '' }])
++                }
++            }
++
++            const body: Record<string, unknown> = { question: input, chatId: chatIdRef.current, streaming: true }
++            if (action) body['action'] = action
++
++            try {
++                await fetchEventSource(`${apiBaseUrl}/api/v1/internal-prediction/${chatflowId}`, {
++                    method: 'POST',
++                    headers,
++                    body: JSON.stringify(body),
++                    signal: controller.signal,
++                    openWhenHidden: true,
++
++                    async onopen(response) {
++                        if (!response.ok) {
++                            const text = await response.text()
++                            throw new Error(text || `HTTP ${response.status}`)
++                        }
++                        const contentType = response.headers.get('content-type') ?? ''
++                        if (!contentType.startsWith(EventStreamContentType)) {
++                            // Non-streaming response: parse the whole body as a message
++                            const text = await response.text()
++                            let answer = text
++                            try {
++                                const json = JSON.parse(text) as Record<string, unknown>
++                                answer = (json['text'] as string) || (json['answer'] as string) || (json['content'] as string) || text
++                            } catch {
++                                // raw text
++                            }
++                            nonStreamHandled = true
++                            ensureBotMsg()
++                            setMessages((prev) => {
++                                const last = prev[prev.length - 1]
++                                if (!last || last.type !== 'bot') return prev
++                                return [...prev.slice(0, -1), { ...last, text: answer }]
++                            })
++                            setLoading(false)
++                            controller.abort()
++                        }
++                    },
++
++                    onmessage(ev) {
++                        let payload: { event: string; data: unknown }
++                        try {
++                            payload = JSON.parse(ev.data) as typeof payload
++                        } catch {
++                            return
++                        }
++
++                        switch (payload.event) {
++                            case 'start':
++                                ensureBotMsg()
++                                break
++
++                            case 'token':
++                                ensureBotMsg()
++                                setMessages((prev) => {
++                                    const last = prev[prev.length - 1]
++                                    if (!last || last.type !== 'bot') return prev
++                                    return [...prev.slice(0, -1), { ...last, text: last.text + (payload.data as string) }]
++                                })
++                                break
++
++                            case 'nextAgentFlow': {
++                                const { nodeId, status, error } = payload.data as NextAgentFlowPayload
++                                setNodeExecutionStatus(nodeId, status, error)
++                                break
++                            }
++
++                            case 'agentFlowEvent': {
++                                const flowPayload = payload.data as { status?: string }
++                                const terminalStates = ['FINISHED', 'ERROR', 'STOPPED', 'TERMINATED']
++                                if (flowPayload?.status && terminalStates.includes(flowPayload.status)) {
++                                    setLoading(false)
++                                }
++                                break
++                            }
++
++                            case 'action':
++                                setMessages((prev) => {
++                                    const last = prev[prev.length - 1]
++                                    if (!last || last.type !== 'bot') return prev
++                                    return [...prev.slice(0, -1), { ...last, action: payload.data as ActionPayload }]
++                                })
++                                break
++
++                            case 'metadata': {
++                                const meta = payload.data as { chatId?: string; followUpPrompts?: string; chatMessageId?: string }
++                                if (meta?.chatId) chatIdRef.current = meta.chatId
++                                if (meta?.followUpPrompts) {
++                                    try {
++                                        const parsed: unknown = JSON.parse(meta.followUpPrompts)
++                                        const prompts = typeof parsed === 'string' ? (JSON.parse(parsed) as string[]) : (parsed as string[])
++                                        setFollowUpPrompts(Array.isArray(prompts) ? prompts : [])
++                                    } catch {
++                                        // ignore malformed follow-up prompts
++                                    }
++                                }
++                                break
++                            }
++
++                            case 'end':
++                                setLoading(false)
++                                setTimeout(() => inputRef.current?.focus(), 100)
++                                break
++
++                            case 'error':
++                                ensureBotMsg()
++                                setMessages((prev) => {
++                                    const last = prev[prev.length - 1]
++                                    if (!last || last.type !== 'bot') return prev
++                                    return [...prev.slice(0, -1), { ...last, error: String(payload.data) }]
++                                })
++                                setLoading(false)
++                                break
++
++                            case 'abort':
++                                setLoading(false)
++                                break
++                        }
++                        scrollToBottom()
++                    },
++
++                    onclose() {
++                        setLoading(false)
++                    },
++
++                    onerror(err) {
++                        if (nonStreamHandled || err?.name === 'AbortError') return
++                        ensureBotMsg()
++                        setMessages((prev) => {
++                            const last = prev[prev.length - 1]
++                            if (!last || last.type !== 'bot') return prev
++                            return [...prev.slice(0, -1), { ...last, error: (err as Error)?.message || 'Connection error' }]
++                        })
++                        setLoading(false)
++                        throw err // prevent fetchEventSource from retrying
++                    }
++                })
++            } catch (err) {
++                if ((err as Error)?.name !== 'AbortError') {
++                    setLoading(false)
++                }
++            }
++        },
++        [apiBaseUrl, chatflowId, token, setNodeExecutionStatus, clearExecutionState, scrollToBottom]
++    )
++
++    const handleKeyDown = (e: React.KeyboardEvent) => {
++        if (e.key === 'Enter' && !e.shiftKey && userInput.trim()) {
++            e.preventDefault()
++            handleSend()
++        }
++    }
++
++    // ── Render ────────────────────────────────────────────────────────────────
++
++    return (
++        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
++            <Box
++                sx={{
++                    flex: 1,
++                    overflowY: 'auto',
++                    display: 'flex',
++                    flexDirection: 'column',
++                    gap: 1.5,
++                    p: 2
++                }}
++            >
++                {messages.map((msg) => (
++                    <Box
++                        key={msg.id}
++                        sx={{
++                            display: 'flex',
++                            alignItems: 'flex-end',
++                            gap: 1,
++                            justifyContent: msg.type === 'user' ? 'flex-end' : 'flex-start'
++                        }}
++                    >
++                        {msg.type === 'bot' && (
++                            <img
++                                src={robotPNG}
++                                alt='AI'
++                                width='30'
++                                height='30'
++                                style={{ borderRadius: '1rem', flexShrink: 0, marginBottom: '0.25rem' }}
++                            />
++                        )}
++                        <Paper
++                            elevation={0}
++                            sx={{
++                                px: 2,
++                                py: 1,
++                                maxWidth: '75%',
++                                backgroundColor: msg.error
++                                    ? theme.palette.error.light
++                                    : msg.type === 'user'
++                                    ? theme.palette.primary.main
++                                    : theme.palette.action.hover,
++                                color: msg.error ? theme.palette.error.contrastText : msg.type === 'user' ? '#fff' : 'inherit',
++                                borderRadius: msg.type === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
++                                wordBreak: 'break-word',
++                                whiteSpace: 'pre-wrap'
++                            }}
++                        >
++                            {msg.error ? (
++                                <Typography variant='body2'>Error: {msg.error}</Typography>
++                            ) : msg.text ? (
++                                msg.type === 'bot' ? (
++                                    <Typography variant='body2' component='div' sx={{ '& p': { m: 0 }, '& p + p': { mt: 1 } }}>
++                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
++                                    </Typography>
++                                ) : (
++                                    <Typography variant='body2'>{msg.text}</Typography>
++                                )
++                            ) : loading && msg.type === 'bot' ? (
++                                <CircularProgress size={16} />
++                            ) : null}
++
++                            {msg.action?.elements && msg.action.elements.length > 0 && (
++                                <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
++                                    {msg.action.elements.map((elem, i) => (
++                                        <Button
++                                            key={i}
++                                            size='small'
++                                            variant='outlined'
++                                            onClick={() => handleActionClick(elem, msg.action!)}
++                                        >
++                                            {elem.label}
++                                        </Button>
++                                    ))}
++                                </Box>
++                            )}
++                        </Paper>
++                        {msg.type === 'user' && (
++                            <img
++                                src={accountPNG}
++                                alt='Me'
++                                width='30'
++                                height='30'
++                                style={{ borderRadius: '1rem', flexShrink: 0, marginBottom: '0.25rem' }}
++                            />
++                        )}
++                    </Box>
++                ))}
++
++                {followUpPrompts.length > 0 && !loading && (
++                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, pl: 1 }}>
++                        {followUpPrompts.map((prompt, i) => (
++                            <Chip
++                                key={i}
++                                label={prompt}
++                                size='small'
++                                variant='outlined'
++                                onClick={() => {
++                                    setFollowUpPrompts([])
++                                    void handleSendCore(prompt)
++                                }}
++                                sx={{ cursor: 'pointer' }}
++                            />
++                        ))}
++                    </Box>
++                )}
++
++                <div ref={bottomRef} />
++            </Box>
++
++            <Box sx={{ p: 2, pt: 1, borderTop: `1px solid ${theme.palette.divider}` }}>
++                <OutlinedInput
++                    inputRef={inputRef}
++                    fullWidth
++                    size='small'
++                    multiline
++                    maxRows={4}
++                    placeholder='Type a message...'
++                    value={userInput}
++                    onChange={(e) => setUserInput(e.target.value)}
++                    onKeyDown={handleKeyDown}
++                    disabled={loading}
++                    endAdornment={
++                        <InputAdornment position='end'>
++                            {loading ? (
++                                <IconButton size='small' onClick={() => void handleStop()} title='Stop'>
++                                    <IconPlayerStop size={18} />
++                                </IconButton>
++                            ) : (
++                                <IconButton size='small' onClick={handleSend} disabled={!userInput.trim()} edge='end'>
++                                    <IconSend size={18} />
++                                </IconButton>
++                            )}
++                        </InputAdornment>
++                    }
++                />
++            </Box>
++        </Box>
++    )
++}
+diff --git a/packages/agentflow/src/features/canvas/containers/index.ts b/packages/agentflow/src/features/canvas/containers/index.ts
+index 2e08d584032..b57f675a123 100644
+--- a/packages/agentflow/src/features/canvas/containers/index.ts
++++ b/packages/agentflow/src/features/canvas/containers/index.ts
+@@ -3,3 +3,7 @@ export { AgentFlowNode } from './AgentFlowNode'
+ export { IterationNode } from './IterationNode'
+ export { NodeInfoDialog } from './NodeInfoDialog'
+ export { StickyNote } from './StickyNote'
++export type { TestFlowButtonProps } from './TestFlowButton'
++export { TestFlowButton } from './TestFlowButton'
++export type { TestFlowDialogProps } from './TestFlowDialog'
++export { TestFlowDialog } from './TestFlowDialog'
+diff --git a/packages/agentflow/src/features/canvas/index.ts b/packages/agentflow/src/features/canvas/index.ts
+index d8d3f59cb39..57d25214a27 100644
+--- a/packages/agentflow/src/features/canvas/index.ts
++++ b/packages/agentflow/src/features/canvas/index.ts
+@@ -1,12 +1,12 @@
+ // Canvas Feature - Public API
+ // Container components (with state/logic)
+-import { AgentFlowEdge, AgentFlowNode, IterationNode, StickyNote } from './containers'
++import { AgentFlowEdge, AgentFlowNode, IterationNode, StickyNote, TestFlowButton } from './containers'
+ 
+ import './canvas.css'
+ 
+ // Presentational components
+ export type { AgentflowHeaderProps } from './components'
+-export { AgentflowHeader, ConnectionLine, createHeaderProps, TestFlowButton } from './components'
++export { AgentflowHeader, ConnectionLine, createHeaderProps } from './components'
+ 
+ // Hooks
+ export { useDragAndDrop, useFlowHandlers, useFlowNodes } from './hooks'
+@@ -23,7 +23,9 @@ export const edgeTypes = {
+ }
+ 
+ // Re-export container components
+-export { AgentFlowEdge, AgentFlowNode, IterationNode, StickyNote }
++export { AgentFlowEdge, AgentFlowNode, IterationNode, StickyNote, TestFlowButton }
++export type { TestFlowButtonProps, TestFlowDialogProps } from './containers'
++export { TestFlowDialog } from './containers'
+ 
+ // Utilities and styled components
+ export { getBuiltInAnthropicToolIcon, getBuiltInGeminiToolIcon, getBuiltInOpenAIToolIcon, renderNodeIcon } from './nodeIcons'
+diff --git a/packages/agentflow/src/features/node-palette/AddNodesDrawer.tsx b/packages/agentflow/src/features/node-palette/AddNodesDrawer.tsx
+index 71d864e212c..2021edc85cd 100644
+--- a/packages/agentflow/src/features/node-palette/AddNodesDrawer.tsx
++++ b/packages/agentflow/src/features/node-palette/AddNodesDrawer.tsx
+@@ -20,14 +20,13 @@ import {
+ import { useTheme } from '@mui/material/styles'
+ import { IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
+ 
+-import { MainCard } from '@/atoms'
++import { MainCard, StyledFab } from '@/atoms'
+ import { tokens } from '@/core/theme/tokens'
+ import type { NodeDataSchema } from '@/core/types'
+ import { useApiContext } from '@/infrastructure/store'
+ 
+ import { NodeListItem } from './NodeListItem'
+ import { debounce, groupNodesByCategory, searchNodes } from './search'
+-import { StyledFab } from './StyledFab'
+ import { useDrawerMaxHeight } from './useDrawerMaxHeight'
+ 
+ export interface AddNodesDrawerProps {
+diff --git a/packages/agentflow/src/features/node-palette/index.ts b/packages/agentflow/src/features/node-palette/index.ts
+index 3e958e7a54b..e66d27e667e 100644
+--- a/packages/agentflow/src/features/node-palette/index.ts
++++ b/packages/agentflow/src/features/node-palette/index.ts
+@@ -1,4 +1,3 @@
+ // Node Palette Feature - Public API
+ export type { AddNodesDrawerProps } from './AddNodesDrawer'
+ export { AddNodesDrawer } from './AddNodesDrawer'
+-export { StyledFab } from './StyledFab'
+diff --git a/packages/agentflow/src/infrastructure/api/chatflows.ts b/packages/agentflow/src/infrastructure/api/chatflows.ts
+index cea03da5f57..4582cb0fbf3 100644
+--- a/packages/agentflow/src/infrastructure/api/chatflows.ts
++++ b/packages/agentflow/src/infrastructure/api/chatflows.ts
+@@ -83,6 +83,13 @@ export function bindChatflowsApi(client: AxiosInstance) {
+         /**
+          * Get available chat models for generation
+          */
++        /**
++         * Abort an in-progress prediction for a chatflow session
++         */
++        abortMessage: async (chatflowId: string, chatId: string): Promise<void> => {
++            await client.put(`/chatmessage/abort/${chatflowId}/${chatId}`)
++        },
++
+         getChatModels: async (): Promise<
+             Array<{
+                 name: string
+diff --git a/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts b/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
+index cd7bc910c43..77583d0291b 100644
+--- a/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
++++ b/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
+@@ -9,7 +9,8 @@ const mockApis: ApiServices = {
+         updateChatflow: jest.fn(),
+         deleteChatflow: jest.fn(),
+         generateAgentflow: jest.fn(),
+-        getChatModels: jest.fn()
++        getChatModels: jest.fn(),
++        abortMessage: jest.fn()
+     },
+     chatModelsApi: {
+         getChatModels: jest.fn()
+diff --git a/packages/agentflow/src/infrastructure/store/ApiContext.tsx b/packages/agentflow/src/infrastructure/store/ApiContext.tsx
+index d10a9b991db..689a73146ea 100644
+--- a/packages/agentflow/src/infrastructure/store/ApiContext.tsx
++++ b/packages/agentflow/src/infrastructure/store/ApiContext.tsx
+@@ -27,6 +27,7 @@ import {
+ interface ApiContextValue {
+     client: AxiosInstance
+     apiBaseUrl: string
++    token?: string
+     nodesApi: NodesApi
+     chatflowsApi: ChatflowsApi
+     chatModelsApi: ChatModelsApi
+@@ -67,6 +68,7 @@ export function ApiProvider({ apiBaseUrl, token, requestInterceptor, children }:
+         return {
+             client,
+             apiBaseUrl,
++            token,
+             nodesApi,
+             chatflowsApi,
+             chatModelsApi,
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index bd259681935..bed04879348 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -123,6 +123,9 @@ importers:
+       '@emotion/styled':
+         specifier: ^11.10.0
+         version: 11.11.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react@18.2.0)
++      '@microsoft/fetch-event-source':
++        specifier: ^2.0.1
++        version: 2.0.1
+       '@mui/icons-material':
+         specifier: ^5.0.0
+         version: 5.0.3(@mui/material@5.15.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@emotion/styled@11.11.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(@types/react@18.2.65)(react@18.2.0)
+@@ -189,9 +192,15 @@ importers:
+       react-dom:
+         specifier: ^18.2.0
+         version: 18.2.0(react@18.2.0)
++      react-markdown:
++        specifier: ^9.1.0
++        version: 9.1.0(@types/react@18.2.65)(react@18.2.0)
+       reactflow:
+         specifier: ^11.5.0
+         version: 11.10.4(@types/react@18.2.65)(immer@10.1.1)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
++      remark-gfm:
++        specifier: ^4.0.1
++        version: 4.0.1
+       tippy.js:
+         specifier: ^6.3.7
+         version: 6.3.7
+@@ -4538,79 +4547,67 @@ packages:
+     resolution: {integrity: sha512-9B+taZ8DlyyqzZQnoeIvDVR/2F4EbMepXMc/NdVbkzsJbzkUjhXv/70GQJ7tdLA4YJgNP25zukcxpX2/SueNrA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-arm@1.0.5':
+     resolution: {integrity: sha512-gvcC4ACAOPRNATg/ov8/MnbxFDJqf/pDePbBnuBDcjsI8PssmjoKMAz4LtLaVi+OnSb5FK/yIOamqDwGmXW32g==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-s390x@1.0.4':
+     resolution: {integrity: sha512-u7Wz6ntiSSgGSGcjZ55im6uvTrOxSIS8/dgoVMoiGE9I6JAfU50yH5BoDlYA1tcuGS7g/QNtetJnxA6QEsCVTA==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-x64@1.0.4':
+     resolution: {integrity: sha512-MmWmQ3iPFZr0Iev+BAgVMb3ZyC4KeFc3jFxnNbEPas60e1cIfevbtuyf9nDGIzOaW9PdnDciJm+wFFaTlj5xYw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linuxmusl-arm64@1.0.4':
+     resolution: {integrity: sha512-9Ti+BbTYDcsbp4wfYib8Ctm1ilkugkA/uscUn6UXK1ldpC1JjiXbLfFZtRlBhjPZ5o1NCLiDbg8fhUPKStHoTA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-libvips-linuxmusl-x64@1.0.4':
+     resolution: {integrity: sha512-viYN1KX9m+/hGkJtvYYp+CCLgnJXwiQB39damAO7WMdKWlIhmYTfHjwSbQeUK/20vY154mwezd9HflVFM1wVSw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linux-arm64@0.33.5':
+     resolution: {integrity: sha512-JMVv+AMRyGOHtO1RFBiJy/MBsgz0x4AWrT6QoEVVTyh1E39TrCUpTRI7mx9VksGX4awWASxqCYLCV4wBZHAYxA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-arm@0.33.5':
+     resolution: {integrity: sha512-JTS1eldqZbJxjvKaAkxhZmBqPRGmxgu+qFKSInv8moZ2AmT5Yib3EQ1c6gp493HvrvV8QgdOXdyaIBrhvFhBMQ==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-s390x@0.33.5':
+     resolution: {integrity: sha512-y/5PCd+mP4CA/sPDKl2961b+C9d+vPAveS33s6Z3zfASk2j5upL6fXVPZi7ztePZ5CuH+1kW8JtvxgbuXHRa4Q==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-x64@0.33.5':
+     resolution: {integrity: sha512-opC+Ok5pRNAzuvq1AG0ar+1owsu842/Ab+4qvU879ippJBHvyY5n2mxF1izXqkPYlGuP/M556uh53jRLJmzTWA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linuxmusl-arm64@0.33.5':
+     resolution: {integrity: sha512-XrHMZwGQGvJg2V/oRSUfSAfjfPxO+4DkiRh6p2AFjLQztWUuY/o8Mq0eMQVIY7HJ1CDQUJlxGGZRw1a5bqmd1g==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linuxmusl-x64@0.33.5':
+     resolution: {integrity: sha512-WT+d/cgqKkkKySYmqoZ8y3pxx7lx9vVejxW/W4DOFMYVSkErR+w7mf2u8m/y4+xHe7yY9DAXQMWQhpnMuFfScw==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-wasm32@0.33.5':
+     resolution: {integrity: sha512-ykUW4LVGaMcU9lu9thv85CbRMAwfeadCJHRsg2GmeRa/cJxsVY9Rbd57JcMxBkKHag5U/x7TSBpScF4U8ElVzg==}
+@@ -6416,35 +6413,30 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-arm64-musl@0.1.73':
+     resolution: {integrity: sha512-lX0z2bNmnk1PGZ+0a9OZwI2lPPvWjRYzPqvEitXX7lspyLFrOzh2kcQiLL7bhyODN23QvfriqwYqp5GreSzVvA==}
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-linux-riscv64-gnu@0.1.73':
+     resolution: {integrity: sha512-QDQgMElwxAoADsSR3UYvdTTQk5XOyD9J5kq15Z8XpGwpZOZsSE0zZ/X1JaOtS2x+HEZL6z1S6MF/1uhZFZb5ig==}
+     engines: {node: '>= 10'}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-gnu@0.1.73':
+     resolution: {integrity: sha512-wbzLJrTalQrpyrU1YRrO6w6pdr5vcebbJa+Aut5QfTaW9eEmMb1WFG6l1V+cCa5LdHmRr8bsvl0nJDU/IYDsmw==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-musl@0.1.73':
+     resolution: {integrity: sha512-xbfhYrUufoTAKvsEx2ZUN4jvACabIF0h1F5Ik1Rk4e/kQq6c+Dwa5QF0bGrfLhceLpzHT0pCMGMDeQKQrcUIyA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-win32-x64-msvc@0.1.73':
+     resolution: {integrity: sha512-YQmHXBufFBdWqhx+ympeTPkMfs3RNxaOgWm59vyjpsub7Us07BwCcmu1N5kildhO8Fm0syoI2kHnzGkJBLSvsg==}
+@@ -7309,67 +7301,56 @@ packages:
+     resolution: {integrity: sha512-hLrmRl53prCcD+YXTfNvXd776HTxNh8wPAMllusQ+amcQmtgo3V5i/nkhPN6FakW+QVLoUUr2AsbtIRPFU3xIA==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm-musleabihf@4.45.0':
+     resolution: {integrity: sha512-XBKGSYcrkdiRRjl+8XvrUR3AosXU0NvF7VuqMsm7s5nRy+nt58ZMB19Jdp1RdqewLcaYnpk8zeVs/4MlLZEJxw==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-arm64-gnu@4.45.0':
+     resolution: {integrity: sha512-fRvZZPUiBz7NztBE/2QnCS5AtqLVhXmUOPj9IHlfGEXkapgImf4W9+FSkL8cWqoAjozyUzqFmSc4zh2ooaeF6g==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm64-musl@4.45.0':
+     resolution: {integrity: sha512-Btv2WRZOcUGi8XU80XwIvzTg4U6+l6D0V6sZTrZx214nrwxw5nAi8hysaXj/mctyClWgesyuxbeLylCBNauimg==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-loongarch64-gnu@4.45.0':
+     resolution: {integrity: sha512-Li0emNnwtUZdLwHjQPBxn4VWztcrw/h7mgLyHiEI5Z0MhpeFGlzaiBHpSNVOMB/xucjXTTcO+dhv469Djr16KA==}
+     cpu: [loong64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-powerpc64le-gnu@4.45.0':
+     resolution: {integrity: sha512-sB8+pfkYx2kvpDCfd63d5ScYT0Fz1LO6jIb2zLZvmK9ob2D8DeVqrmBDE0iDK8KlBVmsTNzrjr3G1xV4eUZhSw==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-gnu@4.45.0':
+     resolution: {integrity: sha512-5GQ6PFhh7E6jQm70p1aW05G2cap5zMOvO0se5JMecHeAdj5ZhWEHbJ4hiKpfi1nnnEdTauDXxPgXae/mqjow9w==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-musl@4.45.0':
+     resolution: {integrity: sha512-N/euLsBd1rekWcuduakTo/dJw6U6sBP3eUq+RXM9RNfPuWTvG2w/WObDkIvJ2KChy6oxZmOSC08Ak2OJA0UiAA==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-s390x-gnu@4.45.0':
+     resolution: {integrity: sha512-2l9sA7d7QdikL0xQwNMO3xURBUNEWyHVHfAsHsUdq+E/pgLTUcCE+gih5PCdmyHmfTDeXUWVhqL0WZzg0nua3g==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-gnu@4.45.0':
+     resolution: {integrity: sha512-XZdD3fEEQcwG2KrJDdEQu7NrHonPxxaV0/w2HpvINBdcqebz1aL+0vM2WFJq4DeiAVT6F5SUQas65HY5JDqoPw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-musl@4.45.0':
+     resolution: {integrity: sha512-7ayfgvtmmWgKWBkCGg5+xTQ0r5V1owVm67zTrsEY1008L5ro7mCyGYORomARt/OquB9KY7LpxVBZes+oSniAAQ==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-win32-arm64-msvc@4.45.0':
+     resolution: {integrity: sha512-B+IJgcBnE2bm93jEW5kHisqvPITs4ddLOROAcOc/diBgrEiQJJ6Qcjby75rFSmH5eMGrqJryUgJDhrfj942apQ==}
+@@ -8353,28 +8334,24 @@ packages:
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-arm64-musl@1.4.6':
+     resolution: {integrity: sha512-LGQsKJ8MA9zZ8xHCkbGkcPSmpkZL2O7drvwsGKynyCttHhpwVjj9lguhD4DWU3+FWIsjvho5Vu0Ggei8OYi/Lw==}
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-linux-x64-gnu@1.4.6':
+     resolution: {integrity: sha512-10JL2nLIreMQDKvq2TECnQe5fCuoqBHu1yW8aChqgHUyg9d7gfZX/kppUsuimqcgRBnS0AjTDAA+JF6UsG/2Yg==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-x64-musl@1.4.6':
+     resolution: {integrity: sha512-EGyjFVzVY6Do89x8sfah7I3cuP4MwtwzmA6OlfD/KASqfCFf5eIaEBMbajgR41bVfMV7lK72lwAIea5xEyq1AQ==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-win32-arm64-msvc@1.4.6':
+     resolution: {integrity: sha512-gfW9AuXvwSyK07Vb8Y8E9m2oJZk21WqcD+X4BZhkbKB0TCZK0zk1j/HpS2UFlr1JB2zPKPpSWLU3ll0GEHRG2A==}
+@@ -9468,49 +9445,41 @@ packages:
+     resolution: {integrity: sha512-34gw7PjDGB9JgePJEmhEqBhWvCiiWCuXsL9hYphDF7crW7UgI05gyBAi6MF58uGcMOiOqSJ2ybEeCvHcq0BCmQ==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-arm64-musl@1.11.1':
+     resolution: {integrity: sha512-RyMIx6Uf53hhOtJDIamSbTskA99sPHS96wxVE/bJtePJJtpdKGXO1wY90oRdXuYOGOTuqjT8ACccMc4K6QmT3w==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-ppc64-gnu@1.11.1':
+     resolution: {integrity: sha512-D8Vae74A4/a+mZH0FbOkFJL9DSK2R6TFPC9M+jCWYia/q2einCubX10pecpDiTmkJVUH+y8K3BZClycD8nCShA==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-gnu@1.11.1':
+     resolution: {integrity: sha512-frxL4OrzOWVVsOc96+V3aqTIQl1O2TjgExV4EKgRY09AJ9leZpEg8Ak9phadbuX0BA4k8U5qtvMSQQGGmaJqcQ==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-musl@1.11.1':
+     resolution: {integrity: sha512-mJ5vuDaIZ+l/acv01sHoXfpnyrNKOk/3aDoEdLO/Xtn9HuZlDD6jKxHlkN8ZhWyLJsRBxfv9GYM2utQ1SChKew==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-s390x-gnu@1.11.1':
+     resolution: {integrity: sha512-kELo8ebBVtb9sA7rMe1Cph4QHreByhaZ2QEADd9NzIQsYNQpt9UkM9iqr2lhGr5afh885d/cB5QeTXSbZHTYPg==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-gnu@1.11.1':
+     resolution: {integrity: sha512-C3ZAHugKgovV5YvAMsxhq0gtXuwESUKc5MhEtjBpLoHPLYM+iuwSj3lflFwK3DPm68660rZ7G8BMcwSro7hD5w==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-musl@1.11.1':
+     resolution: {integrity: sha512-rV0YSoyhK2nZ4vEswT/QwqzqQXw5I6CjoaYMOX0TqBlWhojUf8P94mvI7nuJTeaCkkds3QE4+zS8Ko+GdXuZtA==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-wasm32-wasi@1.11.1':
+     resolution: {integrity: sha512-5u4RkfxJm+Ng7IWgkzi3qrFOvLvQYnPBmjmZQ8+szTK/b31fQCnleNl1GgEt7nIsZRIf5PLhPwT0WM+q45x/UQ==}
+@@ -10699,14 +10668,12 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-linux-x64-gnu@1.1.1:
+     resolution: {integrity: sha512-RcvBcECbUcFXlFM2httdGc+3wmkI76tD9iGS0H9npEhz4LyLvdXKBK8CZtw67hsHCH09KklKw4ITkSS85pHVbA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-win32-x64-msvc@1.1.1:
+     resolution: {integrity: sha512-296SxWNwsmvP+1Ggkl72norTFLOivoXhGu0t5mXNIbd7yd2UodntvAvG2cheTHDCL/ILbox4u+6KHNvRxHgm6A==}
+
+From 212493ff2e6f075fd43579f705bfb60a53e635ad Mon Sep 17 00:00:00 2001
+From: j-sanaa <sanaa.javidh@workday.com>
+Date: Wed, 29 Apr 2026 16:49:46 -0700
+Subject: [PATCH 2/2] Correct delete chat behavior
+
+---
+ .../canvas/containers/TestFlowButton.tsx      | 28 ++++++++++++++++---
+ .../canvas/containers/TestFlowDialog.tsx      | 24 ++++++++++++----
+ .../src/infrastructure/api/chatflows.ts       |  9 ++++++
+ .../api/loadMethodRegistry.test.ts            |  3 +-
+ 4 files changed, 54 insertions(+), 10 deletions(-)
+
+diff --git a/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx b/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
+index b304fd415aa..770b23d939d 100644
+--- a/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
++++ b/packages/agentflow/src/features/canvas/containers/TestFlowButton.tsx
+@@ -3,9 +3,10 @@ import { useRef, useState } from 'react'
+ import { ClickAwayListener, Fade, Paper, Popper } from '@mui/material'
+ import { useTheme } from '@mui/material/styles'
+ import { IconArrowsMaximize, IconEraser, IconMessage, IconX } from '@tabler/icons-react'
++import { v4 as uuidv4 } from 'uuid'
+ 
+ import { MainCard, StyledFab } from '@/atoms'
+-import { useAgentflowContext } from '@/infrastructure/store'
++import { useAgentflowContext, useApiContext } from '@/infrastructure/store'
+ 
+ import { TestFlowDialog } from './TestFlowDialog'
+ 
+@@ -21,8 +22,10 @@ export interface TestFlowButtonProps {
+ export function TestFlowButton({ onDialogClose, onOpenChange }: TestFlowButtonProps) {
+     const theme = useTheme()
+     const { state, clearExecutionState } = useAgentflowContext()
++    const { chatflowsApi, executionsApi } = useApiContext()
+     const [open, setOpen] = useState(false)
+     const [clearKey, setClearKey] = useState(0)
++    const [chatId, setChatId] = useState(() => uuidv4())
+     const anchorRef = useRef<HTMLSpanElement>(null)
+ 
+     const chatflowId = state.chatflow?.id
+@@ -42,7 +45,18 @@ export function TestFlowButton({ onDialogClose, onOpenChange }: TestFlowButtonPr
+         onDialogClose?.()
+     }
+ 
+-    const handleClear = () => {
++    const handleClear = async () => {
++        try {
++            const page = await executionsApi.getAllExecutions({ agentflowId: chatflowId, sessionId: chatId })
++            const ids = page.data.map((e) => e.id)
++            await Promise.all([
++                ids.length > 0 ? executionsApi.deleteExecutions(ids) : Promise.resolve(),
++                chatflowsApi.deleteChatMessages(chatflowId, chatId)
++            ])
++        } catch {
++            // best-effort: still reset the UI even if the server delete fails
++        }
++        setChatId(uuidv4())
+         setClearKey((prev) => prev + 1)
+         clearExecutionState()
+     }
+@@ -55,7 +69,7 @@ export function TestFlowButton({ onDialogClose, onOpenChange }: TestFlowButtonPr
+                 </StyledFab>
+             )}
+             {open && (
+-                <StyledFab size='small' color='error' aria-label='clear' title='Clear Chat' onClick={handleClear}>
++                <StyledFab size='small' color='error' aria-label='clear' title='Clear Chat' onClick={() => void handleClear()}>
+                     <IconEraser />
+                 </StyledFab>
+             )}
+@@ -87,7 +101,13 @@ export function TestFlowButton({ onDialogClose, onOpenChange }: TestFlowButtonPr
+                                     shadow={theme.shadows[16]}
+                                     sx={{ width: 400, height: 'calc(100vh - 180px)', bgcolor: 'background.paper' }}
+                                 >
+-                                    <TestFlowDialog key={clearKey} chatflowId={chatflowId} open={open} />
++                                    <TestFlowDialog
++                                        key={clearKey}
++                                        chatflowId={chatflowId}
++                                        open={open}
++                                        chatId={chatId}
++                                        onChatIdChange={setChatId}
++                                    />
+                                 </MainCard>
+                             </ClickAwayListener>
+                         </Paper>
+diff --git a/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
+index ed535da8eb6..32370c4bc10 100644
+--- a/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
++++ b/packages/agentflow/src/features/canvas/containers/TestFlowDialog.tsx
+@@ -55,6 +55,8 @@ interface ExecutionDataItem {
+ export interface TestFlowDialogProps {
+     chatflowId: string
+     open: boolean
++    chatId?: string
++    onChatIdChange?: (id: string) => void
+ }
+ 
+ // ─── Constants ────────────────────────────────────────────────────────────────
+@@ -64,7 +66,7 @@ const HISTORY_LIMIT = 10
+ 
+ // ─── Component ────────────────────────────────────────────────────────────────
+ 
+-export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
++export function TestFlowDialog({ chatflowId, open, chatId: initialChatId, onChatIdChange }: TestFlowDialogProps) {
+     const theme = useTheme()
+     const { setNodeExecutionStatus, clearExecutionState } = useAgentflowContext()
+     const { apiBaseUrl, token, chatflowsApi, executionsApi } = useApiContext()
+@@ -75,7 +77,7 @@ export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
+     const [followUpPrompts, setFollowUpPrompts] = useState<string[]>([])
+     const [historyLoaded, setHistoryLoaded] = useState(false)
+ 
+-    const chatIdRef = useRef(uuidv4())
++    const chatIdRef = useRef(initialChatId ?? uuidv4())
+     const bottomRef = useRef<HTMLDivElement>(null)
+     const inputRef = useRef<HTMLInputElement>(null)
+     const abortControllerRef = useRef<AbortController | null>(null)
+@@ -97,15 +99,21 @@ export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
+     useEffect(() => {
+         if (!open || historyLoaded) return
+ 
++        let cancelled = false
++
+         async function loadHistory() {
+             try {
+                 const page = await executionsApi.getAllExecutions({ agentflowId: chatflowId, limit: HISTORY_LIMIT })
++                if (cancelled) return
+                 const executions = page.data
+                 if (!executions?.length) return
+ 
+                 // Restore the most recent session's chatId so the user continues it
+                 const latestSessionId = executions[0]?.sessionId
+-                if (latestSessionId) chatIdRef.current = latestSessionId
++                if (latestSessionId) {
++                    chatIdRef.current = latestSessionId
++                    onChatIdChange?.(latestSessionId)
++                }
+ 
+                 const historyMessages: ChatMessage[] = []
+                 // executions arrive newest-first; reverse to show oldest first
+@@ -138,11 +146,14 @@ export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
+             } catch {
+                 // history load is best-effort
+             } finally {
+-                setHistoryLoaded(true)
++                if (!cancelled) setHistoryLoaded(true)
+             }
+         }
+ 
+         void loadHistory()
++        return () => {
++            cancelled = true
++        }
+     }, [open, chatflowId, executionsApi, historyLoaded])
+ 
+     // ── Actions ───────────────────────────────────────────────────────────────
+@@ -295,7 +306,10 @@ export function TestFlowDialog({ chatflowId, open }: TestFlowDialogProps) {
+ 
+                             case 'metadata': {
+                                 const meta = payload.data as { chatId?: string; followUpPrompts?: string; chatMessageId?: string }
+-                                if (meta?.chatId) chatIdRef.current = meta.chatId
++                                if (meta?.chatId) {
++                                    chatIdRef.current = meta.chatId
++                                    onChatIdChange?.(meta.chatId)
++                                }
+                                 if (meta?.followUpPrompts) {
+                                     try {
+                                         const parsed: unknown = JSON.parse(meta.followUpPrompts)
+diff --git a/packages/agentflow/src/infrastructure/api/chatflows.ts b/packages/agentflow/src/infrastructure/api/chatflows.ts
+index 4582cb0fbf3..6c20fc55bf9 100644
+--- a/packages/agentflow/src/infrastructure/api/chatflows.ts
++++ b/packages/agentflow/src/infrastructure/api/chatflows.ts
+@@ -90,6 +90,15 @@ export function bindChatflowsApi(client: AxiosInstance) {
+             await client.put(`/chatmessage/abort/${chatflowId}/${chatId}`)
+         },
+ 
++        /**
++         * Delete all internal chat messages for a chatflow session.
++         * AGENTFLOW flows write to both the ChatMessage and Execution tables,
++         * so clearing a session requires deleting from both.
++         */
++        deleteChatMessages: async (chatflowId: string, chatId: string): Promise<void> => {
++            await client.delete(`/chatmessage/${chatflowId}`, { params: { chatId, chatType: 'INTERNAL' } })
++        },
++
+         getChatModels: async (): Promise<
+             Array<{
+                 name: string
+diff --git a/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts b/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
+index 77583d0291b..8e8cef82026 100644
+--- a/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
++++ b/packages/agentflow/src/infrastructure/api/loadMethodRegistry.test.ts
+@@ -10,7 +10,8 @@ const mockApis: ApiServices = {
+         deleteChatflow: jest.fn(),
+         generateAgentflow: jest.fn(),
+         getChatModels: jest.fn(),
+-        abortMessage: jest.fn()
++        abortMessage: jest.fn(),
++        deleteChatMessages: jest.fn()
+     },
+     chatModelsApi: {
+         getChatModels: jest.fn()

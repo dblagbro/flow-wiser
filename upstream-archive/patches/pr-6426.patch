@@ -1,0 +1,358 @@
+From 1582b3ec0e545e9b7fc01026488eeb078a8ee4e4 Mon Sep 17 00:00:00 2001
+From: Shreyash Golhani <shreyashgolhani@gmail.com>
+Date: Sat, 23 May 2026 19:13:54 +0530
+Subject: [PATCH] feat: add governance layer inside AgentExecutor ReAct loop
+
+- Insert policy check between tool resolution and tool.call()
+- Add policyLoader, policyChecker, hitl, auditLogger modules
+- policies.yaml with allow/deny/escalate rules
+- Append-only audit log at project root
+- Human-in-the-loop via CLI readline
+---
+ packages/components/src/agents.ts             | 111 +++++++++++++-----
+ .../components/src/governance/auditLogger.ts  |  35 ++++++
+ packages/components/src/governance/hitl.ts    |  35 ++++++
+ .../src/governance/policyChecker.ts           |  32 +++++
+ .../components/src/governance/policyLoader.ts |  39 ++++++
+ packages/components/src/policies.yaml         |  17 +++
+ 6 files changed, 239 insertions(+), 30 deletions(-)
+ create mode 100644 packages/components/src/governance/auditLogger.ts
+ create mode 100644 packages/components/src/governance/hitl.ts
+ create mode 100644 packages/components/src/governance/policyChecker.ts
+ create mode 100644 packages/components/src/governance/policyLoader.ts
+ create mode 100644 packages/components/src/policies.yaml
+
+diff --git a/packages/components/src/agents.ts b/packages/components/src/agents.ts
+index 5b14db48dfb..0c18eebea09 100644
+--- a/packages/components/src/agents.ts
++++ b/packages/components/src/agents.ts
+@@ -26,6 +26,10 @@ import { formatLogToString } from '@langchain/classic/agents/format_scratchpad/l
+ import { IUsedTool } from './Interface'
+ import { getErrorMessage } from './error'
+ 
++import { checkPolicy } from './governance/policyChecker'
++import { waitForHumanApproval } from './governance/hitl'
++import { writeAuditLog } from './governance/auditLogger'
++
+ export const SOURCE_DOCUMENTS_PREFIX = '\n\n----FLOWISE_SOURCE_DOCUMENTS----\n\n'
+ export const ARTIFACTS_PREFIX = '\n\n----FLOWISE_ARTIFACTS----\n\n'
+ export const TOOL_ARGS_PREFIX = '\n\n----FLOWISE_TOOL_ARGS----\n\n'
+@@ -429,14 +433,66 @@ export class AgentExecutor extends BaseChain<ChainValues, AgentExecutorOutput> {
+                     const tool = action.tool === '_Exception' ? new ExceptionTool() : toolsByName[action.tool?.toLowerCase()]
+                     let observation
+                     try {
+-                        /* Here we need to override Tool call method to include sessionId, chatId, input as parameter
+-                         * Tool Call Parameters:
+-                         * - arg: z.output<T>
+-                         * - configArg?: RunnableConfig | Callbacks
+-                         * - tags?: string[]
+-                         * - flowConfig?: { sessionId?: string, chatId?: string, input?: string }
+-                         */
+                         if (tool) {
++                            // ─── GOVERNANCE HOOK START ───────────────────────────────
++                            if (action.tool !== '_Exception') {
++                                const cleanToolName = action.tool.split('{')[0].trim()
++                                const policy = checkPolicy(cleanToolName, action.toolInput)
++
++                                if (policy.decision === 'deny') {
++                                    observation = `Action blocked by policy: ${policy.reason}. Try a different approach.`
++                                    writeAuditLog({
++                                        timestamp: new Date().toISOString(),
++                                        toolName: cleanToolName,
++                                        toolInput: action.toolInput,
++                                        policyDecision: 'deny',
++                                        policyReason: policy.reason,
++                                        matchedRule: policy.matchedRule?.toolName ?? null,
++                                        observation: observation,
++                                        sessionId: this.sessionId,
++                                        chatId: this.chatId
++                                    })
++                                }
++
++                                if (policy.decision === 'escalate') {
++                                    const humanDecision = await waitForHumanApproval(action.tool, action.toolInput, policy.reason)
++                                    if (!humanDecision.approved) {
++                                        observation = `Human rejected action: ${action.tool}. Reason: ${policy.reason}. Try a different approach.`
++                                        writeAuditLog({
++                                            timestamp: new Date().toISOString(),
++                                            toolName: cleanToolName,
++                                            toolInput: action.toolInput,
++                                            policyDecision: 'escalate',
++                                            policyReason: policy.reason,
++                                            matchedRule: policy.matchedRule?.toolName ?? null,
++                                            humanDecision: 'rejected',
++                                            humanWho: humanDecision.who,
++                                            observation: observation,
++                                            sessionId: this.sessionId,
++                                            chatId: this.chatId
++                                        })
++                                    }
++                                    // Human approved — log and fall through to tool.call()
++                                    writeAuditLog({
++                                        timestamp: new Date().toISOString(),
++                                        toolName: cleanToolName,
++                                        toolInput: action.toolInput,
++                                        policyDecision: 'escalate',
++                                        policyReason: policy.reason,
++                                        matchedRule: policy.matchedRule?.toolName ?? null,
++                                        humanDecision: 'approved',
++                                        humanWho: humanDecision.who,
++                                        sessionId: this.sessionId,
++                                        chatId: this.chatId
++                                    })
++                                }
++
++                                if (policy.decision === 'allow') {
++                                    // Will log after tool.call() so we capture observation
++                                }
++                            }
++                            // ─── GOVERNANCE HOOK END ─────────────────────────────────
++
+                             observation = await (tool as any).call(
+                                 this.isXML && typeof action.toolInput === 'string' ? { input: action.toolInput } : action.toolInput,
+                                 runManager?.getChild(),
+@@ -448,30 +504,25 @@ export class AgentExecutor extends BaseChain<ChainValues, AgentExecutorOutput> {
+                                     state: inputs
+                                 }
+                             )
+-                            let toolOutput = observation
+-                            if (typeof toolOutput === 'string' && toolOutput.includes(SOURCE_DOCUMENTS_PREFIX)) {
+-                                toolOutput = toolOutput.split(SOURCE_DOCUMENTS_PREFIX)[0]
+-                            }
+-                            if (typeof toolOutput === 'string' && toolOutput.includes(ARTIFACTS_PREFIX)) {
+-                                toolOutput = toolOutput.split(ARTIFACTS_PREFIX)[0]
+-                            }
+-                            let toolInput
+-                            if (typeof toolOutput === 'string' && toolOutput.includes(TOOL_ARGS_PREFIX)) {
+-                                const splitArray = toolOutput.split(TOOL_ARGS_PREFIX)
+-                                toolOutput = splitArray[0]
+-                                try {
+-                                    toolInput = JSON.parse(splitArray[1])
+-                                } catch (e) {
+-                                    console.error('Error parsing tool input from tool')
++
++                            // Log allow case AFTER tool.call() so observation is captured
++                            if (action.tool !== '_Exception') {
++                                const cleanToolName = action.tool.split('{')[0].trim()
++                                const policy = checkPolicy(cleanToolName, action.toolInput)
++                                if (policy.decision === 'allow') {
++                                    writeAuditLog({
++                                        timestamp: new Date().toISOString(),
++                                        toolName: cleanToolName,
++                                        toolInput: action.toolInput,
++                                        policyDecision: 'allow',
++                                        policyReason: policy.reason,
++                                        matchedRule: policy.matchedRule?.toolName ?? null,
++                                        observation: typeof observation === 'string' ? observation : JSON.stringify(observation),
++                                        sessionId: this.sessionId,
++                                        chatId: this.chatId
++                                    })
+                                 }
+                             }
+-                            usedTools.push({
+-                                tool: tool.name,
+-                                toolInput: toolInput ?? (action.toolInput as any),
+-                                toolOutput
+-                            })
+-                        } else {
+-                            observation = `${action.tool} is not a valid tool, try another one.`
+                         }
+                     } catch (e) {
+                         if (e instanceof ToolInputParsingException) {
+@@ -767,7 +818,7 @@ const renderTextDescription = (tools: StructuredToolInterface[]): string => {
+     return tools.map((tool) => `${tool.name}: ${tool.description}`).join('\n')
+ }
+ 
+-export const createReactAgent = async ({ llm, tools, prompt }: CreateReactAgentParams) => {
++export const createReactAgent = async ({ llm, tools, prompt }: CreateReactAgentParams): Promise<Runnable> => {
+     const missingVariables = ['tools', 'tool_names', 'agent_scratchpad'].filter((v) => !prompt.inputVariables.includes(v))
+     if (missingVariables.length > 0) {
+         throw new Error(`Provided prompt is missing required input variables: ${JSON.stringify(missingVariables)}`)
+diff --git a/packages/components/src/governance/auditLogger.ts b/packages/components/src/governance/auditLogger.ts
+new file mode 100644
+index 00000000000..1e8cc94716d
+--- /dev/null
++++ b/packages/components/src/governance/auditLogger.ts
+@@ -0,0 +1,35 @@
++import * as fs from 'fs'
++import * as path from 'path'
++/* eslint-disable no-console */
++
++// Shape of one audit log entry
++export interface AuditEntry {
++    timestamp: string
++    toolName: string
++    toolInput: any
++    policyDecision: 'allow' | 'deny' | 'escalate'
++    policyReason: string
++    matchedRule: string | null
++    humanDecision?: 'approved' | 'rejected'
++    humanWho?: string
++    observation?: string
++    sessionId?: string
++    chatId?: string
++}
++
++// Audit log file sits at project root for easy access during demo
++const AUDIT_LOG_PATH = path.resolve(__dirname, '../../../../../audit.log')
++
++export const writeAuditLog = (entry: AuditEntry): void => {
++    try {
++        const entryWithTimestamp: AuditEntry = {
++            ...entry,
++            timestamp: new Date().toISOString()
++        }
++        const line = JSON.stringify(entryWithTimestamp) + '\n'
++        fs.appendFileSync(AUDIT_LOG_PATH, line, 'utf8')
++        console.log(`[Audit] Written: ${entry.toolName} → ${entry.policyDecision}`)
++    } catch (e) {
++        console.error('[Audit] Failed to write audit log entry:', e)
++    }
++}
+diff --git a/packages/components/src/governance/hitl.ts b/packages/components/src/governance/hitl.ts
+new file mode 100644
+index 00000000000..8744b958c59
+--- /dev/null
++++ b/packages/components/src/governance/hitl.ts
+@@ -0,0 +1,35 @@
++import * as readline from 'readline'
++
++export interface HumanDecision {
++    approved: boolean
++    who: string
++}
++
++export const waitForHumanApproval = async (toolName: string, toolInput: any, reason: string): Promise<HumanDecision> => {
++    return new Promise((resolve) => {
++        // Print approval request clearly to terminal
++        process.stdout.write('\n' + '='.repeat(60) + '\n')
++        process.stdout.write('⚠️  HUMAN APPROVAL REQUIRED\n')
++        process.stdout.write('='.repeat(60) + '\n')
++        process.stdout.write(`Tool     : ${toolName}\n`)
++        process.stdout.write(`Args     : ${JSON.stringify(toolInput, null, 2)}\n`)
++        process.stdout.write(`Reason   : ${reason}\n`)
++        process.stdout.write('='.repeat(60) + '\n')
++
++        const rl = readline.createInterface({
++            input: process.stdin,
++            output: process.stdout
++        })
++
++        rl.question('Approve? (yes/no): ', (answer) => {
++            rl.close()
++            const approved = answer.trim().toLowerCase() === 'yes'
++            process.stdout.write(`[Governance] Human decision: ${approved ? 'APPROVED ✅' : 'REJECTED ❌'}\n`)
++            process.stdout.write('='.repeat(60) + '\n\n')
++            resolve({
++                approved,
++                who: 'human-via-cli'
++            })
++        })
++    })
++}
+diff --git a/packages/components/src/governance/policyChecker.ts b/packages/components/src/governance/policyChecker.ts
+new file mode 100644
+index 00000000000..58ead38a171
+--- /dev/null
++++ b/packages/components/src/governance/policyChecker.ts
+@@ -0,0 +1,32 @@
++import { policies, PolicyRule } from './policyLoader'
++/* eslint-disable no-console */
++
++export interface PolicyDecision {
++    decision: 'allow' | 'deny' | 'escalate'
++    reason: string
++    matchedRule: PolicyRule | null
++}
++
++export const checkPolicy = (toolName: string, _toolInput: any): PolicyDecision => {
++    const normalizedToolName = toolName.toLowerCase().trim()
++
++    // Loop through rules looking for a match
++    for (const rule of policies.rules) {
++        if (rule.toolName.toLowerCase() === normalizedToolName) {
++            console.log(`[Governance] Policy matched: ${rule.toolName} → ${rule.decision}`)
++            return {
++                decision: rule.decision,
++                reason: rule.reason,
++                matchedRule: rule
++            }
++        }
++    }
++
++    // No rule matched — use default decision from policy file
++    console.log(`[Governance] No policy found for tool: ${toolName} → ${policies.defaultDecision}`)
++    return {
++        decision: policies.defaultDecision,
++        reason: `No policy rule found for tool: ${toolName}`,
++        matchedRule: null
++    }
++}
+diff --git a/packages/components/src/governance/policyLoader.ts b/packages/components/src/governance/policyLoader.ts
+new file mode 100644
+index 00000000000..7575f47acf4
+--- /dev/null
++++ b/packages/components/src/governance/policyLoader.ts
+@@ -0,0 +1,39 @@
++import * as fs from 'fs'
++import * as path from 'path'
++import * as yaml from 'js-yaml'
++/* eslint-disable no-console */
++
++// Shape of a single policy rule
++export interface PolicyRule {
++    toolName: string
++    decision: 'allow' | 'deny' | 'escalate'
++    reason: string
++    matchArgs: Record<string, any>
++}
++
++// Shape of the entire policy file
++export interface PolicyConfig {
++    defaultDecision: 'allow' | 'deny'
++    rules: PolicyRule[]
++}
++
++// Load once at module level — cached for the entire session
++const POLICY_PATH = path.resolve(__dirname, '../policies.yaml')
++
++export const loadPolicies = (): PolicyConfig => {
++    try {
++        const fileContents = fs.readFileSync(POLICY_PATH, 'utf8')
++        const parsed = yaml.load(fileContents) as PolicyConfig
++        console.log(`[Governance] Loaded ${parsed.rules.length} policy rules`)
++        return parsed
++    } catch (e) {
++        console.error('[Governance] Failed to load policies.yaml — defaulting to deny-all')
++        return {
++            defaultDecision: 'deny',
++            rules: []
++        }
++    }
++}
++
++// Cached instance — loaded once, reused every tool call
++export const policies: PolicyConfig = loadPolicies()
+diff --git a/packages/components/src/policies.yaml b/packages/components/src/policies.yaml
+new file mode 100644
+index 00000000000..605641ed19c
+--- /dev/null
++++ b/packages/components/src/policies.yaml
+@@ -0,0 +1,17 @@
++defaultDecision: deny
++
++rules:
++    - toolName: 'search_web'
++      decision: 'allow'
++      reason: 'Read-only search tool, safe to execute without approval'
++      matchArgs: {}
++
++    - toolName: 'send_email'
++      decision: 'escalate'
++      reason: 'Email tool has real-world consequences, requires human approval'
++      matchArgs: {}
++
++    - toolName: 'delete_record'
++      decision: 'deny'
++      reason: 'Destructive operations are permanently blocked by policy'
++      matchArgs: {}

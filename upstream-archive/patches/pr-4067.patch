@@ -1,0 +1,22 @@
+From 31d1a73757a9ebb81c7766e1bee1c4c0aa1e371e Mon Sep 17 00:00:00 2001
+From: Alfred Nutile <365385+alnutile@users.noreply.github.com>
+Date: Sun, 23 Feb 2025 13:26:15 -0500
+Subject: [PATCH] was missing langchainhub
+
+---
+ README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 543054da209..887d045f452 100644
+--- a/README.md
++++ b/README.md
+@@ -22,7 +22,7 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+ 
+ 1. Install Flowise
+     ```bash
+-    npm install -g flowise
++    npm install -g flowise langchainhub
+     ```
+ 2. Start Flowise
+ 

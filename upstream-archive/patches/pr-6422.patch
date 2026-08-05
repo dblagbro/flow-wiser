@@ -1,0 +1,1800 @@
+From 7a34c70c59751bab43495bd62b21428fa3b59a98 Mon Sep 17 00:00:00 2001
+From: Udaykumar Dhokia <udaykumardhokia@gmail.com>
+Date: Fri, 22 May 2026 15:50:21 +0530
+Subject: [PATCH 1/3] feat: ability to disable nodes
+
+---
+ packages/agentflow/src/core/types/node.ts     |  2 +
+ .../components/NodeToolbarActions.test.tsx    | 24 +++++-
+ .../canvas/components/NodeToolbarActions.tsx  | 20 ++++-
+ .../canvas/containers/AgentFlowNode.tsx       | 11 ++-
+ .../canvas/containers/IterationNode.tsx       |  7 +-
+ .../infrastructure/store/AgentflowContext.tsx | 59 +++++++++++++
+ packages/components/src/Interface.ts          |  2 +
+ packages/server/src/Interface.ts              |  2 +
+ .../server/src/services/chatflows/index.ts    |  8 +-
+ .../server/src/services/validation/index.ts   | 19 ++--
+ .../validation/validateFlowData.test.ts       |  7 ++
+ packages/server/src/utils/buildAgentflow.ts   | 47 +++++++++-
+ packages/server/src/utils/buildChatflow.ts    | 11 ++-
+ .../server/src/utils/disabledNodes.test.ts    | 72 ++++++++++++++++
+ packages/server/src/utils/index.ts            | 86 +++++++++++++++++++
+ packages/server/src/utils/upsertVector.ts     | 13 ++-
+ .../ui/src/store/context/ReactFlowContext.jsx | 57 ++++++++++++
+ packages/ui/src/utils/disabledNodes.js        |  4 +
+ .../src/views/agentflowsv2/AgentFlowEdge.jsx  | 25 +++++-
+ .../src/views/agentflowsv2/AgentFlowNode.jsx  | 27 +++++-
+ packages/ui/src/views/canvas/ButtonEdge.jsx   | 34 +++++++-
+ packages/ui/src/views/canvas/CanvasNode.jsx   | 29 ++++++-
+ 22 files changed, 525 insertions(+), 41 deletions(-)
+ create mode 100644 packages/server/src/utils/disabledNodes.test.ts
+ create mode 100644 packages/ui/src/utils/disabledNodes.js
+
+diff --git a/packages/agentflow/src/core/types/node.ts b/packages/agentflow/src/core/types/node.ts
+index e937bce1045..f5e2fc0afdf 100644
+--- a/packages/agentflow/src/core/types/node.ts
++++ b/packages/agentflow/src/core/types/node.ts
+@@ -44,6 +44,8 @@ export interface NodeData extends NodeDefinitionBase {
+     id: string
+     inputParams?: InputParam[] // Parameter definitions
+     inputs?: Record<string, unknown> // Actual values entered by users
++    disabled?: boolean
++    disabledBy?: string
+     // Status properties
+     status?: ExecutionStatus
+     error?: string
+diff --git a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.test.tsx b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.test.tsx
+index 904e45af479..e6422eb88bc 100644
+--- a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.test.tsx
++++ b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.test.tsx
+@@ -20,12 +20,14 @@ jest.mock('../styled', () => ({
+ 
+ const mockDeleteNode = jest.fn()
+ const mockDuplicateNode = jest.fn()
++const mockToggleNodeDisabled = jest.fn()
+ const mockOpenNodeEditor = jest.fn()
+ 
+ jest.mock('@/infrastructure/store', () => ({
+     useAgentflowContext: () => ({
+         deleteNode: mockDeleteNode,
+-        duplicateNode: mockDuplicateNode
++        duplicateNode: mockDuplicateNode,
++        toggleNodeDisabled: mockToggleNodeDisabled
+     }),
+     useConfigContext: () => ({ isDarkMode: false })
+ }))
+@@ -39,7 +41,8 @@ jest.mock('@mui/material/styles', () => ({
+         palette: {
+             primary: { main: '#1976d2' },
+             error: { main: '#d32f2f' },
+-            info: { main: '#0288d1' }
++            info: { main: '#0288d1' },
++            warning: { main: '#ed6c02' }
+         }
+     })
+ }))
+@@ -57,6 +60,8 @@ jest.mock('@tabler/icons-react', () => ({
+     IconCopy: () => <svg />,
+     IconEdit: () => <svg />,
+     IconInfoCircle: () => <svg />,
++    IconPlayerPause: () => <svg />,
++    IconPlayerPlay: () => <svg />,
+     IconTrash: () => <svg />
+ }))
+ 
+@@ -97,6 +102,7 @@ describe('NodeToolbarActions', () => {
+             renderToolbar({ nodeName: 'llmAgentflow' })
+             expect(screen.getByTitle('Duplicate')).toBeInTheDocument()
+             expect(screen.getByTitle('Edit')).toBeInTheDocument()
++            expect(screen.getByTitle('Disable')).toBeInTheDocument()
+             expect(screen.getByTitle('Delete')).toBeInTheDocument()
+         })
+ 
+@@ -104,16 +110,23 @@ describe('NodeToolbarActions', () => {
+             renderToolbar({ nodeName: 'startAgentflow' })
+             expect(screen.queryByTitle('Duplicate')).not.toBeInTheDocument()
+             expect(screen.getByTitle('Edit')).toBeInTheDocument()
++            expect(screen.getByTitle('Disable')).toBeInTheDocument()
+             expect(screen.getByTitle('Delete')).toBeInTheDocument()
+         })
+ 
+         it('hides Edit for stickyNoteAgentflow', () => {
+             renderToolbar({ nodeName: 'stickyNoteAgentflow' })
+             expect(screen.queryByTitle('Edit')).not.toBeInTheDocument()
++            expect(screen.queryByTitle('Disable')).not.toBeInTheDocument()
+             expect(screen.getByTitle('Duplicate')).toBeInTheDocument()
+             expect(screen.getByTitle('Delete')).toBeInTheDocument()
+         })
+ 
++        it('renders Enable when node is disabled', () => {
++            renderToolbar({ disabled: true })
++            expect(screen.getByTitle('Enable')).toBeInTheDocument()
++        })
++
+         it('renders Info button when onInfoClick is provided', () => {
+             renderToolbar({ onInfoClick: jest.fn() })
+             expect(screen.getByTitle('Info')).toBeInTheDocument()
+@@ -140,6 +153,13 @@ describe('NodeToolbarActions', () => {
+             expect(mockDeleteNode).toHaveBeenCalledWith('node-1')
+         })
+ 
++        it('calls toggleNodeDisabled when Disable is clicked', async () => {
++            const user = userEvent.setup()
++            renderToolbar()
++            await user.click(screen.getByTitle('Disable'))
++            expect(mockToggleNodeDisabled).toHaveBeenCalledWith('node-1')
++        })
++
+         it('calls openNodeEditor when Edit is clicked', async () => {
+             const user = userEvent.setup()
+             renderToolbar()
+diff --git a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
+index a0194971108..e1486aea73d 100644
+--- a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
++++ b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
+@@ -3,7 +3,7 @@ import { Position } from 'reactflow'
+ 
+ import { ButtonGroup, IconButton } from '@mui/material'
+ import { useTheme } from '@mui/material/styles'
+-import { IconCopy, IconEdit, IconInfoCircle, IconTrash } from '@tabler/icons-react'
++import { IconCopy, IconEdit, IconInfoCircle, IconPlayerPause, IconPlayerPlay, IconTrash } from '@tabler/icons-react'
+ 
+ import { useAgentflowContext, useConfigContext } from '@/infrastructure/store'
+ 
+@@ -14,16 +14,17 @@ export interface NodeToolbarActionsProps {
+     nodeId: string
+     nodeName: string
+     isVisible: boolean
++    disabled?: boolean
+     onInfoClick?: () => void
+ }
+ 
+ /**
+  * Toolbar with action buttons for a node (duplicate, delete, info)
+  */
+-function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, onInfoClick }: NodeToolbarActionsProps) {
++function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, disabled, onInfoClick }: NodeToolbarActionsProps) {
+     const theme = useTheme()
+     const { isDarkMode } = useConfigContext()
+-    const { deleteNode, duplicateNode } = useAgentflowContext()
++    const { deleteNode, duplicateNode, toggleNodeDisabled } = useAgentflowContext()
+     const { openNodeEditor } = useOpenNodeEditor()
+ 
+     const handleEditClick = () => {
+@@ -62,6 +63,19 @@ function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, onInfoClick
+                         <IconEdit size={20} />
+                     </IconButton>
+                 )}
++                {nodeName !== 'stickyNoteAgentflow' && (
++                    <IconButton
++                        size='small'
++                        title={disabled ? 'Enable' : 'Disable'}
++                        onClick={() => toggleNodeDisabled(nodeId)}
++                        sx={{
++                            color: isDarkMode ? 'white' : 'inherit',
++                            '&:hover': { color: theme.palette.warning.main }
++                        }}
++                    >
++                        {disabled ? <IconPlayerPlay size={20} /> : <IconPlayerPause size={20} />}
++                    </IconButton>
++                )}
+                 <IconButton
+                     size='small'
+                     title='Delete'
+diff --git a/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx b/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
+index 9d6ae1360a6..dadccfdfc91 100644
+--- a/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
++++ b/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
+@@ -80,14 +80,21 @@ function AgentFlowNodeComponent({ data }: AgentFlowNodeProps) {
+                 nodeId={data.id}
+                 nodeName={data.name}
+                 isVisible={data.selected || isHovered}
++                disabled={data.disabled}
+                 onInfoClick={() => setShowInfoDialog(true)}
+             />
+ 
+             <CardWrapper
+                 content={false}
+                 sx={{
+-                    borderColor: hasValidationErrors ? tokens.colors.border.validation : stateColor,
+-                    borderWidth: hasValidationErrors ? '2px' : '1px',
++                    borderColor: data.disabled
++                        ? tokens.colors.semantic.warning
++                        : hasValidationErrors
++                        ? tokens.colors.border.validation
++                        : stateColor,
++                    borderWidth: data.disabled || hasValidationErrors ? '2px' : '1px',
++                    borderStyle: data.disabled ? 'dashed' : 'solid',
++                    opacity: data.disabled ? 0.48 : 1,
+                     boxShadow: data.selected ? `0 0 0 1px ${stateColor} !important` : 'none',
+                     minHeight,
+                     height: 'auto',
+diff --git a/packages/agentflow/src/features/canvas/containers/IterationNode.tsx b/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
+index 5706f8b36b8..c0a656482c8 100644
+--- a/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
++++ b/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
+@@ -111,14 +111,17 @@ function IterationNodeComponent({ data }: IterationNodeProps) {
+                 nodeId={data.id}
+                 nodeName={data.name}
+                 isVisible={data.selected || isHovered}
++                disabled={data.disabled}
+                 onInfoClick={() => setShowInfoDialog(true)}
+             />
+             <NodeResizer minWidth={300} minHeight={minHeight} onResizeEnd={onResizeEnd} />
+             <CardWrapper
+                 content={false}
+                 sx={{
+-                    borderColor: stateColor,
+-                    borderWidth: '1px',
++                    borderColor: data.disabled ? theme.palette.warning.main : stateColor,
++                    borderWidth: data.disabled ? '2px' : '1px',
++                    borderStyle: data.disabled ? 'dashed' : 'solid',
++                    opacity: data.disabled ? 0.48 : 1,
+                     boxShadow: data.selected ? `0 0 0 1px ${stateColor} !important` : 'none',
+                     minHeight,
+                     minWidth: 300,
+diff --git a/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx b/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
+index 3836873d2fd..290134a4dd3 100644
+--- a/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
++++ b/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
+@@ -70,6 +70,7 @@ export interface AgentflowContextValue {
+     // Node operations
+     deleteNode: (nodeId: string) => void
+     duplicateNode: (nodeId: string, distance?: number) => void
++    toggleNodeDisabled: (nodeId: string) => void
+     updateNodeData: (nodeId: string, data: Partial<FlowNode['data']>, edges?: FlowEdge[]) => void
+ 
+     // Edge operations
+@@ -294,6 +295,63 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
+     )
+ 
++    const toggleNodeDisabled = useCallback(
++        (nodeId: string) => {
++            const targetNode = state.nodes.find((node) => node.id === nodeId)
++            const shouldDisable = !(targetNode?.data?.disabled === true || String(targetNode?.data?.disabled) === 'true')
++            const downstreamNodeIds = new Set<string>()
++
++            if (shouldDisable) {
++                const queue = [nodeId]
++                for (let index = 0; index < queue.length; index += 1) {
++                    const sourceNodeId = queue[index]
++                    const outgoingEdges = state.edges.filter((edge) => edge.source === sourceNodeId)
++
++                    for (const edge of outgoingEdges) {
++                        if (downstreamNodeIds.has(edge.target)) continue
++                        downstreamNodeIds.add(edge.target)
++                        queue.push(edge.target)
++                    }
++                }
++                downstreamNodeIds.delete(nodeId)
++            }
++
++            const newNodes = state.nodes.map((node) => {
++                if (node.id === nodeId) {
++                    const { disabledBy, ...nextData } = node.data
++                    return {
++                        ...node,
++                        data: {
++                            ...nextData,
++                            disabled: shouldDisable
++                        }
++                    }
++                }
++
++                if (shouldDisable && downstreamNodeIds.has(node.id)) {
++                    return {
++                        ...node,
++                        data: {
++                            ...node.data,
++                            disabled: true,
++                            disabledBy: node.data.disabledBy || nodeId
++                        }
++                    }
++                }
++
++                return node
++            })
++
++            syncStateUpdate({ nodes: newNodes })
++
++            if (onFlowChangeRef.current) {
++                const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
++                onFlowChangeRef.current({ nodes: newNodes, edges: state.edges, viewport })
++            }
++        },
++        [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
++    )
++
+     // Edge operations
+     const deleteEdge = useCallback(
+         (edgeId: string) => {
+@@ -415,6 +473,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+         setReactFlowInstance,
+         deleteNode,
+         duplicateNode,
++        toggleNodeDisabled,
+         updateNodeData,
+         deleteEdge,
+         openEditDialog,
+diff --git a/packages/components/src/Interface.ts b/packages/components/src/Interface.ts
+index a7442318b1a..e09efa522a8 100644
+--- a/packages/components/src/Interface.ts
++++ b/packages/components/src/Interface.ts
+@@ -170,6 +170,8 @@ export interface INodeData extends INodeProperties {
+     credential?: string
+     instance?: any
+     loadMethod?: string // method to load async options
++    disabled?: boolean
++    disabledBy?: string
+ }
+ 
+ export interface INodeCredential {
+diff --git a/packages/server/src/Interface.ts b/packages/server/src/Interface.ts
+index 1a59cd88612..bf8d2aa1acc 100644
+--- a/packages/server/src/Interface.ts
++++ b/packages/server/src/Interface.ts
+@@ -279,6 +279,8 @@ export interface INodeData extends INodeDataFromComponent {
+     inputAnchors: INodeParams[]
+     inputParams: INodeParams[]
+     outputAnchors: INodeParams[]
++    disabled?: boolean
++    disabledBy?: string
+ }
+ 
+ export interface IReactFlowNode {
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index e301ac4ec7b..da3f7e0c304 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -22,7 +22,8 @@ import {
+     getAppVersion,
+     getEndingNodes,
+     getTelemetryFlowObj,
+-    isFlowValidForStream
++    isFlowValidForStream,
++    getExecutableFlowData
+ } from '../../utils'
+ import { sanitizeAllowedUploadMimeTypesFromConfig } from '../../utils/fileValidation'
+ import { containsBase64File, updateFlowDataWithFilePaths } from '../../utils/fileRepository'
+@@ -74,8 +75,9 @@ const checkIfChatflowIsValidForStreaming = async (chatflowId: string): Promise<a
+         /*** Get Ending Node with Directed Graph  ***/
+         const flowData = chatflow.flowData
+         const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
+-        const nodes = parsedFlowData.nodes
+-        const edges = parsedFlowData.edges
++        const executableFlowData = getExecutableFlowData(parsedFlowData.nodes, parsedFlowData.edges)
++        const nodes = executableFlowData.nodes
++        const edges = executableFlowData.edges
+         const { graph, nodeDependencies } = constructGraphs(nodes, edges)
+ 
+         const endingNodes = getEndingNodes(nodeDependencies, graph, nodes)
+diff --git a/packages/server/src/services/validation/index.ts b/packages/server/src/services/validation/index.ts
+index 17e76b6351f..cd458901588 100644
+--- a/packages/server/src/services/validation/index.ts
++++ b/packages/server/src/services/validation/index.ts
+@@ -6,6 +6,7 @@ import { ChatFlow } from '../../database/entities/ChatFlow'
+ import { INodeParams } from 'flowise-components'
+ import { resolveScheduleCron } from '../schedule'
+ import { IComponentNodes, IReactFlowEdge, IReactFlowNode, IReactFlowObject } from '../../Interface'
++import { getExecutableFlowData, isNodeDisabled } from '../../utils'
+ 
+ export interface IValidationResult {
+     id: string
+@@ -24,17 +25,21 @@ export const validateFlowData = (
+     componentNodes: IComponentNodes
+ ): IValidationResult[] => {
+     const validationResults: IValidationResult[] = []
++    const executableFlowData = getExecutableFlowData(nodes, edges)
++    const activeNodes = executableFlowData.nodes
++    const activeEdges = executableFlowData.edges
+ 
+     // Create a map of connected nodes
+     const connectedNodes = new Set<string>()
+-    edges.forEach((edge: IReactFlowEdge) => {
++    activeEdges.forEach((edge: IReactFlowEdge) => {
+         connectedNodes.add(edge.source)
+         connectedNodes.add(edge.target)
+     })
+ 
+     // Validate each node
+-    for (const node of nodes) {
++    for (const node of activeNodes) {
+         if (node.data.name === 'stickyNoteAgentflow') continue
++        if (isNodeDisabled(node)) continue
+ 
+         const nodeIssues: string[] = []
+ 
+@@ -257,15 +262,15 @@ export const validateFlowData = (
+     }
+ 
+     // Check for hanging edges
+-    for (const edge of edges) {
+-        const sourceExists = nodes.some((node: IReactFlowNode) => node.id === edge.source)
+-        const targetExists = nodes.some((node: IReactFlowNode) => node.id === edge.target)
++    for (const edge of activeEdges) {
++        const sourceExists = activeNodes.some((node: IReactFlowNode) => node.id === edge.source)
++        const targetExists = activeNodes.some((node: IReactFlowNode) => node.id === edge.target)
+ 
+         if (!sourceExists || !targetExists) {
+             // Find the existing node that is connected to this hanging edge
+             if (!sourceExists && targetExists) {
+                 // Target exists but source doesn't - add issue to target node
+-                const targetNode = nodes.find((node: IReactFlowNode) => node.id === edge.target)!
++                const targetNode = activeNodes.find((node: IReactFlowNode) => node.id === edge.target)!
+                 const targetNodeResult = validationResults.find((result) => result.id === edge.target)
+ 
+                 if (targetNodeResult) {
+@@ -282,7 +287,7 @@ export const validateFlowData = (
+                 }
+             } else if (sourceExists && !targetExists) {
+                 // Source exists but target doesn't - add issue to source node
+-                const sourceNode = nodes.find((node: IReactFlowNode) => node.id === edge.source)!
++                const sourceNode = activeNodes.find((node: IReactFlowNode) => node.id === edge.source)!
+                 const sourceNodeResult = validationResults.find((result) => result.id === edge.source)
+ 
+                 if (sourceNodeResult) {
+diff --git a/packages/server/src/services/validation/validateFlowData.test.ts b/packages/server/src/services/validation/validateFlowData.test.ts
+index 7bf792377cb..322c8167de8 100644
+--- a/packages/server/src/services/validation/validateFlowData.test.ts
++++ b/packages/server/src/services/validation/validateFlowData.test.ts
+@@ -61,6 +61,13 @@ describe('validateFlowData', () => {
+         expect(results).toEqual([])
+     })
+ 
++    it('skips disabled nodes', () => {
++        const nodes = [makeNode('n1', 'chatAgent', [{ name: 'model', label: 'Model' }], {})]
++        nodes[0].data.disabled = true
++        const results = validateFlowData(nodes, [], emptyComponentNodes)
++        expect(results).toEqual([])
++    })
++
+     // --- Required parameters ---
+ 
+     it('flags missing required parameter', () => {
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..1bffe7dd3a3 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -46,7 +46,8 @@ import {
+     CURRENT_DATE_TIME_VAR_PREFIX,
+     _removeCredentialId,
+     validateHistorySchema,
+-    LOOP_COUNT_VAR_PREFIX
++    LOOP_COUNT_VAR_PREFIX,
++    getExecutableFlowData
+ } from '.'
+ import { ChatFlow } from '../database/entities/ChatFlow'
+ import { Variable } from '../database/entities/Variable'
+@@ -1521,6 +1522,35 @@ const checkForMultipleStartNodes = (startingNodeIds: string[], isRecursive: bool
+     }
+ }
+ 
++const getDisabledNodeLabel = (node?: IReactFlowNode) => {
++    if (!node) return ''
++    return node.data?.label || node.data?.name || node.id
++}
++
++const logDisabledFlowHalt = (orgId: string, allNodes: IReactFlowNode[], disabledNodeIds: Set<string>) => {
++    if (!disabledNodeIds.size) return
++
++    const nodeById = new Map(allNodes.map((node) => [node.id, node]))
++    const haltedNodes: string[] = []
++    const downstreamNodes: string[] = []
++
++    for (const nodeId of disabledNodeIds) {
++        const node = nodeById.get(nodeId)
++        const disabledBy = node?.data?.disabledBy as string | undefined
++        const formattedNode = `${getDisabledNodeLabel(node)} (${nodeId})`
++        const nodeIsPersistedDisabled = node?.data?.disabled === true || String(node?.data?.disabled) === 'true'
++
++        if (!nodeIsPersistedDisabled || (disabledBy && disabledNodeIds.has(disabledBy))) downstreamNodes.push(formattedNode)
++        else haltedNodes.push(formattedNode)
++    }
++
++    logger.info(
++        `[server]: [${orgId}]: Flow execution halted at disabled node(s): ${haltedNodes.join(', ') || 'unknown'}${
++            downstreamNodes.length ? `. Downstream skipped: ${downstreamNodes.join(', ')}` : ''
++        }`
++    )
++}
++
+ const parseFormStringToJson = (formString: string): Record<string, string> => {
+     const result: Record<string, string> = {}
+     const lines = formString.split('\n')
+@@ -1590,8 +1620,19 @@ export const executeAgentFlow = async ({
+     /*** Get chatflows and prepare data  ***/
+     const flowData = chatflow.flowData
+     const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
+-    const nodes = (parsedFlowData.nodes || []).filter((node) => node.data.name !== 'stickyNoteAgentflow')
+-    const edges = parsedFlowData.edges
++    const executableFlowData = getExecutableFlowData(
++        (parsedFlowData.nodes || []).filter((node) => node.data.name !== 'stickyNoteAgentflow'),
++        parsedFlowData.edges || []
++    )
++    const nodes = executableFlowData.nodes
++    const edges = executableFlowData.edges
++    if (executableFlowData.disabledNodeIds.size) {
++        logDisabledFlowHalt(
++            orgId,
++            (parsedFlowData.nodes || []).filter((node) => node.data.name !== 'stickyNoteAgentflow'),
++            executableFlowData.disabledNodeIds
++        )
++    }
+     const { graph, nodeDependencies } = constructGraphs(nodes, edges)
+     const { graph: reversedGraph } = constructGraphs(nodes, edges, { isReversed: true })
+     const startNode = nodes.find((node) => node.data.name === 'startAgentflow')
+diff --git a/packages/server/src/utils/buildChatflow.ts b/packages/server/src/utils/buildChatflow.ts
+index 7ab1a74c0ba..fe0c03d967c 100644
+--- a/packages/server/src/utils/buildChatflow.ts
++++ b/packages/server/src/utils/buildChatflow.ts
+@@ -57,7 +57,8 @@ import {
+     getMemorySessionId,
+     getEndingNodes,
+     constructGraphs,
+-    getAPIOverrideConfig
++    getAPIOverrideConfig,
++    getExecutableFlowData
+ } from '../utils'
+ import { validateFileMimeTypeAndExtensionMatch } from './fileValidation'
+ import { validateFlowAPIKey } from './validateKey'
+@@ -508,8 +509,12 @@ export const executeFlow = async ({
+     /*** Get chatflows and prepare data  ***/
+     const flowData = chatflow.flowData
+     const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
+-    const nodes = parsedFlowData.nodes
+-    const edges = parsedFlowData.edges
++    const executableFlowData = getExecutableFlowData(parsedFlowData.nodes, parsedFlowData.edges)
++    const nodes = executableFlowData.nodes
++    const edges = executableFlowData.edges
++    if (executableFlowData.disabledNodeIds.size) {
++        logger.debug(`[server]: [${orgId}]: Disabled nodes skipped: ${Array.from(executableFlowData.disabledNodeIds).join(', ')}`)
++    }
+ 
+     const apiMessageId = uuidv4()
+ 
+diff --git a/packages/server/src/utils/disabledNodes.test.ts b/packages/server/src/utils/disabledNodes.test.ts
+new file mode 100644
+index 00000000000..ab2e51320e2
+--- /dev/null
++++ b/packages/server/src/utils/disabledNodes.test.ts
+@@ -0,0 +1,72 @@
++import { getExecutableFlowData, isNodeDisabled } from './index'
++import type { IReactFlowEdge, IReactFlowNode } from '../Interface'
++
++const makeNode = (id: string, disabled?: boolean): IReactFlowNode =>
++    ({
++        id,
++        type: 'customNode',
++        position: { x: 0, y: 0 },
++        data: {
++            id,
++            name: id,
++            label: id,
++            disabled,
++            inputs: {},
++            inputParams: [],
++            inputAnchors: [],
++            outputAnchors: []
++        }
++    } as unknown as IReactFlowNode)
++
++const makeEdge = (source: string, target: string): IReactFlowEdge =>
++    ({
++        id: `${source}-${target}`,
++        source,
++        target,
++        sourceHandle: source,
++        targetHandle: target,
++        type: 'buttonedge',
++        data: { label: '' }
++    } as IReactFlowEdge)
++
++describe('disabled node runtime filtering', () => {
++    it('detects disabled nodes', () => {
++        expect(isNodeDisabled(makeNode('a', true))).toBe(true)
++        expect(isNodeDisabled(makeNode('a', false))).toBe(false)
++    })
++
++    it('removes disabled nodes, their downstream nodes, and connected edges from executable flow data', () => {
++        const nodes = [makeNode('start'), makeNode('expensive', true), makeNode('condition'), makeNode('http0'), makeNode('http1')]
++        const edges = [
++            makeEdge('start', 'expensive'),
++            makeEdge('expensive', 'condition'),
++            makeEdge('condition', 'http0'),
++            makeEdge('condition', 'http1')
++        ]
++
++        const result = getExecutableFlowData(nodes, edges)
++
++        expect(result.nodes.map((node) => node.id)).toEqual(['start'])
++        expect(result.edges).toEqual([])
++        expect(Array.from(result.disabledNodeIds)).toEqual(['expensive', 'condition', 'http0', 'http1'])
++    })
++
++    it('removes input references to disabled nodes from remaining executable nodes', () => {
++        const disabled = makeNode('disabled', true)
++        const target = makeNode('target')
++        target.data.inputs = {
++            model: '{{disabled.data.instance}}',
++            tools: ['{{disabled.data.instance}}', '{{active.data.instance}}'],
++            prompt: 'before {{disabled.data.instance.value}} after'
++        }
++
++        const result = getExecutableFlowData([makeNode('active'), disabled, target], [makeEdge('active', 'target')])
++        const targetNode = result.nodes.find((node) => node.id === 'target')
++
++        expect(targetNode?.data.inputs).toEqual({
++            model: '',
++            tools: ['{{active.data.instance}}'],
++            prompt: 'before  after'
++        })
++    })
++})
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 2eeeb5b0eb6..a7f0ad2dca4 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -206,6 +206,92 @@ export const constructGraphs = (
+     return { graph, nodeDependencies }
+ }
+ 
++export const isNodeDisabled = (node?: IReactFlowNode): boolean => {
++    const disabled = (node?.data as ICommonObject | undefined)?.disabled
++    return disabled === true || disabled === 'true'
++}
++
++const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
++
++const getDisabledNodeReferencePattern = (nodeId: string) => new RegExp(`{{${escapeRegExp(nodeId)}\\.data\\.instance[^}]*}}`, 'g')
++
++const removeDisabledNodeReferences = (value: unknown, disabledNodeIds: Set<string>): unknown => {
++    if (Array.isArray(value)) {
++        return value
++            .map((item) => removeDisabledNodeReferences(item, disabledNodeIds))
++            .filter((item) => item !== '' && item !== undefined && item !== null)
++    }
++
++    if (value && typeof value === 'object') {
++        const nextValue: ICommonObject = {}
++        for (const [key, nestedValue] of Object.entries(value)) {
++            nextValue[key] = removeDisabledNodeReferences(nestedValue, disabledNodeIds)
++        }
++        return nextValue
++    }
++
++    if (typeof value !== 'string') return value
++
++    let nextValue = value
++    for (const disabledNodeId of disabledNodeIds) {
++        nextValue = nextValue.replace(getDisabledNodeReferencePattern(disabledNodeId), '')
++    }
++    return nextValue.trim()
++}
++
++const getTransitiveDisabledNodeIds = (reactFlowNodes: IReactFlowNode[], reactFlowEdges: IReactFlowEdge[]): Set<string> => {
++    const disabledNodeIds = new Set(reactFlowNodes.filter(isNodeDisabled).map((node) => node.id))
++
++    if (!disabledNodeIds.size) return disabledNodeIds
++
++    const outgoingEdgesBySource = new Map<string, string[]>()
++    for (const edge of reactFlowEdges) {
++        const targets = outgoingEdgesBySource.get(edge.source) ?? []
++        targets.push(edge.target)
++        outgoingEdgesBySource.set(edge.source, targets)
++    }
++
++    const queue = Array.from(disabledNodeIds)
++    for (let index = 0; index < queue.length; index += 1) {
++        const nodeId = queue[index]
++        const downstreamNodeIds = outgoingEdgesBySource.get(nodeId) ?? []
++
++        for (const downstreamNodeId of downstreamNodeIds) {
++            if (disabledNodeIds.has(downstreamNodeId)) continue
++            disabledNodeIds.add(downstreamNodeId)
++            queue.push(downstreamNodeId)
++        }
++    }
++
++    return disabledNodeIds
++}
++
++export const getExecutableFlowData = (reactFlowNodes: IReactFlowNode[] = [], reactFlowEdges: IReactFlowEdge[] = []) => {
++    const disabledNodeIds = getTransitiveDisabledNodeIds(reactFlowNodes, reactFlowEdges)
++
++    if (!disabledNodeIds.size) {
++        return {
++            nodes: reactFlowNodes,
++            edges: reactFlowEdges,
++            disabledNodeIds
++        }
++    }
++
++    const nodes = cloneDeep(reactFlowNodes)
++        .filter((node) => !disabledNodeIds.has(node.id))
++        .map((node) => ({
++            ...node,
++            data: {
++                ...node.data,
++                inputs: removeDisabledNodeReferences(node.data.inputs ?? {}, disabledNodeIds) as ICommonObject
++            }
++        }))
++
++    const edges = reactFlowEdges.filter((edge) => !disabledNodeIds.has(edge.source) && !disabledNodeIds.has(edge.target))
++
++    return { nodes, edges, disabledNodeIds }
++}
++
+ /**
+  * Get starting node and check if flow is valid
+  * @param {INodeDependencies} nodeDependencies
+diff --git a/packages/server/src/utils/upsertVector.ts b/packages/server/src/utils/upsertVector.ts
+index b7c17b45dcf..d69e927ce0b 100644
+--- a/packages/server/src/utils/upsertVector.ts
++++ b/packages/server/src/utils/upsertVector.ts
+@@ -30,7 +30,8 @@ import {
+     getAppVersion,
+     getMemorySessionId,
+     getStartingNodes,
+-    getTelemetryFlowObj
++    getTelemetryFlowObj,
++    getExecutableFlowData
+ } from '../utils'
+ import { getRunningExpressApp } from '../utils/getRunningExpressApp'
+ import logger from '../utils/logger'
+@@ -130,8 +131,14 @@ export const executeUpsert = async ({
+     /*** Get chatflows and prepare data  ***/
+     const flowData = chatflow.flowData
+     const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
+-    const nodes = parsedFlowData.nodes
+-    const edges = parsedFlowData.edges
++    const executableFlowData = getExecutableFlowData(parsedFlowData.nodes, parsedFlowData.edges)
++    const nodes = executableFlowData.nodes
++    const edges = executableFlowData.edges
++    if (executableFlowData.disabledNodeIds.size) {
++        logger.debug(
++            `[server]: [${orgId}]: Disabled nodes skipped during upsert: ${Array.from(executableFlowData.disabledNodeIds).join(', ')}`
++        )
++    }
+ 
+     /*** Get session ID ***/
+     const memoryNode = findMemoryNode(nodes, edges)
+diff --git a/packages/ui/src/store/context/ReactFlowContext.jsx b/packages/ui/src/store/context/ReactFlowContext.jsx
+index d59f28d5081..92cfd99f6a3 100644
+--- a/packages/ui/src/store/context/ReactFlowContext.jsx
++++ b/packages/ui/src/store/context/ReactFlowContext.jsx
+@@ -11,6 +11,7 @@ const initialValue = {
+     duplicateNode: () => {},
+     deleteNode: () => {},
+     deleteEdge: () => {},
++    toggleNodeDisabled: () => {},
+     onNodeDataChange: () => {}
+ }
+ 
+@@ -135,6 +136,61 @@ export const ReactFlowContext = ({ children }) => {
+         dispatch({ type: SET_DIRTY })
+     }
+ 
++    const getDownstreamNodeIds = (nodeid) => {
++        const edges = reactFlowInstance.getEdges()
++        const downstreamNodeIds = new Set()
++        const queue = [nodeid]
++
++        for (let index = 0; index < queue.length; index += 1) {
++            const sourceNodeId = queue[index]
++            const outgoingEdges = edges.filter((edge) => edge.source === sourceNodeId)
++
++            for (const edge of outgoingEdges) {
++                if (downstreamNodeIds.has(edge.target)) continue
++                downstreamNodeIds.add(edge.target)
++                queue.push(edge.target)
++            }
++        }
++
++        downstreamNodeIds.delete(nodeid)
++        return downstreamNodeIds
++    }
++
++    const toggleNodeDisabled = (nodeid) => {
++        const targetNode = reactFlowInstance.getNodes().find((node) => node.id === nodeid)
++        const shouldDisable = !(targetNode?.data?.disabled === true || targetNode?.data?.disabled === 'true')
++        const downstreamNodeIds = shouldDisable ? getDownstreamNodeIds(nodeid) : new Set()
++
++        reactFlowInstance.setNodes((nodes) =>
++            nodes.map((node) => {
++                if (node.id === nodeid) {
++                    const { disabledBy, ...nextData } = node.data
++                    return {
++                        ...node,
++                        data: {
++                            ...nextData,
++                            disabled: shouldDisable
++                        }
++                    }
++                }
++
++                if (shouldDisable && downstreamNodeIds.has(node.id)) {
++                    return {
++                        ...node,
++                        data: {
++                            ...node.data,
++                            disabled: true,
++                            disabledBy: node.data.disabledBy || nodeid
++                        }
++                    }
++                }
++
++                return node
++            })
++        )
++        dispatch({ type: SET_DIRTY })
++    }
++
+     const deleteConnectedInput = (id, type) => {
+         const connectedEdges =
+             type === 'node'
+@@ -252,6 +308,7 @@ export const ReactFlowContext = ({ children }) => {
+                 deleteNode,
+                 deleteEdge,
+                 duplicateNode,
++                toggleNodeDisabled,
+                 onAgentflowNodeStatusUpdate,
+                 clearAgentflowNodeStatus,
+                 onNodeDataChange
+diff --git a/packages/ui/src/utils/disabledNodes.js b/packages/ui/src/utils/disabledNodes.js
+new file mode 100644
+index 00000000000..c4810f46633
+--- /dev/null
++++ b/packages/ui/src/utils/disabledNodes.js
+@@ -0,0 +1,4 @@
++export const isNodeExplicitlyDisabled = (node) => {
++    const disabled = node?.data?.disabled
++    return disabled === true || disabled === 'true'
++}
+diff --git a/packages/ui/src/views/agentflowsv2/AgentFlowEdge.jsx b/packages/ui/src/views/agentflowsv2/AgentFlowEdge.jsx
+index ad34ccf608b..6635c213f0c 100644
+--- a/packages/ui/src/views/agentflowsv2/AgentFlowEdge.jsx
++++ b/packages/ui/src/views/agentflowsv2/AgentFlowEdge.jsx
+@@ -5,6 +5,7 @@ import { useDispatch } from 'react-redux'
+ import { SET_DIRTY } from '@/store/actions'
+ import { flowContext } from '@/store/context/ReactFlowContext'
+ import { IconX } from '@tabler/icons-react'
++import { isNodeExplicitlyDisabled } from '@/utils/disabledNodes'
+ 
+ function EdgeLabel({ transform, isHumanInput, label, color }) {
+     return (
+@@ -36,10 +37,25 @@ EdgeLabel.propTypes = {
+ 
+ const foreignObjectSize = 40
+ 
+-const AgentFlowEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd, selected }) => {
++const AgentFlowEdge = ({
++    id,
++    source,
++    target,
++    sourceX,
++    sourceY,
++    targetX,
++    targetY,
++    sourcePosition,
++    targetPosition,
++    data,
++    markerEnd,
++    selected
++}) => {
+     const [isHovered, setIsHovered] = useState(false)
+-    const { deleteEdge } = useContext(flowContext)
++    const { deleteEdge, reactFlowInstance } = useContext(flowContext)
+     const dispatch = useDispatch()
++    const nodes = reactFlowInstance?.getNodes?.() || []
++    const isDisabledEdge = nodes.some((node) => (node.id === source || node.id === target) && isNodeExplicitlyDisabled(node))
+ 
+     const onEdgeClick = (evt, id) => {
+         evt.stopPropagation()
+@@ -90,7 +106,8 @@ const AgentFlowEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
+                     stroke: `url(#${gradientId})`,
+                     filter: selected ? 'drop-shadow(0 0 3px rgba(0,0,0,0.3))' : 'none',
+                     cursor: 'pointer',
+-                    opacity: selected ? 1 : 0.75,
++                    opacity: isDisabledEdge ? 0.35 : selected ? 1 : 0.75,
++                    strokeDasharray: isDisabledEdge ? '6 4' : 'none',
+                     fill: 'none'
+                 }}
+                 d={edgePath}
+@@ -178,6 +195,8 @@ const AgentFlowEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
+ 
+ AgentFlowEdge.propTypes = {
+     id: PropTypes.string,
++    source: PropTypes.string,
++    target: PropTypes.string,
+     sourceX: PropTypes.number,
+     sourceY: PropTypes.number,
+     targetX: PropTypes.number,
+diff --git a/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx b/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
+index 087d5b75f40..653879ea039 100644
+--- a/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
++++ b/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
+@@ -11,6 +11,7 @@ import { ButtonGroup, Avatar, Box, Typography, IconButton, Tooltip } from '@mui/
+ import MainCard from '@/ui-component/cards/MainCard'
+ import { flowContext } from '@/store/context/ReactFlowContext'
+ import NodeInfoDialog from '@/ui-component/dialog/NodeInfoDialog'
++import { isNodeExplicitlyDisabled } from '@/utils/disabledNodes'
+ 
+ // icons
+ import {
+@@ -30,7 +31,9 @@ import {
+     IconMessageCircle,
+     IconClockHour4,
+     IconListDetails,
+-    IconWebhook
++    IconWebhook,
++    IconPlayerPause,
++    IconPlayerPlay
+ } from '@tabler/icons-react'
+ import StopCircleIcon from '@mui/icons-material/StopCircle'
+ import CancelIcon from '@mui/icons-material/Cancel'
+@@ -68,9 +71,10 @@ const AgentFlowNode = ({ data }) => {
+     const [position, setPosition] = useState(0)
+     const [isHovered, setIsHovered] = useState(false)
+     const [warningMessage, setWarningMessage] = useState('')
+-    const { deleteNode, duplicateNode } = useContext(flowContext)
++    const { deleteNode, duplicateNode, toggleNodeDisabled } = useContext(flowContext)
+     const [showInfoDialog, setShowInfoDialog] = useState(false)
+     const [infoDialogProps, setInfoDialogProps] = useState({})
++    const isExplicitlyDisabled = isNodeExplicitlyDisabled({ data })
+ 
+     const defaultColor = '#666666' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+@@ -226,6 +230,21 @@ const AgentFlowNode = ({ data }) => {
+                             <IconCopy size={20} />
+                         </IconButton>
+                     )}
++                    <IconButton
++                        size={'small'}
++                        title={isExplicitlyDisabled ? 'Enable' : 'Disable'}
++                        onClick={() => {
++                            toggleNodeDisabled(data.id)
++                        }}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.warning.main
++                            }
++                        }}
++                    >
++                        {isExplicitlyDisabled ? <IconPlayerPlay size={20} /> : <IconPlayerPause size={20} />}
++                    </IconButton>
+                     <IconButton
+                         size={'small'}
+                         title='Delete'
+@@ -263,7 +282,9 @@ const AgentFlowNode = ({ data }) => {
+                 content={false}
+                 sx={{
+                     borderColor: getStateColor(),
+-                    borderWidth: '1px',
++                    borderWidth: isExplicitlyDisabled ? '2px' : '1px',
++                    borderStyle: isExplicitlyDisabled ? 'dashed' : 'solid',
++                    opacity: isExplicitlyDisabled ? 0.48 : 1,
+                     boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
+                     minHeight: getMinimumHeight(),
+                     height: 'auto',
+diff --git a/packages/ui/src/views/canvas/ButtonEdge.jsx b/packages/ui/src/views/canvas/ButtonEdge.jsx
+index 085b2d06c10..ee94b29e657 100644
+--- a/packages/ui/src/views/canvas/ButtonEdge.jsx
++++ b/packages/ui/src/views/canvas/ButtonEdge.jsx
+@@ -5,12 +5,26 @@ import { useContext, memo } from 'react'
+ import { SET_DIRTY } from '@/store/actions'
+ import { flowContext } from '@/store/context/ReactFlowContext'
+ import { IconX } from '@tabler/icons-react'
++import { isNodeExplicitlyDisabled } from '@/utils/disabledNodes'
+ 
+ import './index.css'
+ 
+ const foreignObjectSize = 40
+ 
+-const ButtonEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {}, data, markerEnd }) => {
++const ButtonEdge = ({
++    id,
++    source,
++    target,
++    sourceX,
++    sourceY,
++    targetX,
++    targetY,
++    sourcePosition,
++    targetPosition,
++    style = {},
++    data,
++    markerEnd
++}) => {
+     const [edgePath, edgeCenterX, edgeCenterY] = getBezierPath({
+         sourceX,
+         sourceY,
+@@ -20,7 +34,9 @@ const ButtonEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
+         targetPosition
+     })
+ 
+-    const { deleteEdge } = useContext(flowContext)
++    const { deleteEdge, reactFlowInstance } = useContext(flowContext)
++    const nodes = reactFlowInstance?.getNodes?.() || []
++    const isDisabledEdge = nodes.some((node) => (node.id === source || node.id === target) && isNodeExplicitlyDisabled(node))
+ 
+     const dispatch = useDispatch()
+ 
+@@ -32,7 +48,17 @@ const ButtonEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
+ 
+     return (
+         <>
+-            <path id={id} style={style} className='react-flow__edge-path' d={edgePath} markerEnd={markerEnd} />
++            <path
++                id={id}
++                style={{
++                    ...style,
++                    opacity: isDisabledEdge ? 0.35 : style.opacity,
++                    strokeDasharray: isDisabledEdge ? '6 4' : style.strokeDasharray
++                }}
++                className='react-flow__edge-path'
++                d={edgePath}
++                markerEnd={markerEnd}
++            />
+             {data && data.label && (
+                 <EdgeText
+                     x={sourceX + 10}
+@@ -64,6 +90,8 @@ const ButtonEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
+ 
+ ButtonEdge.propTypes = {
+     id: PropTypes.string,
++    source: PropTypes.string,
++    target: PropTypes.string,
+     sourceX: PropTypes.number,
+     sourceY: PropTypes.number,
+     targetX: PropTypes.number,
+diff --git a/packages/ui/src/views/canvas/CanvasNode.jsx b/packages/ui/src/views/canvas/CanvasNode.jsx
+index 03d9e51ee2c..74b7ae5fa7f 100644
+--- a/packages/ui/src/views/canvas/CanvasNode.jsx
++++ b/packages/ui/src/views/canvas/CanvasNode.jsx
+@@ -17,16 +17,18 @@ import NodeInfoDialog from '@/ui-component/dialog/NodeInfoDialog'
+ 
+ // const
+ import { baseURL } from '@/store/constant'
+-import { IconTrash, IconCopy, IconInfoCircle, IconAlertTriangle } from '@tabler/icons-react'
++import { IconTrash, IconCopy, IconInfoCircle, IconAlertTriangle, IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
+ import { flowContext } from '@/store/context/ReactFlowContext'
+ import LlamaindexPNG from '@/assets/images/llamaindex.png'
++import { isNodeExplicitlyDisabled } from '@/utils/disabledNodes'
+ 
+ // ===========================|| CANVAS NODE ||=========================== //
+ 
+ const CanvasNode = ({ data }) => {
+     const theme = useTheme()
+     const canvas = useSelector((state) => state.canvas)
+-    const { deleteNode, duplicateNode } = useContext(flowContext)
++    const { deleteNode, duplicateNode, toggleNodeDisabled } = useContext(flowContext)
++    const isExplicitlyDisabled = isNodeExplicitlyDisabled({ data })
+ 
+     const [showDialog, setShowDialog] = useState(false)
+     const [dialogProps, setDialogProps] = useState({})
+@@ -96,9 +98,11 @@ const CanvasNode = ({ data }) => {
+                 content={false}
+                 sx={{
+                     padding: 0,
+-                    borderColor: getBorderColor()
++                    borderColor: isExplicitlyDisabled ? theme.palette.warning.main : getBorderColor(),
++                    opacity: isExplicitlyDisabled ? 0.48 : 1,
++                    borderStyle: isExplicitlyDisabled ? 'dashed' : 'solid'
+                 }}
+-                border={false}
++                border={isExplicitlyDisabled}
+             >
+                 <NodeTooltip
+                     open={getNodeInfoOpenStatus()}
+@@ -113,6 +117,16 @@ const CanvasNode = ({ data }) => {
+                                 flexDirection: 'column'
+                             }}
+                         >
++                            <IconButton
++                                title={isExplicitlyDisabled ? 'Enable' : 'Disable'}
++                                onClick={() => {
++                                    toggleNodeDisabled(data.id)
++                                }}
++                                sx={{ height: '35px', width: '35px', '&:hover': { color: theme?.palette.warning.main } }}
++                                color={theme?.customization?.isDarkMode ? theme.colors?.paper : 'inherit'}
++                            >
++                                {isExplicitlyDisabled ? <IconPlayerPlay /> : <IconPlayerPause />}
++                            </IconButton>
+                             <IconButton
+                                 title='Duplicate'
+                                 onClick={() => {
+@@ -206,6 +220,13 @@ const CanvasNode = ({ data }) => {
+                                     </Tooltip>
+                                 </>
+                             )}
++                            {isExplicitlyDisabled && (
++                                <Tooltip title='Disabled'>
++                                    <IconButton sx={{ height: 35, width: 35 }}>
++                                        <IconPlayerPause size={32} color={theme.palette.warning.main} />
++                                    </IconButton>
++                                </Tooltip>
++                            )}
+                         </div>
+                         {(data.inputAnchors.length > 0 || data.inputParams.length > 0) && (
+                             <>
+
+From 8b630b41eb009205067002264da235dd44b5a917 Mon Sep 17 00:00:00 2001
+From: Udaykumar Dhokia <udaykumardhokia@gmail.com>
+Date: Fri, 22 May 2026 16:07:41 +0530
+Subject: [PATCH 2/3] refactor: centralize node disable logic into reusable
+ utilities
+
+---
+ .../agentflow/src/core/utils/disabledNodes.ts | 83 +++++++++++++++++++
+ packages/agentflow/src/core/utils/index.ts    |  1 +
+ .../canvas/components/NodeToolbarActions.tsx  | 17 +++-
+ .../canvas/containers/AgentFlowNode.tsx       |  1 +
+ .../canvas/containers/IterationNode.tsx       |  1 +
+ .../infrastructure/store/AgentflowContext.tsx | 51 +++---------
+ .../ui/src/store/context/ReactFlowContext.jsx | 79 +++++++-----------
+ packages/ui/src/utils/disabledNodes.js        | 77 +++++++++++++++++
+ .../src/views/agentflowsv2/AgentFlowNode.jsx  | 13 ++-
+ packages/ui/src/views/canvas/CanvasNode.jsx   | 21 ++++-
+ 10 files changed, 244 insertions(+), 100 deletions(-)
+ create mode 100644 packages/agentflow/src/core/utils/disabledNodes.ts
+
+diff --git a/packages/agentflow/src/core/utils/disabledNodes.ts b/packages/agentflow/src/core/utils/disabledNodes.ts
+new file mode 100644
+index 00000000000..94c75654f87
+--- /dev/null
++++ b/packages/agentflow/src/core/utils/disabledNodes.ts
+@@ -0,0 +1,83 @@
++import type { FlowEdge, FlowNode } from '@/core/types'
++
++export const isNodeExplicitlyDisabled = (node: FlowNode): boolean => {
++    const disabled = node?.data?.disabled
++    return disabled === true || String(disabled) === 'true'
++}
++
++export const recalculateDisabledNodes = (nodes: FlowNode[], edges: FlowEdge[]): FlowNode[] => {
++    const explicitlyDisabledNodeIds = new Set<string>(
++        nodes
++            .filter((node) => {
++                const disabled = node.data?.disabled === true || String(node.data?.disabled) === 'true'
++                const disabledBy = node.data?.disabledBy
++                return disabled && !disabledBy
++            })
++            .map((node) => node.id)
++    )
++
++    const outgoingEdges = new Map<string, string[]>()
++    for (const edge of edges) {
++        const targets = outgoingEdges.get(edge.source) || []
++        targets.push(edge.target)
++        outgoingEdges.set(edge.source, targets)
++    }
++
++    const disabledByMap = new Map<string, string>()
++
++    for (const rootId of explicitlyDisabledNodeIds) {
++        const queue = [rootId]
++        const visited = new Set<string>([rootId])
++
++        while (queue.length > 0) {
++            const currentId = queue.shift()!
++            const targets = outgoingEdges.get(currentId) || []
++            for (const targetId of targets) {
++                if (visited.has(targetId)) continue
++                visited.add(targetId)
++
++                if (explicitlyDisabledNodeIds.has(targetId)) continue
++
++                if (!disabledByMap.has(targetId)) {
++                    disabledByMap.set(targetId, rootId)
++                }
++                queue.push(targetId)
++            }
++        }
++    }
++
++    return nodes.map((node) => {
++        const isExplicit = explicitlyDisabledNodeIds.has(node.id)
++        if (isExplicit) {
++            const { disabledBy, ...nextData } = node.data
++            return {
++                ...node,
++                data: {
++                    ...nextData,
++                    disabled: true
++                }
++            }
++        }
++
++        const disabledBy = disabledByMap.get(node.id)
++        if (disabledBy) {
++            return {
++                ...node,
++                data: {
++                    ...node.data,
++                    disabled: true,
++                    disabledBy
++                }
++            }
++        }
++
++        const { disabled, disabledBy: _, ...nextData } = node.data
++        return {
++            ...node,
++            data: {
++                ...nextData,
++                disabled: false
++            }
++        }
++    })
++}
+diff --git a/packages/agentflow/src/core/utils/index.ts b/packages/agentflow/src/core/utils/index.ts
+index 5df73663c0a..bdc695fa145 100644
+--- a/packages/agentflow/src/core/utils/index.ts
++++ b/packages/agentflow/src/core/utils/index.ts
+@@ -14,4 +14,5 @@ export { buildDynamicOutputAnchors, parseOutputHandleIndex } from './dynamicOutp
+ export { getDefinedStateKeys, getUpstreamNodes } from './variableUtils'
+ 
+ // Node version detection and upgrade utilities
++export { isNodeExplicitlyDisabled, recalculateDisabledNodes } from './disabledNodes'
+ export { getNodeVersionWarning, isNodeOutdated, upgradeNodeData } from './nodeVersionUtils'
+diff --git a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
+index e1486aea73d..7b29e296c53 100644
+--- a/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
++++ b/packages/agentflow/src/features/canvas/components/NodeToolbarActions.tsx
+@@ -15,16 +15,20 @@ export interface NodeToolbarActionsProps {
+     nodeName: string
+     isVisible: boolean
+     disabled?: boolean
++    disabledBy?: string
+     onInfoClick?: () => void
+ }
+ 
+ /**
+  * Toolbar with action buttons for a node (duplicate, delete, info)
+  */
+-function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, disabled, onInfoClick }: NodeToolbarActionsProps) {
++function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, disabled, disabledBy, onInfoClick }: NodeToolbarActionsProps) {
+     const theme = useTheme()
+     const { isDarkMode } = useConfigContext()
+-    const { deleteNode, duplicateNode, toggleNodeDisabled } = useAgentflowContext()
++    const { deleteNode, duplicateNode, toggleNodeDisabled, state } = useAgentflowContext()
++    const nodes = state?.nodes || []
++    const disabledByNode = disabledBy ? nodes.find((n) => n.id === disabledBy) : null
++    const disabledByName = disabledByNode ? disabledByNode.data?.label || disabledByNode.data?.name : disabledBy
+     const { openNodeEditor } = useOpenNodeEditor()
+ 
+     const handleEditClick = () => {
+@@ -66,8 +70,13 @@ function NodeToolbarActionsComponent({ nodeId, nodeName, isVisible, disabled, on
+                 {nodeName !== 'stickyNoteAgentflow' && (
+                     <IconButton
+                         size='small'
+-                        title={disabled ? 'Enable' : 'Disable'}
+-                        onClick={() => toggleNodeDisabled(nodeId)}
++                        title={disabledBy ? `Disabled by upstream node: ${disabledByName}` : disabled ? 'Enable' : 'Disable'}
++                        onClick={() => {
++                            if (!disabledBy) {
++                                toggleNodeDisabled(nodeId)
++                            }
++                        }}
++                        disabled={!!disabledBy}
+                         sx={{
+                             color: isDarkMode ? 'white' : 'inherit',
+                             '&:hover': { color: theme.palette.warning.main }
+diff --git a/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx b/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
+index dadccfdfc91..f2f9f049ace 100644
+--- a/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
++++ b/packages/agentflow/src/features/canvas/containers/AgentFlowNode.tsx
+@@ -81,6 +81,7 @@ function AgentFlowNodeComponent({ data }: AgentFlowNodeProps) {
+                 nodeName={data.name}
+                 isVisible={data.selected || isHovered}
+                 disabled={data.disabled}
++                disabledBy={data.disabledBy}
+                 onInfoClick={() => setShowInfoDialog(true)}
+             />
+ 
+diff --git a/packages/agentflow/src/features/canvas/containers/IterationNode.tsx b/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
+index c0a656482c8..e6a3da59ab6 100644
+--- a/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
++++ b/packages/agentflow/src/features/canvas/containers/IterationNode.tsx
+@@ -112,6 +112,7 @@ function IterationNodeComponent({ data }: IterationNodeProps) {
+                 nodeName={data.name}
+                 isVisible={data.selected || isHovered}
+                 disabled={data.disabled}
++                disabledBy={data.disabledBy}
+                 onInfoClick={() => setShowInfoDialog(true)}
+             />
+             <NodeResizer minWidth={300} minHeight={minHeight} onResizeEnd={onResizeEnd} />
+diff --git a/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx b/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
+index 290134a4dd3..aab11523f5a 100644
+--- a/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
++++ b/packages/agentflow/src/infrastructure/store/AgentflowContext.tsx
+@@ -18,7 +18,7 @@ import type {
+     NodeData,
+     NodeDataSchema
+ } from '@/core/types'
+-import { getDefinedStateKeys, getUniqueNodeId, isNodeOutdated, upgradeNodeData } from '@/core/utils'
++import { getDefinedStateKeys, getUniqueNodeId, isNodeOutdated, recalculateDisabledNodes, upgradeNodeData } from '@/core/utils'
+ 
+ import { agentflowReducer, initialState, normalizeNodes } from './agentflowReducer'
+ 
+@@ -199,14 +199,15 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+             }
+             collectDescendants(nodeId)
+ 
+-            const newNodes = state.nodes.filter((node) => !toDelete.has(node.id))
+-            const newEdges = state.edges.filter((edge) => !toDelete.has(edge.source) && !toDelete.has(edge.target))
+-            syncStateUpdate({ nodes: newNodes, edges: newEdges })
++            const remainingNodes = state.nodes.filter((node) => !toDelete.has(node.id))
++            const remainingEdges = state.edges.filter((edge) => !toDelete.has(edge.source) && !toDelete.has(edge.target))
++            const recalculatedNodes = recalculateDisabledNodes(remainingNodes, remainingEdges)
++            syncStateUpdate({ nodes: recalculatedNodes, edges: remainingEdges })
+ 
+             // Notify parent of flow change so the deletion is persisted
+             if (onFlowChangeRef.current) {
+                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
+-                onFlowChangeRef.current({ nodes: newNodes, edges: newEdges, viewport })
++                onFlowChangeRef.current({ nodes: recalculatedNodes, edges: remainingEdges, viewport })
+             }
+         },
+         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
+@@ -299,24 +300,8 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+         (nodeId: string) => {
+             const targetNode = state.nodes.find((node) => node.id === nodeId)
+             const shouldDisable = !(targetNode?.data?.disabled === true || String(targetNode?.data?.disabled) === 'true')
+-            const downstreamNodeIds = new Set<string>()
+-
+-            if (shouldDisable) {
+-                const queue = [nodeId]
+-                for (let index = 0; index < queue.length; index += 1) {
+-                    const sourceNodeId = queue[index]
+-                    const outgoingEdges = state.edges.filter((edge) => edge.source === sourceNodeId)
+-
+-                    for (const edge of outgoingEdges) {
+-                        if (downstreamNodeIds.has(edge.target)) continue
+-                        downstreamNodeIds.add(edge.target)
+-                        queue.push(edge.target)
+-                    }
+-                }
+-                downstreamNodeIds.delete(nodeId)
+-            }
+ 
+-            const newNodes = state.nodes.map((node) => {
++            const nextNodes = state.nodes.map((node) => {
+                 if (node.id === nodeId) {
+                     const { disabledBy, ...nextData } = node.data
+                     return {
+@@ -327,26 +312,15 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+                         }
+                     }
+                 }
+-
+-                if (shouldDisable && downstreamNodeIds.has(node.id)) {
+-                    return {
+-                        ...node,
+-                        data: {
+-                            ...node.data,
+-                            disabled: true,
+-                            disabledBy: node.data.disabledBy || nodeId
+-                        }
+-                    }
+-                }
+-
+                 return node
+             })
+ 
+-            syncStateUpdate({ nodes: newNodes })
++            const recalculatedNodes = recalculateDisabledNodes(nextNodes, state.edges)
++            syncStateUpdate({ nodes: recalculatedNodes })
+ 
+             if (onFlowChangeRef.current) {
+                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
+-                onFlowChangeRef.current({ nodes: newNodes, edges: state.edges, viewport })
++                onFlowChangeRef.current({ nodes: recalculatedNodes, edges: state.edges, viewport })
+             }
+         },
+         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
+@@ -356,12 +330,13 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
+     const deleteEdge = useCallback(
+         (edgeId: string) => {
+             const newEdges = state.edges.filter((edge) => edge.id !== edgeId)
+-            syncStateUpdate({ edges: newEdges })
++            const recalculatedNodes = recalculateDisabledNodes(state.nodes, newEdges)
++            syncStateUpdate({ nodes: recalculatedNodes, edges: newEdges })
+ 
+             // Notify parent of flow change so the deletion is persisted
+             if (onFlowChangeRef.current) {
+                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
+-                onFlowChangeRef.current({ nodes: state.nodes, edges: newEdges, viewport })
++                onFlowChangeRef.current({ nodes: recalculatedNodes, edges: newEdges, viewport })
+             }
+         },
+         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
+diff --git a/packages/ui/src/store/context/ReactFlowContext.jsx b/packages/ui/src/store/context/ReactFlowContext.jsx
+index 92cfd99f6a3..c6caf74d073 100644
+--- a/packages/ui/src/store/context/ReactFlowContext.jsx
++++ b/packages/ui/src/store/context/ReactFlowContext.jsx
+@@ -4,6 +4,7 @@ import PropTypes from 'prop-types'
+ import { getUniqueNodeId, showHideInputParams } from '@/utils/genericHelper'
+ import { cloneDeep, isEqual } from 'lodash'
+ import { SET_DIRTY } from '@/store/actions'
++import { recalculateDisabledNodes } from '@/utils/disabledNodes'
+ 
+ const initialValue = {
+     reactFlowInstance: null,
+@@ -121,73 +122,49 @@ export const ReactFlowContext = ({ children }) => {
+             }
+         })
+ 
+-        // Filter out all nodes and edges in a single operation
+-        reactFlowInstance.setNodes((nodes) => nodes.filter((node) => !nodesToDelete.has(node.id)))
++        const remainingNodes = reactFlowInstance.getNodes().filter((node) => !nodesToDelete.has(node.id))
++        const remainingEdges = reactFlowInstance
++            .getEdges()
++            .filter((edge) => !nodesToDelete.has(edge.source) && !nodesToDelete.has(edge.target))
++        const recalculatedNodes = recalculateDisabledNodes(remainingNodes, remainingEdges)
+ 
+-        // Remove all edges connected to any of the deleted nodes
+-        reactFlowInstance.setEdges((edges) => edges.filter((edge) => !nodesToDelete.has(edge.source) && !nodesToDelete.has(edge.target)))
++        reactFlowInstance.setNodes(recalculatedNodes)
++        reactFlowInstance.setEdges(remainingEdges)
+ 
+         dispatch({ type: SET_DIRTY })
+     }
+ 
+     const deleteEdge = (edgeid) => {
+         deleteConnectedInput(edgeid, 'edge')
+-        reactFlowInstance.setEdges(reactFlowInstance.getEdges().filter((edge) => edge.id !== edgeid))
++        const remainingEdges = reactFlowInstance.getEdges().filter((edge) => edge.id !== edgeid)
++        const recalculatedNodes = recalculateDisabledNodes(reactFlowInstance.getNodes(), remainingEdges)
++        reactFlowInstance.setNodes(recalculatedNodes)
++        reactFlowInstance.setEdges(remainingEdges)
+         dispatch({ type: SET_DIRTY })
+     }
+ 
+-    const getDownstreamNodeIds = (nodeid) => {
+-        const edges = reactFlowInstance.getEdges()
+-        const downstreamNodeIds = new Set()
+-        const queue = [nodeid]
+-
+-        for (let index = 0; index < queue.length; index += 1) {
+-            const sourceNodeId = queue[index]
+-            const outgoingEdges = edges.filter((edge) => edge.source === sourceNodeId)
+-
+-            for (const edge of outgoingEdges) {
+-                if (downstreamNodeIds.has(edge.target)) continue
+-                downstreamNodeIds.add(edge.target)
+-                queue.push(edge.target)
+-            }
+-        }
+-
+-        downstreamNodeIds.delete(nodeid)
+-        return downstreamNodeIds
+-    }
+-
+     const toggleNodeDisabled = (nodeid) => {
+-        const targetNode = reactFlowInstance.getNodes().find((node) => node.id === nodeid)
++        const nodes = reactFlowInstance.getNodes()
++        const edges = reactFlowInstance.getEdges()
++        const targetNode = nodes.find((node) => node.id === nodeid)
+         const shouldDisable = !(targetNode?.data?.disabled === true || targetNode?.data?.disabled === 'true')
+-        const downstreamNodeIds = shouldDisable ? getDownstreamNodeIds(nodeid) : new Set()
+-
+-        reactFlowInstance.setNodes((nodes) =>
+-            nodes.map((node) => {
+-                if (node.id === nodeid) {
+-                    const { disabledBy, ...nextData } = node.data
+-                    return {
+-                        ...node,
+-                        data: {
+-                            ...nextData,
+-                            disabled: shouldDisable
+-                        }
+-                    }
+-                }
+ 
+-                if (shouldDisable && downstreamNodeIds.has(node.id)) {
+-                    return {
+-                        ...node,
+-                        data: {
+-                            ...node.data,
+-                            disabled: true,
+-                            disabledBy: node.data.disabledBy || nodeid
+-                        }
++        const nextNodes = nodes.map((node) => {
++            if (node.id === nodeid) {
++                const { disabledBy, ...nextData } = node.data
++                return {
++                    ...node,
++                    data: {
++                        ...nextData,
++                        disabled: shouldDisable
+                     }
+                 }
++            }
++            return node
++        })
+ 
+-                return node
+-            })
+-        )
++        const recalculatedNodes = recalculateDisabledNodes(nextNodes, edges)
++        reactFlowInstance.setNodes(recalculatedNodes)
+         dispatch({ type: SET_DIRTY })
+     }
+ 
+diff --git a/packages/ui/src/utils/disabledNodes.js b/packages/ui/src/utils/disabledNodes.js
+index c4810f46633..955ae554455 100644
+--- a/packages/ui/src/utils/disabledNodes.js
++++ b/packages/ui/src/utils/disabledNodes.js
+@@ -2,3 +2,80 @@ export const isNodeExplicitlyDisabled = (node) => {
+     const disabled = node?.data?.disabled
+     return disabled === true || disabled === 'true'
+ }
++
++export const recalculateDisabledNodes = (nodes, edges) => {
++    const explicitlyDisabledNodeIds = new Set(
++        nodes
++            .filter((node) => {
++                const disabled = node.data?.disabled === true || node.data?.disabled === 'true'
++                const disabledBy = node.data?.disabledBy
++                return disabled && !disabledBy
++            })
++            .map((node) => node.id)
++    )
++
++    const outgoingEdges = new Map()
++    for (const edge of edges) {
++        const targets = outgoingEdges.get(edge.source) || []
++        targets.push(edge.target)
++        outgoingEdges.set(edge.source, targets)
++    }
++
++    const disabledByMap = new Map()
++
++    for (const rootId of explicitlyDisabledNodeIds) {
++        const queue = [rootId]
++        const visited = new Set([rootId])
++
++        while (queue.length > 0) {
++            const currentId = queue.shift()
++            const targets = outgoingEdges.get(currentId) || []
++            for (const targetId of targets) {
++                if (visited.has(targetId)) continue
++                visited.add(targetId)
++
++                if (explicitlyDisabledNodeIds.has(targetId)) continue
++
++                if (!disabledByMap.has(targetId)) {
++                    disabledByMap.set(targetId, rootId)
++                }
++                queue.push(targetId)
++            }
++        }
++    }
++
++    return nodes.map((node) => {
++        const isExplicit = explicitlyDisabledNodeIds.has(node.id)
++        if (isExplicit) {
++            const { disabledBy, ...nextData } = node.data
++            return {
++                ...node,
++                data: {
++                    ...nextData,
++                    disabled: true
++                }
++            }
++        }
++
++        const disabledBy = disabledByMap.get(node.id)
++        if (disabledBy) {
++            return {
++                ...node,
++                data: {
++                    ...node.data,
++                    disabled: true,
++                    disabledBy
++                }
++            }
++        }
++
++        const { disabled, disabledBy: _, ...nextData } = node.data
++        return {
++            ...node,
++            data: {
++                ...nextData,
++                disabled: false
++            }
++        }
++    })
++}
+diff --git a/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx b/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
+index 653879ea039..e51b6f39539 100644
+--- a/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
++++ b/packages/ui/src/views/agentflowsv2/AgentFlowNode.jsx
+@@ -71,10 +71,14 @@ const AgentFlowNode = ({ data }) => {
+     const [position, setPosition] = useState(0)
+     const [isHovered, setIsHovered] = useState(false)
+     const [warningMessage, setWarningMessage] = useState('')
+-    const { deleteNode, duplicateNode, toggleNodeDisabled } = useContext(flowContext)
++    const { deleteNode, duplicateNode, toggleNodeDisabled, reactFlowInstance } = useContext(flowContext)
+     const [showInfoDialog, setShowInfoDialog] = useState(false)
+     const [infoDialogProps, setInfoDialogProps] = useState({})
+     const isExplicitlyDisabled = isNodeExplicitlyDisabled({ data })
++    const nodes = reactFlowInstance?.getNodes() || []
++    const disabledBy = data.disabledBy
++    const disabledByNode = disabledBy ? nodes.find((n) => n.id === disabledBy) : null
++    const disabledByName = disabledByNode ? disabledByNode.data?.label || disabledByNode.data?.name : disabledBy
+ 
+     const defaultColor = '#666666' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+@@ -232,10 +236,13 @@ const AgentFlowNode = ({ data }) => {
+                     )}
+                     <IconButton
+                         size={'small'}
+-                        title={isExplicitlyDisabled ? 'Enable' : 'Disable'}
++                        title={disabledBy ? `Disabled by upstream node: ${disabledByName}` : isExplicitlyDisabled ? 'Enable' : 'Disable'}
+                         onClick={() => {
+-                            toggleNodeDisabled(data.id)
++                            if (!disabledBy) {
++                                toggleNodeDisabled(data.id)
++                            }
+                         }}
++                        disabled={!!disabledBy}
+                         sx={{
+                             color: customization.isDarkMode ? 'white' : 'inherit',
+                             '&:hover': {
+diff --git a/packages/ui/src/views/canvas/CanvasNode.jsx b/packages/ui/src/views/canvas/CanvasNode.jsx
+index 74b7ae5fa7f..78e36287111 100644
+--- a/packages/ui/src/views/canvas/CanvasNode.jsx
++++ b/packages/ui/src/views/canvas/CanvasNode.jsx
+@@ -27,7 +27,11 @@ import { isNodeExplicitlyDisabled } from '@/utils/disabledNodes'
+ const CanvasNode = ({ data }) => {
+     const theme = useTheme()
+     const canvas = useSelector((state) => state.canvas)
+-    const { deleteNode, duplicateNode, toggleNodeDisabled } = useContext(flowContext)
++    const { deleteNode, duplicateNode, toggleNodeDisabled, reactFlowInstance } = useContext(flowContext)
++    const nodes = reactFlowInstance?.getNodes() || []
++    const disabledBy = data.disabledBy
++    const disabledByNode = disabledBy ? nodes.find((n) => n.id === disabledBy) : null
++    const disabledByName = disabledByNode ? disabledByNode.data?.label || disabledByNode.data?.name : disabledBy
+     const isExplicitlyDisabled = isNodeExplicitlyDisabled({ data })
+ 
+     const [showDialog, setShowDialog] = useState(false)
+@@ -118,10 +122,19 @@ const CanvasNode = ({ data }) => {
+                             }}
+                         >
+                             <IconButton
+-                                title={isExplicitlyDisabled ? 'Enable' : 'Disable'}
++                                title={
++                                    disabledBy
++                                        ? `Disabled by upstream node: ${disabledByName}`
++                                        : isExplicitlyDisabled
++                                        ? 'Enable'
++                                        : 'Disable'
++                                }
+                                 onClick={() => {
+-                                    toggleNodeDisabled(data.id)
++                                    if (!disabledBy) {
++                                        toggleNodeDisabled(data.id)
++                                    }
+                                 }}
++                                disabled={!!disabledBy}
+                                 sx={{ height: '35px', width: '35px', '&:hover': { color: theme?.palette.warning.main } }}
+                                 color={theme?.customization?.isDarkMode ? theme.colors?.paper : 'inherit'}
+                             >
+@@ -221,7 +234,7 @@ const CanvasNode = ({ data }) => {
+                                 </>
+                             )}
+                             {isExplicitlyDisabled && (
+-                                <Tooltip title='Disabled'>
++                                <Tooltip title={disabledBy ? `Disabled by upstream node: ${disabledByName}` : 'Disabled'}>
+                                     <IconButton sx={{ height: 35, width: 35 }}>
+                                         <IconPlayerPause size={32} color={theme.palette.warning.main} />
+                                     </IconButton>
+
+From 859dd9d97e040c23b071e1ff2efcd5511275e5bd Mon Sep 17 00:00:00 2001
+From: Udaykumar Dhokia <udaykumardhokia@gmail.com>
+Date: Fri, 22 May 2026 17:23:37 +0530
+Subject: [PATCH 3/3] fix: disable propagation & preserve input whitespace
+
+---
+ .../agentflow/src/core/utils/disabledNodes.ts  | 14 ++++++++++++++
+ packages/server/src/utils/index.ts             | 18 ++++++++++++++++--
+ packages/ui/src/utils/disabledNodes.js         | 14 ++++++++++++++
+ 3 files changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/packages/agentflow/src/core/utils/disabledNodes.ts b/packages/agentflow/src/core/utils/disabledNodes.ts
+index 94c75654f87..21cf0dfe041 100644
+--- a/packages/agentflow/src/core/utils/disabledNodes.ts
++++ b/packages/agentflow/src/core/utils/disabledNodes.ts
+@@ -18,6 +18,20 @@ export const recalculateDisabledNodes = (nodes: FlowNode[], edges: FlowEdge[]):
+ 
+     const outgoingEdges = new Map<string, string[]>()
+     for (const edge of edges) {
++        const isToolEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-tools-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('tools-') ||
++                edge.targetHandle === 'tools' ||
++                edge.targetHandle.startsWith('tools-'))
++        const isModelEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-model-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('model-') ||
++                edge.targetHandle === 'model' ||
++                edge.targetHandle.startsWith('model-'))
++        if (isToolEdge || isModelEdge) continue
++
+         const targets = outgoingEdges.get(edge.source) || []
+         targets.push(edge.target)
+         outgoingEdges.set(edge.source, targets)
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index a7f0ad2dca4..d89b16fe31a 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -213,7 +213,7 @@ export const isNodeDisabled = (node?: IReactFlowNode): boolean => {
+ 
+ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+ 
+-const getDisabledNodeReferencePattern = (nodeId: string) => new RegExp(`{{${escapeRegExp(nodeId)}\\.data\\.instance[^}]*}}`, 'g')
++const getDisabledNodeReferencePattern = (nodeId: string) => new RegExp('{{' + escapeRegExp(nodeId) + '\\.[^}]*}}', 'g')
+ 
+ const removeDisabledNodeReferences = (value: unknown, disabledNodeIds: Set<string>): unknown => {
+     if (Array.isArray(value)) {
+@@ -236,7 +236,7 @@ const removeDisabledNodeReferences = (value: unknown, disabledNodeIds: Set<strin
+     for (const disabledNodeId of disabledNodeIds) {
+         nextValue = nextValue.replace(getDisabledNodeReferencePattern(disabledNodeId), '')
+     }
+-    return nextValue.trim()
++    return nextValue
+ }
+ 
+ const getTransitiveDisabledNodeIds = (reactFlowNodes: IReactFlowNode[], reactFlowEdges: IReactFlowEdge[]): Set<string> => {
+@@ -246,6 +246,20 @@ const getTransitiveDisabledNodeIds = (reactFlowNodes: IReactFlowNode[], reactFlo
+ 
+     const outgoingEdgesBySource = new Map<string, string[]>()
+     for (const edge of reactFlowEdges) {
++        const isToolEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-tools-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('tools-') ||
++                edge.targetHandle === 'tools' ||
++                edge.targetHandle.startsWith('tools-'))
++        const isModelEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-model-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('model-') ||
++                edge.targetHandle === 'model' ||
++                edge.targetHandle.startsWith('model-'))
++        if (isToolEdge || isModelEdge) continue
++
+         const targets = outgoingEdgesBySource.get(edge.source) ?? []
+         targets.push(edge.target)
+         outgoingEdgesBySource.set(edge.source, targets)
+diff --git a/packages/ui/src/utils/disabledNodes.js b/packages/ui/src/utils/disabledNodes.js
+index 955ae554455..311aa62b610 100644
+--- a/packages/ui/src/utils/disabledNodes.js
++++ b/packages/ui/src/utils/disabledNodes.js
+@@ -16,6 +16,20 @@ export const recalculateDisabledNodes = (nodes, edges) => {
+ 
+     const outgoingEdges = new Map()
+     for (const edge of edges) {
++        const isToolEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-tools-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('tools-') ||
++                edge.targetHandle === 'tools' ||
++                edge.targetHandle.startsWith('tools-'))
++        const isModelEdge =
++            edge.targetHandle &&
++            (edge.targetHandle.includes('-input-model-') ||
++                edge.targetHandle.split('-input-')[1]?.startsWith('model-') ||
++                edge.targetHandle === 'model' ||
++                edge.targetHandle.startsWith('model-'))
++        if (isToolEdge || isModelEdge) continue
++
+         const targets = outgoingEdges.get(edge.source) || []
+         targets.push(edge.target)
+         outgoingEdges.set(edge.source, targets)

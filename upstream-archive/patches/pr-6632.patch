@@ -1,0 +1,1581 @@
+From 1ecabbe680b92478cf3a9018af2afdef773ef2c3 Mon Sep 17 00:00:00 2001
+From: seongmincho315 <seongmin.cho@genon.ai>
+Date: Thu, 16 Jul 2026 15:09:39 +0900
+Subject: [PATCH 1/2] feat: add Parallel node for AgentFlow V2
+
+Adds a new "Parallel" container node alongside the existing Iteration
+node. Branches inside the box are auto-detected from the canvas graph
+(each child with no incoming edge from a sibling becomes a branch
+root), and all branches execute concurrently via Promise.allSettled
+instead of sequentially.
+
+- New Parallel.ts agentflow component (auto-discovered like Iteration)
+- buildAgentflow.ts: branch discovery (constructGraphs/getStartingNode
+  reuse) + concurrent execution + per-branch state snapshot with a
+  diff-based merge so one branch's untouched keys don't clobber
+  another branch's update to the same key
+- ParallelNode.jsx canvas container, registered in Canvas/Marketplace
+  canvases, drop/containment logic generalized for both container types
+- Branch-aware execution log grouping in AgentExecutedDataCard/
+  ExecutionDetails ("Branch #N")
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../nodes/agentflow/Parallel/Parallel.ts      |  43 ++
+ packages/server/src/utils/buildAgentflow.ts   | 169 ++++++-
+ packages/ui/src/store/constant.js             |   8 +-
+ .../agentexecutions/ExecutionDetails.jsx      | 172 ++++++-
+ packages/ui/src/views/agentflowsv2/Canvas.jsx |  53 ++-
+ .../views/agentflowsv2/MarketplaceCanvas.jsx  |   3 +-
+ .../src/views/agentflowsv2/ParallelNode.jsx   | 425 ++++++++++++++++++
+ .../chatmessage/AgentExecutedDataCard.jsx     | 172 ++++++-
+ 8 files changed, 993 insertions(+), 52 deletions(-)
+ create mode 100644 packages/components/nodes/agentflow/Parallel/Parallel.ts
+ create mode 100644 packages/ui/src/views/agentflowsv2/ParallelNode.jsx
+
+diff --git a/packages/components/nodes/agentflow/Parallel/Parallel.ts b/packages/components/nodes/agentflow/Parallel/Parallel.ts
+new file mode 100644
+index 00000000000..0f25e234a91
+--- /dev/null
++++ b/packages/components/nodes/agentflow/Parallel/Parallel.ts
+@@ -0,0 +1,43 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++
++class Parallel_Agentflow implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    color: string
++    baseClasses: string[]
++    documentation?: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Parallel'
++        this.name = 'parallelAgentflow'
++        this.version = 1.0
++        this.type = 'Parallel'
++        this.category = 'Agent Flows'
++        this.description = 'Run multiple branches of nodes within this block concurrently, then continue once all branches complete'
++        this.baseClasses = [this.type]
++        this.color = '#26A69A'
++        this.inputs = []
++    }
++
++    async run(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const state = options.agentflowRuntime?.state as ICommonObject
++
++        const returnOutput = {
++            id: nodeData.id,
++            name: this.name,
++            input: {},
++            output: {},
++            state
++        }
++
++        return returnOutput
++    }
++}
++
++module.exports = { nodeClass: Parallel_Agentflow }
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..743be7a2c22 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1,6 +1,6 @@
+ import { DataSource } from 'typeorm'
+ import { v4 as uuidv4 } from 'uuid'
+-import { cloneDeep, get } from 'lodash'
++import { cloneDeep, get, isEqual } from 'lodash'
+ import TurndownService from 'turndown'
+ import {
+     AnalyticHandler,
+@@ -1405,6 +1405,173 @@ const executeNode = async ({
+             }
+         }
+ 
++        // Handle parallel node with concurrent branch execution
++        if (reactFlowNode.data.name === 'parallelAgentflow') {
++            // Get child nodes for this parallel block
++            const childNodes = nodes.filter((node) => node.parentNode === nodeId)
++
++            if (childNodes.length > 0) {
++                logger.debug(`  🔀 Found ${childNodes.length} child nodes for parallel block`)
++
++                const childEdges = edges.filter((edge: IReactFlowEdge) => {
++                    const sourceNode = nodes.find((n) => n.id === edge.source)
++                    const targetNode = nodes.find((n) => n.id === edge.target)
++                    return sourceNode?.parentNode === nodeId && targetNode?.parentNode === nodeId
++                })
++
++                // Branch roots = child nodes with no incoming edge from another child node in this block
++                const { graph: childGraph, nodeDependencies: childNodeDependencies } = constructGraphs(childNodes, childEdges)
++                const { startingNodeIds: branchRootIds } = getStartingNode(childNodeDependencies)
++
++                // Collect every node reachable from each root to form that branch's node/edge subset
++                const branches = branchRootIds.map((rootId, branchIndex) => {
++                    const visited = new Set<string>()
++                    const queue = [rootId]
++                    while (queue.length > 0) {
++                        const current = queue.shift() as string
++                        if (visited.has(current)) continue
++                        visited.add(current)
++                        for (const next of childGraph[current] || []) {
++                            if (!visited.has(next)) queue.push(next)
++                        }
++                    }
++                    return {
++                        branchIndex,
++                        nodes: childNodes.filter((n) => visited.has(n.id)),
++                        edges: childEdges.filter((e) => visited.has(e.source) && visited.has(e.target))
++                    }
++                })
++
++                logger.debug(`  🔀 Processing parallel node with ${branches.length} branch(es)`)
++
++                if (branches.length > 0) {
++                    // Snapshot state once before any branch starts so concurrent branches never race on a shared object
++                    const stateSnapshot = cloneDeep(agentflowRuntime.state || {})
++
++                    const branchSettled = await Promise.allSettled(
++                        branches.map(async (branch) => {
++                            const parallelFlowData: IReactFlowObject = {
++                                nodes: branch.nodes,
++                                edges: branch.edges,
++                                viewport: { x: 0, y: 0, zoom: 1 }
++                            }
++
++                            const parallelChatflow = {
++                                ...chatflow,
++                                flowData: JSON.stringify(parallelFlowData)
++                            }
++
++                            // Each branch gets its own runtime wrapping an independent state clone
++                            const branchAgentflowRuntime = { ...agentflowRuntime, state: cloneDeep(stateSnapshot) }
++
++                            const subFlowResult = await executeAgentFlow({
++                                componentNodes,
++                                incomingInput,
++                                chatflow: parallelChatflow,
++                                chatId,
++                                evaluationRunId,
++                                appDataSource,
++                                usageCacheManager,
++                                telemetry,
++                                cachePool,
++                                sseStreamer,
++                                baseURL,
++                                isInternal,
++                                uploadedFilesContent,
++                                fileUploads,
++                                signal: abortController,
++                                isRecursive: true,
++                                parentExecutionId,
++                                iterationContext: {
++                                    branchIndex: branch.branchIndex,
++                                    sessionId,
++                                    agentflowRuntime: branchAgentflowRuntime
++                                },
++                                orgId,
++                                workspaceId,
++                                subscriptionId,
++                                productId
++                            })
++
++                            return { branchIndex: branch.branchIndex, subFlowResult }
++                        })
++                    )
++
++                    const branchResults: Array<{ branchIndex: number; content?: string; error?: string }> = []
++                    const updatedState: ICommonObject = cloneDeep(agentflowRuntime.state || {})
++
++                    branchSettled.forEach((settled, idx) => {
++                        const branchIndex = branches[idx].branchIndex
++
++                        if (settled.status === 'fulfilled') {
++                            const { subFlowResult } = settled.value
++
++                            if (subFlowResult?.agentFlowExecutedData) {
++                                const branchExecutedData = subFlowResult.agentFlowExecutedData.map((data: IAgentflowExecutedData) => ({
++                                    ...data,
++                                    data: {
++                                        ...data.data,
++                                        branchIndex,
++                                        parentNodeId: reactFlowNode.data.id
++                                    }
++                                }))
++                                agentFlowExecutedData.push(...branchExecutedData)
++                            }
++
++                            // Shallow-merge each branch's final state back into parent, in branch-index order.
++                            // Only apply keys the branch actually changed relative to its starting snapshot -
++                            // every branch's copy still carries the OTHER keys at their pre-parallel baseline value,
++                            // so blindly spreading the whole object would let a later branch's untouched keys
++                            // stomp an earlier branch's real update to that same key.
++                            if (
++                                subFlowResult?.agentflowRuntime &&
++                                subFlowResult.agentflowRuntime.state &&
++                                Object.keys(subFlowResult.agentflowRuntime.state).length > 0
++                            ) {
++                                const branchState = subFlowResult.agentflowRuntime.state
++                                for (const key of Object.keys(branchState)) {
++                                    if (!isEqual(branchState[key], stateSnapshot[key])) {
++                                        updatedState[key] = branchState[key]
++                                    }
++                                }
++                            }
++
++                            branchResults.push({ branchIndex, content: subFlowResult?.text })
++                        } else {
++                            const errorMessage = getErrorMessage(settled.reason)
++                            console.error(`  ❌ Error in parallel branch ${branchIndex + 1}: ${errorMessage}`)
++                            branchResults.push({ branchIndex, error: errorMessage })
++                        }
++                    })
++
++                    agentflowRuntime.state = updatedState
++                    results.state = updatedState
++
++                    if (parentExecutionId) {
++                        try {
++                            logger.debug(`  📝 Updating parent execution ${parentExecutionId} with parallel branch data`)
++                            await updateExecution(appDataSource, parentExecutionId, workspaceId, {
++                                executionData: JSON.stringify(agentFlowExecutedData)
++                            })
++                        } catch (error) {
++                            console.error(`  ❌ Error updating parent execution: ${getErrorMessage(error)}`)
++                        }
++                    }
++
++                    results.output = {
++                        ...(results.output || {}),
++                        branchResults,
++                        content: branchResults
++                            .map((b) => (b.error ? `[Branch ${b.branchIndex + 1} Error]: ${b.error}` : b.content))
++                            .filter(Boolean)
++                            .join('\n')
++                    }
++
++                    logger.debug(`  📊 Completed all parallel branches. Total: ${branchResults.length}`)
++                }
++            }
++        }
++
+         // Stop going through the current route if the node is a human task
+         if (!humanInput && reactFlowNode.data.name === 'humanInputAgentflow') {
+             const humanInputAction = {
+diff --git a/packages/ui/src/store/constant.js b/packages/ui/src/store/constant.js
+index a5641280030..1316335a0ec 100644
+--- a/packages/ui/src/store/constant.js
++++ b/packages/ui/src/store/constant.js
+@@ -14,7 +14,8 @@ import {
+     IconNote,
+     IconWorld,
+     IconRelationOneToManyFilled,
+-    IconVectorBezier2
++    IconVectorBezier2,
++    IconGitFork
+ } from '@tabler/icons-react'
+ 
+ export const gridSpacing = 3
+@@ -112,6 +113,11 @@ export const AGENTFLOW_ICONS = [
+         name: 'executeFlowAgentflow',
+         icon: IconVectorBezier2,
+         color: '#a3b18a'
++    },
++    {
++        name: 'parallelAgentflow',
++        icon: IconGitFork,
++        color: '#26A69A'
+     }
+ ]
+ 
+diff --git a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+index e89b4c81067..ebbe122e144 100644
+--- a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
++++ b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+@@ -33,7 +33,8 @@ import {
+     IconRelationOneToManyFilled,
+     IconShare,
+     IconWorld,
+-    IconX
++    IconX,
++    IconGitFork
+ } from '@tabler/icons-react'
+ 
+ // Project imports
+@@ -123,6 +124,8 @@ const StyledTreeItemLabelText = styled(Typography)(({ theme }) => ({
+ function CustomLabel({ icon: Icon, itemStatus, children, name, ...other }) {
+     // Check if this is an iteration node
+     const isIterationNode = name === 'iterationAgentflow'
++    // Check if this is a parallel node
++    const isParallelNode = name === 'parallelAgentflow'
+ 
+     return (
+         <TreeItem2Label
+@@ -149,6 +152,22 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, ...other }) {
+                     )
+                 }
+ 
++                // Display parallel icon for parallel nodes
++                if (isParallelNode) {
++                    return (
++                        <Box
++                            sx={{
++                                mr: 1,
++                                display: 'flex',
++                                alignItems: 'center',
++                                justifyContent: 'center'
++                            }}
++                        >
++                            <IconGitFork size={20} color={'#26A69A'} />
++                        </Box>
++                    )
++                }
++
+                 // Otherwise display the node icon
+                 const foundIcon = AGENTFLOW_ICONS.find((icon) => icon.name === name)
+                 if (foundIcon) {
+@@ -415,6 +434,28 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+             }
+         })
+ 
++        // Identify parallel nodes and their branch children
++        const parallelGroups = new Map() // parentId -> Map of branchIndex -> nodes
++
++        // Group parallel branch child nodes by their parent and branch index
++        nodes.forEach((node, index) => {
++            if (node.data?.parentNodeId && node.data?.branchIndex !== undefined) {
++                const parentId = node.data.parentNodeId
++                const branchIndex = node.data.branchIndex
++
++                if (!parallelGroups.has(parentId)) {
++                    parallelGroups.set(parentId, new Map())
++                }
++
++                const branchMap = parallelGroups.get(parentId)
++                if (!branchMap.has(branchIndex)) {
++                    branchMap.set(branchIndex, [])
++                }
++
++                branchMap.get(branchIndex).push(`${node.nodeId}_${index}`)
++            }
++        })
++
+         // Create virtual iteration container nodes
+         iterationGroups.forEach((iterationMap, parentId) => {
+             iterationMap.forEach((nodeIds, iterationIndex) => {
+@@ -478,6 +519,63 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+             })
+         })
+ 
++        // Create virtual parallel branch container nodes
++        parallelGroups.forEach((branchMap, parentId) => {
++            branchMap.forEach((nodeIds, branchIndex) => {
++                // Find the parent parallel node
++                let parentNode = null
++                for (let i = 0; i < nodes.length; i++) {
++                    if (nodes[i].nodeId === parentId) {
++                        parentNode = nodes[i]
++                        break
++                    }
++                }
++
++                if (!parentNode) return
++
++                // Create a virtual node for this branch
++                const branchNodeId = `${parentId}_branch_${branchIndex}`
++                const branchLabel = `Branch #${branchIndex + 1}`
++
++                // Determine status based on child nodes
++                const childNodes = nodeIds.map((id) => nodeMap.get(id))
++                const branchStatus = childNodes.some((n) => n.status === 'ERROR')
++                    ? 'ERROR'
++                    : childNodes.some((n) => n.status === 'INPROGRESS')
++                    ? 'INPROGRESS'
++                    : childNodes.every((n) => n.status === 'FINISHED')
++                    ? 'FINISHED'
++                    : 'UNKNOWN'
++
++                // Create the virtual node and add to nodeMap
++                const virtualNode = {
++                    nodeId: branchNodeId,
++                    nodeLabel: branchLabel,
++                    data: {
++                        name: 'parallelAgentflow',
++                        branchIndex,
++                        isVirtualNode: true,
++                        parentIterationId: parentId
++                    },
++                    previousNodeIds: [], // Will be handled in the main tree building
++                    status: branchStatus,
++                    uniqueNodeId: branchNodeId,
++                    children: [],
++                    executionIndex: -1 // Flag as a virtual node
++                }
++
++                nodeMap.set(branchNodeId, virtualNode)
++
++                // Set this virtual node as the parent for all nodes in this branch
++                nodeIds.forEach((childId) => {
++                    const childNode = nodeMap.get(childId)
++                    if (childNode) {
++                        childNode.virtualParentId = branchNodeId
++                    }
++                })
++            })
++        })
++
+         // Root nodes have no previous nodes
+         const rootNodes = []
+         const processedNodes = new Set()
+@@ -487,8 +585,8 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+             const uniqueNodeId = `${node.nodeId}_${index}`
+             const treeNode = nodeMap.get(uniqueNodeId)
+ 
+-            // Skip nodes that belong to an iteration (they'll be added to their virtual parent)
+-            if (node.data?.parentNodeId && node.data?.iterationIndex !== undefined) {
++            // Skip nodes that belong to an iteration or parallel branch (they'll be added to their virtual parent)
++            if (node.data?.parentNodeId && (node.data?.iterationIndex !== undefined || node.data?.branchIndex !== undefined)) {
+                 return
+             }
+ 
+@@ -554,7 +652,40 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+             })
+         })
+ 
+-        // Third pass: Build the structure inside each virtual iteration node
++        // Second pass (parallel): Build the parallel branch sub-trees
++        parallelGroups.forEach((branchMap, parentId) => {
++            // Find all instances of the parent node
++            const parentInstances = []
++            nodes.forEach((node, index) => {
++                if (node.nodeId === parentId) {
++                    parentInstances.push(`${node.nodeId}_${index}`)
++                }
++            })
++
++            // Find the latest instance of the parent node that exists in the tree
++            let latestParent = null
++            for (let i = parentInstances.length - 1; i >= 0; i--) {
++                const instanceId = parentInstances[i]
++                const parent = nodeMap.get(instanceId)
++                if (parent) {
++                    latestParent = parent
++                    break
++                }
++            }
++
++            if (!latestParent) return
++
++            // Add all virtual branch nodes to the parent
++            branchMap.forEach((nodeIds, branchIndex) => {
++                const branchNodeId = `${parentId}_branch_${branchIndex}`
++                const virtualNode = nodeMap.get(branchNodeId)
++                if (virtualNode) {
++                    latestParent.children.push(virtualNode)
++                }
++            })
++        })
++
++        // Third pass: Build the structure inside each virtual iteration/parallel node
+         nodeMap.forEach((node) => {
+             if (node.virtualParentId) {
+                 const virtualParent = nodeMap.get(node.virtualParentId)
+@@ -563,14 +694,19 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+                         // This is a root node within the iteration
+                         virtualParent.children.push(node)
+                     } else {
+-                        // Find its parent within the same iteration
++                        // Find its parent within the same iteration/branch
+                         let parentFound = false
+                         for (const prevNodeId of node.previousNodeIds) {
+-                            // Look for nodes with the same previous node ID in the same iteration
++                            // Look for nodes with the same previous node ID in the same iteration/branch
+                             nodeMap.forEach((potentialParent) => {
++                                const sameGroup =
++                                    node.data?.iterationIndex !== undefined
++                                        ? potentialParent.data?.iterationIndex === node.data?.iterationIndex
++                                        : potentialParent.data?.branchIndex === node.data?.branchIndex
++
+                                 if (
+                                     potentialParent.nodeId === prevNodeId &&
+-                                    potentialParent.data?.iterationIndex === node.data?.iterationIndex &&
++                                    sameGroup &&
+                                     potentialParent.data?.parentNodeId === node.data?.parentNodeId &&
+                                     !parentFound
+                                 ) {
+@@ -580,7 +716,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+                             })
+                         }
+ 
+-                        // If no parent was found within the iteration, add directly to virtual parent
++                        // If no parent was found within the iteration/branch, add directly to virtual parent
+                         if (!parentFound) {
+                             virtualParent.children.push(node)
+                         }
+@@ -594,18 +730,20 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+             if (node.children && node.children.length > 0) {
+                 // Sort children: iteration nodes first, then others by their original execution order
+                 node.children.sort((a, b) => {
+-                    // Check if a is an iteration node
+-                    const aIsIteration = a.data?.name === 'iterationAgentflow' || a.data?.isVirtualNode
+-                    // Check if b is an iteration node
+-                    const bIsIteration = b.data?.name === 'iterationAgentflow' || b.data?.isVirtualNode
+-
+-                    // If both are iterations or both are not iterations, preserve original order
+-                    if (aIsIteration === bIsIteration) {
++                    // Check if a is a container (iteration/parallel) node
++                    const aIsContainer =
++                        a.data?.name === 'iterationAgentflow' || a.data?.name === 'parallelAgentflow' || a.data?.isVirtualNode
++                    // Check if b is a container (iteration/parallel) node
++                    const bIsContainer =
++                        b.data?.name === 'iterationAgentflow' || b.data?.name === 'parallelAgentflow' || b.data?.isVirtualNode
++
++                    // If both are containers or both are not containers, preserve original order
++                    if (aIsContainer === bIsContainer) {
+                         return a.executionIndex - b.executionIndex
+                     }
+ 
+-                    // Otherwise, put iterations first
+-                    return aIsIteration ? -1 : 1
++                    // Otherwise, put containers first
++                    return aIsContainer ? -1 : 1
+                 })
+ 
+                 // Recursively sort children's children
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 962562c28c2..3e5309e18be 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -22,6 +22,7 @@ import { useTheme } from '@mui/material/styles'
+ // project imports
+ import CanvasNode from './AgentFlowNode'
+ import IterationNode from './IterationNode'
++import ParallelNode from './ParallelNode'
+ import AgentFlowEdge from './AgentFlowEdge'
+ import ConnectionLine from './ConnectionLine'
+ import StickyNote from './StickyNote'
+@@ -61,7 +62,7 @@ import { usePrompt } from '@/utils/usePrompt'
+ // const
+ import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+ 
+-const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
++const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode, parallel: ParallelNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
+ // ==============================|| CANVAS ||============================== //
+@@ -345,33 +346,35 @@ const AgentflowCanvas = () => {
+ 
+             if (nodeData.type === 'Iteration') {
+                 newNode.type = 'iteration'
++            } else if (nodeData.type === 'Parallel') {
++                newNode.type = 'parallel'
+             } else if (nodeData.type === 'StickyNote') {
+                 newNode.type = 'stickyNote'
+             } else {
+                 newNode.type = 'agentFlow'
+             }
+ 
+-            // Check if the dropped node is within any Iteration node's flowContainerSize
+-            const iterationNodes = nodes.filter((node) => node.type === 'iteration')
++            // Check if the dropped node is within any Iteration/Parallel container node's bounds
++            const containerNodes = nodes.filter((node) => node.type === 'iteration' || node.type === 'parallel')
+             let parentNode = null
+ 
+-            for (const iterationNode of iterationNodes) {
+-                // Get the iteration node's position and dimensions
+-                const nodeWidth = iterationNode.width || 300
+-                const nodeHeight = iterationNode.height || 250
++            for (const containerNode of containerNodes) {
++                // Get the container node's position and dimensions
++                const nodeWidth = containerNode.width || 300
++                const nodeHeight = containerNode.height || 250
+ 
+-                // Calculate the boundaries of the iteration node
+-                const nodeLeft = iterationNode.position.x
++                // Calculate the boundaries of the container node
++                const nodeLeft = containerNode.position.x
+                 const nodeRight = nodeLeft + nodeWidth
+-                const nodeTop = iterationNode.position.y
++                const nodeTop = containerNode.position.y
+                 const nodeBottom = nodeTop + nodeHeight
+ 
+                 // Check if the dropped position is within these boundaries
+                 if (position.x >= nodeLeft && position.x <= nodeRight && position.y >= nodeTop && position.y <= nodeBottom) {
+-                    parentNode = iterationNode
++                    parentNode = containerNode
+ 
+                     // We can't have nested iteration nodes
+-                    if (nodeData.name === 'iterationAgentflow') {
++                    if (nodeData.name === 'iterationAgentflow' && containerNode.type === 'iteration') {
+                         enqueueSnackbar({
+                             message: 'Nested iteration node is not supported yet',
+                             options: {
+@@ -388,10 +391,30 @@ const AgentflowCanvas = () => {
+                         return
+                     }
+ 
+-                    // We can't have human input node inside iteration node
++                    // We can't have nested parallel nodes
++                    if (nodeData.name === 'parallelAgentflow' && containerNode.type === 'parallel') {
++                        enqueueSnackbar({
++                            message: 'Nested parallel node is not supported yet',
++                            options: {
++                                key: new Date().getTime() + Math.random(),
++                                variant: 'error',
++                                persist: true,
++                                action: (key) => (
++                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
++                                        <IconX />
++                                    </Button>
++                                )
++                            }
++                        })
++                        return
++                    }
++
++                    // We can't have human input node inside iteration/parallel node
+                     if (nodeData.name === 'humanInputAgentflow') {
+                         enqueueSnackbar({
+-                            message: 'Human input node is not supported inside Iteration node',
++                            message: `Human input node is not supported inside ${
++                                containerNode.type === 'iteration' ? 'Iteration' : 'Parallel'
++                            } node`,
+                             options: {
+                                 key: new Date().getTime() + Math.random(),
+                                 variant: 'error',
+@@ -409,7 +432,7 @@ const AgentflowCanvas = () => {
+                 }
+             }
+ 
+-            // If the node is dropped inside an iteration node, set its parent
++            // If the node is dropped inside a container node, set its parent
+             if (parentNode) {
+                 newNode.parentNode = parentNode.id
+                 newNode.extent = 'parent'
+diff --git a/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx b/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
+index aa62363c49a..7dd880e6389 100644
+--- a/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/MarketplaceCanvas.jsx
+@@ -14,6 +14,7 @@ import { useTheme } from '@mui/material/styles'
+ import AgentFlowNode from './AgentFlowNode'
+ import AgentFlowEdge from './AgentFlowEdge'
+ import IterationNode from './IterationNode'
++import ParallelNode from './ParallelNode'
+ import MarketplaceCanvasHeader from '@/views/marketplaces/MarketplaceCanvasHeader'
+ import StickyNote from './StickyNote'
+ import EditNodeDialog from '@/views/agentflowsv2/EditNodeDialog'
+@@ -22,7 +23,7 @@ import { flowContext } from '@/store/context/ReactFlowContext'
+ // icons
+ import { IconMagnetFilled, IconMagnetOff, IconArtboard, IconArtboardOff } from '@tabler/icons-react'
+ 
+-const nodeTypes = { agentFlow: AgentFlowNode, stickyNote: StickyNote, iteration: IterationNode }
++const nodeTypes = { agentFlow: AgentFlowNode, stickyNote: StickyNote, iteration: IterationNode, parallel: ParallelNode }
+ const edgeTypes = { agentFlow: AgentFlowEdge }
+ 
+ // ==============================|| CANVAS ||============================== //
+diff --git a/packages/ui/src/views/agentflowsv2/ParallelNode.jsx b/packages/ui/src/views/agentflowsv2/ParallelNode.jsx
+new file mode 100644
+index 00000000000..3e607bccca6
+--- /dev/null
++++ b/packages/ui/src/views/agentflowsv2/ParallelNode.jsx
+@@ -0,0 +1,425 @@
++import PropTypes from 'prop-types'
++import { useContext, memo, useRef, useState, useEffect, useCallback } from 'react'
++import { useSelector } from 'react-redux'
++import { Background, Handle, Position, useUpdateNodeInternals, NodeToolbar, NodeResizer } from 'reactflow'
++
++// material-ui
++import { styled, useTheme, alpha, darken, lighten } from '@mui/material/styles'
++import { ButtonGroup, Avatar, Box, Typography, IconButton, Tooltip } from '@mui/material'
++
++// project imports
++import MainCard from '@/ui-component/cards/MainCard'
++import { flowContext } from '@/store/context/ReactFlowContext'
++import NodeInfoDialog from '@/ui-component/dialog/NodeInfoDialog'
++
++// icons
++import {
++    IconCheck,
++    IconExclamationMark,
++    IconCircleChevronRightFilled,
++    IconCopy,
++    IconTrash,
++    IconInfoCircle,
++    IconLoader
++} from '@tabler/icons-react'
++import StopCircleIcon from '@mui/icons-material/StopCircle'
++import CancelIcon from '@mui/icons-material/Cancel'
++
++// const
++import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
++
++const CardWrapper = styled(MainCard)(({ theme }) => ({
++    background: theme.palette.card.main,
++    color: theme.darkTextPrimary,
++    border: 'solid 1px',
++    width: 'max-content',
++    height: 'auto',
++    padding: '10px',
++    boxShadow: 'none'
++}))
++
++const StyledNodeToolbar = styled(NodeToolbar)(({ theme }) => ({
++    backgroundColor: theme.palette.card.main,
++    color: theme.darkTextPrimary,
++    padding: '5px',
++    borderRadius: '10px',
++    boxShadow: '0 2px 14px 0 rgb(32 40 45 / 8%)'
++}))
++
++// ===========================|| PARALLEL NODE ||=========================== //
++
++const ParallelNode = ({ data }) => {
++    const theme = useTheme()
++    const customization = useSelector((state) => state.customization)
++    const ref = useRef(null)
++    const reactFlowWrapper = useRef(null)
++
++    const updateNodeInternals = useUpdateNodeInternals()
++    // eslint-disable-next-line
++    const [position, setPosition] = useState(0)
++    const [isHovered, setIsHovered] = useState(false)
++    const { deleteNode, duplicateNode, reactFlowInstance } = useContext(flowContext)
++    const [showInfoDialog, setShowInfoDialog] = useState(false)
++    const [infoDialogProps, setInfoDialogProps] = useState({})
++
++    const [cardDimensions, setCardDimensions] = useState({
++        width: '300px',
++        height: '250px'
++    })
++
++    // Add useEffect to update dimensions when reactFlowInstance becomes available
++    useEffect(() => {
++        if (reactFlowInstance) {
++            const node = reactFlowInstance.getNodes().find((node) => node.id === data.id)
++            if (node && node.width && node.height) {
++                setCardDimensions({
++                    width: `${node.width}px`,
++                    height: `${node.height}px`
++                })
++            }
++        }
++    }, [reactFlowInstance, data.id])
++
++    const defaultColor = '#666666' // fallback color if data.color is not present
++    const nodeColor = data.color || defaultColor
++
++    // Get different shades of the color based on state
++    const getStateColor = () => {
++        if (data.selected) return nodeColor
++        if (isHovered) return alpha(nodeColor, 0.8)
++        return alpha(nodeColor, 0.5)
++    }
++
++    const getOutputAnchors = () => {
++        return data.outputAnchors ?? []
++    }
++
++    const getAnchorPosition = (index) => {
++        const currentHeight = ref.current?.clientHeight || 0
++        const spacing = currentHeight / (getOutputAnchors().length + 1)
++        const position = spacing * (index + 1)
++
++        // Update node internals when we get a non-zero position
++        if (position > 0) {
++            updateNodeInternals(data.id)
++        }
++
++        return position
++    }
++
++    const getMinimumHeight = () => {
++        const outputCount = getOutputAnchors().length
++        // Use exactly 60px as minimum height
++        return Math.max(60, outputCount * 20 + 40)
++    }
++
++    const getBackgroundColor = () => {
++        if (customization.isDarkMode) {
++            return isHovered ? darken(nodeColor, 0.7) : darken(nodeColor, 0.8)
++        }
++        return isHovered ? lighten(nodeColor, 0.8) : lighten(nodeColor, 0.9)
++    }
++
++    const getStatusBackgroundColor = (status) => {
++        switch (status) {
++            case 'ERROR':
++                return theme.palette.error.dark
++            case 'INPROGRESS':
++                return theme.palette.warning.dark
++            case 'STOPPED':
++            case 'TERMINATED':
++                return theme.palette.error.main
++            case 'FINISHED':
++                return theme.palette.success.dark
++            default:
++                return theme.palette.primary.dark
++        }
++    }
++
++    const renderIcon = (node) => {
++        const foundIcon = AGENTFLOW_ICONS.find((icon) => icon.name === node.name)
++
++        if (!foundIcon) return null
++        return <foundIcon.icon size={24} color={'white'} />
++    }
++
++    useEffect(() => {
++        if (ref.current) {
++            setTimeout(() => {
++                setPosition(ref.current?.offsetTop + ref.current?.clientHeight / 2)
++                updateNodeInternals(data.id)
++            }, 10)
++        }
++    }, [data, ref, updateNodeInternals])
++
++    const onResizeEnd = useCallback(
++        (e, params) => {
++            if (!ref.current) return
++
++            // Set the card dimensions directly from resize params
++            setCardDimensions({
++                width: `${params.width}px`,
++                height: `${params.height}px`
++            })
++        },
++        [ref, setCardDimensions]
++    )
++
++    return (
++        <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
++            <NodeToolbar align='start' isVisible={true}>
++                <Box style={{ display: 'flex', alignItems: 'center', flexDirection: 'row' }}>
++                    {data.color && !data.icon ? (
++                        <div
++                            style={{
++                                ...theme.typography.commonAvatar,
++                                ...theme.typography.largeAvatar,
++                                borderRadius: '15px',
++                                backgroundColor: data.color,
++                                cursor: 'grab',
++                                display: 'flex',
++                                justifyContent: 'center',
++                                alignItems: 'center',
++                                background: data.color
++                            }}
++                        >
++                            {renderIcon(data)}
++                        </div>
++                    ) : (
++                        <div
++                            style={{
++                                ...theme.typography.commonAvatar,
++                                ...theme.typography.largeAvatar,
++                                borderRadius: '50%',
++                                backgroundColor: 'white',
++                                cursor: 'grab'
++                            }}
++                        >
++                            <img
++                                style={{ width: '100%', height: '100%', padding: 5, objectFit: 'contain' }}
++                                src={`${baseURL}/api/v1/node-icon/${data.name}`}
++                                alt={data.name}
++                            />
++                        </div>
++                    )}
++                    <Typography
++                        sx={{
++                            fontSize: '0.85rem',
++                            fontWeight: 500,
++                            ml: 1
++                        }}
++                    >
++                        {data.label}
++                    </Typography>
++                </Box>
++            </NodeToolbar>
++            <StyledNodeToolbar align='end'>
++                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
++                    <IconButton
++                        size={'small'}
++                        title='Duplicate'
++                        onClick={() => {
++                            duplicateNode(data.id)
++                        }}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.primary.main
++                            }
++                        }}
++                    >
++                        <IconCopy size={20} />
++                    </IconButton>
++                    <IconButton
++                        size={'small'}
++                        title='Delete'
++                        onClick={() => {
++                            deleteNode(data.id)
++                        }}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.error.main
++                            }
++                        }}
++                    >
++                        <IconTrash size={20} />
++                    </IconButton>
++                    <IconButton
++                        size={'small'}
++                        title='Info'
++                        onClick={() => {
++                            setInfoDialogProps({ data })
++                            setShowInfoDialog(true)
++                        }}
++                        sx={{
++                            color: customization.isDarkMode ? 'white' : 'inherit',
++                            '&:hover': {
++                                color: theme.palette.info.main
++                            }
++                        }}
++                    >
++                        <IconInfoCircle size={20} />
++                    </IconButton>
++                </ButtonGroup>
++            </StyledNodeToolbar>
++            <NodeResizer minWidth={300} minHeight={Math.max(getMinimumHeight(), 250)} onResizeEnd={onResizeEnd} />
++            <CardWrapper
++                content={false}
++                sx={{
++                    borderColor: getStateColor(),
++                    borderWidth: '1px',
++                    boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
++                    minHeight: Math.max(getMinimumHeight(), 250),
++                    minWidth: 300,
++                    width: cardDimensions.width,
++                    height: cardDimensions.height,
++                    backgroundColor: getBackgroundColor(),
++                    display: 'flex',
++                    '&:hover': {
++                        boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none'
++                    }
++                }}
++                border={false}
++            >
++                {data && data.status && (
++                    <Tooltip title={data.status === 'ERROR' ? data.error || 'Error' : ''}>
++                        <Avatar
++                            variant='rounded'
++                            sx={{
++                                ...theme.typography.smallAvatar,
++                                borderRadius: '50%',
++                                background:
++                                    data.status === 'STOPPED' || data.status === 'TERMINATED'
++                                        ? 'white'
++                                        : getStatusBackgroundColor(data.status),
++                                color: 'white',
++                                ml: 2,
++                                position: 'absolute',
++                                top: -10,
++                                right: -10
++                            }}
++                        >
++                            {data.status === 'INPROGRESS' ? (
++                                <IconLoader className='spin-animation' />
++                            ) : data.status === 'ERROR' ? (
++                                <IconExclamationMark />
++                            ) : data.status === 'TERMINATED' ? (
++                                <CancelIcon sx={{ color: getStatusBackgroundColor(data.status) }} />
++                            ) : data.status === 'STOPPED' ? (
++                                <StopCircleIcon sx={{ color: getStatusBackgroundColor(data.status) }} />
++                            ) : (
++                                <IconCheck />
++                            )}
++                        </Avatar>
++                    </Tooltip>
++                )}
++
++                <Box sx={{ width: '100%' }}>
++                    {!data.hideInput && (
++                        <Handle
++                            type='target'
++                            position={Position.Left}
++                            id={data.id}
++                            style={{
++                                width: 5,
++                                height: 20,
++                                backgroundColor: 'transparent',
++                                border: 'none',
++                                position: 'absolute',
++                                left: -2
++                            }}
++                        >
++                            <div
++                                style={{
++                                    width: 5,
++                                    height: 20,
++                                    backgroundColor: nodeColor,
++                                    position: 'absolute',
++                                    left: '50%',
++                                    top: '50%',
++                                    transform: 'translate(-50%, -50%)'
++                                }}
++                            />
++                        </Handle>
++                    )}
++                    <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
++                        <Box
++                            sx={{
++                                height: `calc(${cardDimensions.height} - 20px)`,
++                                width: `${cardDimensions.width}`,
++                                overflow: 'hidden',
++                                position: 'relative',
++                                borderRadius: '10px'
++                            }}
++                        >
++                            <div
++                                ref={reactFlowWrapper}
++                                style={{
++                                    width: '100%',
++                                    height: '100%',
++                                    position: 'absolute',
++                                    top: 0,
++                                    left: 0,
++                                    right: 0,
++                                    bottom: 0,
++                                    backgroundColor: theme.palette.background.default
++                                }}
++                            >
++                                <Background color='#aaa' gap={16} />
++                            </div>
++                        </Box>
++                    </div>
++                    {getOutputAnchors().map((outputAnchor, index) => {
++                        return (
++                            <Handle
++                                type='source'
++                                position={Position.Right}
++                                key={outputAnchor.id}
++                                id={outputAnchor.id}
++                                style={{
++                                    height: 20,
++                                    width: 20,
++                                    top: getAnchorPosition(index),
++                                    backgroundColor: 'transparent',
++                                    border: 'none',
++                                    position: 'absolute',
++                                    right: -10,
++                                    opacity: isHovered ? 1 : 0,
++                                    transition: 'opacity 0.2s'
++                                }}
++                            >
++                                <div
++                                    style={{
++                                        position: 'absolute',
++                                        width: 20,
++                                        height: 20,
++                                        borderRadius: '50%',
++                                        backgroundColor: theme.palette.background.paper, // or 'white'
++                                        pointerEvents: 'none'
++                                    }}
++                                />
++                                <IconCircleChevronRightFilled
++                                    size={20}
++                                    color={nodeColor}
++                                    style={{
++                                        pointerEvents: 'none',
++                                        position: 'relative',
++                                        zIndex: 1
++                                    }}
++                                />
++                            </Handle>
++                        )
++                    })}
++                </Box>
++            </CardWrapper>
++            <NodeInfoDialog show={showInfoDialog} dialogProps={infoDialogProps} onCancel={() => setShowInfoDialog(false)}></NodeInfoDialog>
++        </div>
++    )
++}
++
++ParallelNode.propTypes = {
++    data: PropTypes.object
++}
++
++export default memo(ParallelNode)
+diff --git a/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx b/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
+index f4559b67b62..6d586f36584 100644
+--- a/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
++++ b/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
+@@ -39,7 +39,8 @@ import {
+     IconCircleXFilled,
+     IconRelationOneToManyFilled,
+     IconChevronDown,
+-    IconChevronRight
++    IconChevronRight,
++    IconGitFork
+ } from '@tabler/icons-react'
+ 
+ // Project imports
+@@ -128,6 +129,8 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, label, data, meta
+ 
+     // Check if this is an iteration node
+     const isIterationNode = name === 'iterationAgentflow'
++    // Check if this is a parallel node
++    const isParallelNode = name === 'parallelAgentflow'
+ 
+     return (
+         <TreeItem2Label
+@@ -156,6 +159,22 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, label, data, meta
+                         )
+                     }
+ 
++                    // Display parallel icon for parallel nodes
++                    if (isParallelNode) {
++                        return (
++                            <Box
++                                sx={{
++                                    mr: 1,
++                                    display: 'flex',
++                                    alignItems: 'center',
++                                    justifyContent: 'center'
++                                }}
++                            >
++                                <IconGitFork size={20} color={'#26A69A'} />
++                            </Box>
++                        )
++                    }
++
+                     // Otherwise display the node icon
+                     const foundIcon = AGENTFLOW_ICONS.find((icon) => icon.name === name)
+                     if (foundIcon) {
+@@ -390,6 +409,28 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+             }
+         })
+ 
++        // Identify parallel nodes and their branch children
++        const parallelGroups = new Map() // parentId -> Map of branchIndex -> nodes
++
++        // Group parallel branch child nodes by their parent and branch index
++        nodes.forEach((node, index) => {
++            if (node.data?.parentNodeId && node.data?.branchIndex !== undefined) {
++                const parentId = node.data.parentNodeId
++                const branchIndex = node.data.branchIndex
++
++                if (!parallelGroups.has(parentId)) {
++                    parallelGroups.set(parentId, new Map())
++                }
++
++                const branchMap = parallelGroups.get(parentId)
++                if (!branchMap.has(branchIndex)) {
++                    branchMap.set(branchIndex, [])
++                }
++
++                branchMap.get(branchIndex).push(`${node.nodeId}_${index}`)
++            }
++        })
++
+         // Create virtual iteration container nodes
+         iterationGroups.forEach((iterationMap, parentId) => {
+             iterationMap.forEach((nodeIds, iterationIndex) => {
+@@ -453,6 +494,63 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+             })
+         })
+ 
++        // Create virtual parallel branch container nodes
++        parallelGroups.forEach((branchMap, parentId) => {
++            branchMap.forEach((nodeIds, branchIndex) => {
++                // Find the parent parallel node
++                let parentNode = null
++                for (let i = 0; i < nodes.length; i++) {
++                    if (nodes[i].nodeId === parentId) {
++                        parentNode = nodes[i]
++                        break
++                    }
++                }
++
++                if (!parentNode) return
++
++                // Create a virtual node for this branch
++                const branchNodeId = `${parentId}_branch_${branchIndex}`
++                const branchLabel = `Branch #${branchIndex + 1}`
++
++                // Determine status based on child nodes
++                const childNodes = nodeIds.map((id) => nodeMap.get(id))
++                const branchStatus = childNodes.some((n) => n.status === 'ERROR')
++                    ? 'ERROR'
++                    : childNodes.some((n) => n.status === 'INPROGRESS')
++                    ? 'INPROGRESS'
++                    : childNodes.every((n) => n.status === 'FINISHED')
++                    ? 'FINISHED'
++                    : 'UNKNOWN'
++
++                // Create the virtual node and add to nodeMap
++                const virtualNode = {
++                    nodeId: branchNodeId,
++                    nodeLabel: branchLabel,
++                    data: {
++                        name: 'parallelAgentflow',
++                        branchIndex,
++                        isVirtualNode: true,
++                        parentIterationId: parentId
++                    },
++                    previousNodeIds: [], // Will be handled in the main tree building
++                    status: branchStatus,
++                    uniqueNodeId: branchNodeId,
++                    children: [],
++                    executionIndex: -1 // Flag as a virtual node
++                }
++
++                nodeMap.set(branchNodeId, virtualNode)
++
++                // Set this virtual node as the parent for all nodes in this branch
++                nodeIds.forEach((childId) => {
++                    const childNode = nodeMap.get(childId)
++                    if (childNode) {
++                        childNode.virtualParentId = branchNodeId
++                    }
++                })
++            })
++        })
++
+         // Root nodes have no previous nodes
+         const rootNodes = []
+         const processedNodes = new Set()
+@@ -462,8 +560,8 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+             const uniqueNodeId = `${node.nodeId}_${index}`
+             const treeNode = nodeMap.get(uniqueNodeId)
+ 
+-            // Skip nodes that belong to an iteration (they'll be added to their virtual parent)
+-            if (node.data?.parentNodeId && node.data?.iterationIndex !== undefined) {
++            // Skip nodes that belong to an iteration or parallel branch (they'll be added to their virtual parent)
++            if (node.data?.parentNodeId && (node.data?.iterationIndex !== undefined || node.data?.branchIndex !== undefined)) {
+                 return
+             }
+ 
+@@ -529,7 +627,40 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+             })
+         })
+ 
+-        // Third pass: Build the structure inside each virtual iteration node
++        // Second pass (parallel): Build the parallel branch sub-trees
++        parallelGroups.forEach((branchMap, parentId) => {
++            // Find all instances of the parent node
++            const parentInstances = []
++            nodes.forEach((node, index) => {
++                if (node.nodeId === parentId) {
++                    parentInstances.push(`${node.nodeId}_${index}`)
++                }
++            })
++
++            // Find the latest instance of the parent node that exists in the tree
++            let latestParent = null
++            for (let i = parentInstances.length - 1; i >= 0; i--) {
++                const instanceId = parentInstances[i]
++                const parent = nodeMap.get(instanceId)
++                if (parent) {
++                    latestParent = parent
++                    break
++                }
++            }
++
++            if (!latestParent) return
++
++            // Add all virtual branch nodes to the parent
++            branchMap.forEach((nodeIds, branchIndex) => {
++                const branchNodeId = `${parentId}_branch_${branchIndex}`
++                const virtualNode = nodeMap.get(branchNodeId)
++                if (virtualNode) {
++                    latestParent.children.push(virtualNode)
++                }
++            })
++        })
++
++        // Third pass: Build the structure inside each virtual iteration/parallel node
+         nodeMap.forEach((node) => {
+             if (node.virtualParentId) {
+                 const virtualParent = nodeMap.get(node.virtualParentId)
+@@ -538,14 +669,19 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+                         // This is a root node within the iteration
+                         virtualParent.children.push(node)
+                     } else {
+-                        // Find its parent within the same iteration
++                        // Find its parent within the same iteration/branch
+                         let parentFound = false
+                         for (const prevNodeId of node.previousNodeIds) {
+-                            // Look for nodes with the same previous node ID in the same iteration
++                            // Look for nodes with the same previous node ID in the same iteration/branch
+                             nodeMap.forEach((potentialParent) => {
++                                const sameGroup =
++                                    node.data?.iterationIndex !== undefined
++                                        ? potentialParent.data?.iterationIndex === node.data?.iterationIndex
++                                        : potentialParent.data?.branchIndex === node.data?.branchIndex
++
+                                 if (
+                                     potentialParent.nodeId === prevNodeId &&
+-                                    potentialParent.data?.iterationIndex === node.data?.iterationIndex &&
++                                    sameGroup &&
+                                     potentialParent.data?.parentNodeId === node.data?.parentNodeId &&
+                                     !parentFound
+                                 ) {
+@@ -555,7 +691,7 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+                             })
+                         }
+ 
+-                        // If no parent was found within the iteration, add directly to virtual parent
++                        // If no parent was found within the iteration/branch, add directly to virtual parent
+                         if (!parentFound) {
+                             virtualParent.children.push(node)
+                         }
+@@ -569,18 +705,20 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+             if (node.children && node.children.length > 0) {
+                 // Sort children: iteration nodes first, then others by their original execution order
+                 node.children.sort((a, b) => {
+-                    // Check if a is an iteration node
+-                    const aIsIteration = a.data?.name === 'iterationAgentflow' || a.data?.isVirtualNode
+-                    // Check if b is an iteration node
+-                    const bIsIteration = b.data?.name === 'iterationAgentflow' || b.data?.isVirtualNode
+-
+-                    // If both are iterations or both are not iterations, preserve original order
+-                    if (aIsIteration === bIsIteration) {
++                    // Check if a is a container (iteration/parallel) node
++                    const aIsContainer =
++                        a.data?.name === 'iterationAgentflow' || a.data?.name === 'parallelAgentflow' || a.data?.isVirtualNode
++                    // Check if b is a container (iteration/parallel) node
++                    const bIsContainer =
++                        b.data?.name === 'iterationAgentflow' || b.data?.name === 'parallelAgentflow' || b.data?.isVirtualNode
++
++                    // If both are containers or both are not containers, preserve original order
++                    if (aIsContainer === bIsContainer) {
+                         return a.executionIndex - b.executionIndex
+                     }
+ 
+-                    // Otherwise, put iterations first
+-                    return aIsIteration ? -1 : 1
++                    // Otherwise, put containers first
++                    return aIsContainer ? -1 : 1
+                 })
+ 
+                 // Recursively sort children's children
+
+From fca037cb1601f9196d3b22ad1aac4d4982a3d3e9 Mon Sep 17 00:00:00 2001
+From: seongmincho315 <seongmin.cho@genon.ai>
+Date: Mon, 20 Jul 2026 11:18:36 +0900
+Subject: [PATCH 2/2] fix: address code review feedback on Parallel node
+
+- Merge parent iterationContext instead of overwriting it, so nested
+  containers (e.g. Parallel inside Iteration) keep $iteration resolution
+- Preserve existing parentNodeId when tagging branch executed data,
+  needed for nested container scenarios
+- Recover partial execution data from a rejected branch promise so
+  failed branches still show up in the execution log
+- Check both iterationIndex and branchIndex when matching parents in
+  the execution tree builder (ExecutionDetails, AgentExecutedDataCard)
+- Simplify ParallelNode resizing to percentage-based CSS dimensions,
+  removing the manual dimension-tracking state/effect
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ packages/server/src/utils/buildAgentflow.ts   | 24 ++++++++-
+ .../agentexecutions/ExecutionDetails.jsx      |  6 +--
+ .../src/views/agentflowsv2/ParallelNode.jsx   | 52 +++++--------------
+ .../chatmessage/AgentExecutedDataCard.jsx     |  6 +--
+ 4 files changed, 41 insertions(+), 47 deletions(-)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index 743be7a2c22..52c1290d207 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1483,6 +1483,7 @@ const executeNode = async ({
+                                 isRecursive: true,
+                                 parentExecutionId,
+                                 iterationContext: {
++                                    ...iterationContext,
+                                     branchIndex: branch.branchIndex,
+                                     sessionId,
+                                     agentflowRuntime: branchAgentflowRuntime
+@@ -1512,7 +1513,7 @@ const executeNode = async ({
+                                     data: {
+                                         ...data.data,
+                                         branchIndex,
+-                                        parentNodeId: reactFlowNode.data.id
++                                        parentNodeId: data.data.parentNodeId || reactFlowNode.data.id
+                                     }
+                                 }))
+                                 agentFlowExecutedData.push(...branchExecutedData)
+@@ -1541,6 +1542,21 @@ const executeNode = async ({
+                             const errorMessage = getErrorMessage(settled.reason)
+                             console.error(`  ❌ Error in parallel branch ${branchIndex + 1}: ${errorMessage}`)
+                             branchResults.push({ branchIndex, error: errorMessage })
++
++                            // Recover partial execution data from the rejected branch so it's still visible in the UI
++                            const branchExecutedData = (settled.reason as { agentFlowExecutedData?: IAgentflowExecutedData[] })
++                                ?.agentFlowExecutedData
++                            if (branchExecutedData) {
++                                const mappedData = branchExecutedData.map((data: IAgentflowExecutedData) => ({
++                                    ...data,
++                                    data: {
++                                        ...data.data,
++                                        branchIndex,
++                                        parentNodeId: data.data.parentNodeId || reactFlowNode.data.id
++                                    }
++                                }))
++                                agentFlowExecutedData.push(...mappedData)
++                            }
+                         }
+                     })
+ 
+@@ -2371,7 +2387,11 @@ export const executeAgentFlow = async ({
+                 await analyticHandlers.onChainError(parentTraceIds, errorMessage, true)
+             }
+ 
+-            throw new Error(errorMessage)
++            // Attach the executed data accumulated so far so callers (e.g. parallel branch handling)
++            // can still surface partial results from a branch that threw
++            const executionError = new Error(errorMessage) as Error & { agentFlowExecutedData?: IAgentflowExecutedData[] }
++            executionError.agentFlowExecutedData = agentFlowExecutedData
++            throw executionError
+         }
+ 
+         logger.debug(`/////////////////////////////////////////////////////////////////////////////`)
+diff --git a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+index ebbe122e144..87d021444b4 100644
+--- a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
++++ b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+@@ -700,9 +700,9 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+                             // Look for nodes with the same previous node ID in the same iteration/branch
+                             nodeMap.forEach((potentialParent) => {
+                                 const sameGroup =
+-                                    node.data?.iterationIndex !== undefined
+-                                        ? potentialParent.data?.iterationIndex === node.data?.iterationIndex
+-                                        : potentialParent.data?.branchIndex === node.data?.branchIndex
++                                    (node.data?.iterationIndex === undefined ||
++                                        potentialParent.data?.iterationIndex === node.data?.iterationIndex) &&
++                                    (node.data?.branchIndex === undefined || potentialParent.data?.branchIndex === node.data?.branchIndex)
+ 
+                                 if (
+                                     potentialParent.nodeId === prevNodeId &&
+diff --git a/packages/ui/src/views/agentflowsv2/ParallelNode.jsx b/packages/ui/src/views/agentflowsv2/ParallelNode.jsx
+index 3e607bccca6..5f96361f48a 100644
+--- a/packages/ui/src/views/agentflowsv2/ParallelNode.jsx
++++ b/packages/ui/src/views/agentflowsv2/ParallelNode.jsx
+@@ -1,5 +1,5 @@
+ import PropTypes from 'prop-types'
+-import { useContext, memo, useRef, useState, useEffect, useCallback } from 'react'
++import { useContext, memo, useRef, useState, useEffect } from 'react'
+ import { useSelector } from 'react-redux'
+ import { Background, Handle, Position, useUpdateNodeInternals, NodeToolbar, NodeResizer } from 'reactflow'
+ 
+@@ -58,28 +58,10 @@ const ParallelNode = ({ data }) => {
+     // eslint-disable-next-line
+     const [position, setPosition] = useState(0)
+     const [isHovered, setIsHovered] = useState(false)
+-    const { deleteNode, duplicateNode, reactFlowInstance } = useContext(flowContext)
++    const { deleteNode, duplicateNode } = useContext(flowContext)
+     const [showInfoDialog, setShowInfoDialog] = useState(false)
+     const [infoDialogProps, setInfoDialogProps] = useState({})
+ 
+-    const [cardDimensions, setCardDimensions] = useState({
+-        width: '300px',
+-        height: '250px'
+-    })
+-
+-    // Add useEffect to update dimensions when reactFlowInstance becomes available
+-    useEffect(() => {
+-        if (reactFlowInstance) {
+-            const node = reactFlowInstance.getNodes().find((node) => node.id === data.id)
+-            if (node && node.width && node.height) {
+-                setCardDimensions({
+-                    width: `${node.width}px`,
+-                    height: `${node.height}px`
+-                })
+-            }
+-        }
+-    }, [reactFlowInstance, data.id])
+-
+     const defaultColor = '#666666' // fallback color if data.color is not present
+     const nodeColor = data.color || defaultColor
+ 
+@@ -152,21 +134,13 @@ const ParallelNode = ({ data }) => {
+         }
+     }, [data, ref, updateNodeInternals])
+ 
+-    const onResizeEnd = useCallback(
+-        (e, params) => {
+-            if (!ref.current) return
+-
+-            // Set the card dimensions directly from resize params
+-            setCardDimensions({
+-                width: `${params.width}px`,
+-                height: `${params.height}px`
+-            })
+-        },
+-        [ref, setCardDimensions]
+-    )
+-
+     return (
+-        <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
++        <div
++            ref={ref}
++            onMouseEnter={() => setIsHovered(true)}
++            onMouseLeave={() => setIsHovered(false)}
++            style={{ width: '100%', height: '100%' }}
++        >
+             <NodeToolbar align='start' isVisible={true}>
+                 <Box style={{ display: 'flex', alignItems: 'center', flexDirection: 'row' }}>
+                     {data.color && !data.icon ? (
+@@ -263,7 +237,7 @@ const ParallelNode = ({ data }) => {
+                     </IconButton>
+                 </ButtonGroup>
+             </StyledNodeToolbar>
+-            <NodeResizer minWidth={300} minHeight={Math.max(getMinimumHeight(), 250)} onResizeEnd={onResizeEnd} />
++            <NodeResizer minWidth={300} minHeight={Math.max(getMinimumHeight(), 250)} />
+             <CardWrapper
+                 content={false}
+                 sx={{
+@@ -272,8 +246,8 @@ const ParallelNode = ({ data }) => {
+                     boxShadow: data.selected ? `0 0 0 1px ${getStateColor()} !important` : 'none',
+                     minHeight: Math.max(getMinimumHeight(), 250),
+                     minWidth: 300,
+-                    width: cardDimensions.width,
+-                    height: cardDimensions.height,
++                    width: '100%',
++                    height: '100%',
+                     backgroundColor: getBackgroundColor(),
+                     display: 'flex',
+                     '&:hover': {
+@@ -346,8 +320,8 @@ const ParallelNode = ({ data }) => {
+                     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+                         <Box
+                             sx={{
+-                                height: `calc(${cardDimensions.height} - 20px)`,
+-                                width: `${cardDimensions.width}`,
++                                height: 'calc(100% - 20px)',
++                                width: '100%',
+                                 overflow: 'hidden',
+                                 position: 'relative',
+                                 borderRadius: '10px'
+diff --git a/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx b/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
+index 6d586f36584..167ef36ed15 100644
+--- a/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
++++ b/packages/ui/src/views/chatmessage/AgentExecutedDataCard.jsx
+@@ -675,9 +675,9 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
+                             // Look for nodes with the same previous node ID in the same iteration/branch
+                             nodeMap.forEach((potentialParent) => {
+                                 const sameGroup =
+-                                    node.data?.iterationIndex !== undefined
+-                                        ? potentialParent.data?.iterationIndex === node.data?.iterationIndex
+-                                        : potentialParent.data?.branchIndex === node.data?.branchIndex
++                                    (node.data?.iterationIndex === undefined ||
++                                        potentialParent.data?.iterationIndex === node.data?.iterationIndex) &&
++                                    (node.data?.branchIndex === undefined || potentialParent.data?.branchIndex === node.data?.branchIndex)
+ 
+                                 if (
+                                     potentialParent.nodeId === prevNodeId &&

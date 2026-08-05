@@ -1,0 +1,229 @@
+From e99bad02070c845fda993ee1f4e290b457826b8c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?J=C3=B6rmungandrk?=
+ <47859767+odaysec@users.noreply.github.com>
+Date: Fri, 17 Oct 2025 17:23:44 +0700
+Subject: [PATCH] Fix: prevent ssrf and Input type confusion issues multiple
+ components
+
+---
+ packages/components/src/httpSecurity.ts       | 39 ++++++++++++++++++-
+ packages/components/src/storageUtils.ts       |  8 +++-
+ .../src/controllers/chat-messages/index.ts    | 36 ++++++++++++++++-
+ .../server/src/enterprise/sso/AzureSSO.ts     | 17 ++++++++
+ .../server/src/services/evaluations/index.ts  | 23 ++++++++++-
+ 5 files changed, 115 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/src/httpSecurity.ts b/packages/components/src/httpSecurity.ts
+index d729f8da5e6..06993f79959 100644
+--- a/packages/components/src/httpSecurity.ts
++++ b/packages/components/src/httpSecurity.ts
+@@ -53,6 +53,39 @@ export async function checkDenyList(url: string): Promise<void> {
+     }
+ }
+ 
++/**
++ * Checks if a URL is allowed based on HTTP_ALLOW_LIST environment variable
++ * @param url - URL to check
++ * @throws Error if URL hostname is not in allow-list
++ */
++export function checkAllowList(url: string): void {
++    const httpAllowListString: string | undefined = process.env.HTTP_ALLOW_LIST
++    if (!httpAllowListString) {
++        throw new Error('Access to this host is denied: no allow-list configured')
++    }
++    const httpAllowList = httpAllowListString.split(',').map(entry => entry.trim()).filter(entry => !!entry)
++    const urlObj = new URL(url)
++    const hostname = urlObj.hostname
++
++    // Only allow http and https schemes
++    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
++        throw new Error('Only http and https URLs are allowed')
++    }
++
++    // Strict match, or basic wildcard match e.g. *.example.com
++    const isAllowed = httpAllowList.some(entry => {
++        // wildcard matching for patterns like *.example.com
++        if (entry.startsWith('*.')) {
++            const base = entry.slice(2)
++            return hostname === base || hostname.endsWith('.' + base)
++        }
++        return hostname === entry
++    })
++    if (!isAllowed) {
++        throw new Error('Access to this host is denied by allow-list policy')
++    }
++}
++
+ /**
+  * Makes a secure HTTP request that validates all URLs in redirect chains against the deny list
+  * @param config - Axios request configuration
+@@ -171,7 +204,8 @@ export async function secureFetch(url: string, init?: RequestInit, maxRedirects:
+     let redirectCount = 0
+     let currentInit = { ...init, redirect: 'manual' as const } // Disable automatic redirects
+ 
+-    // Validate the initial URL
++    // Validate the initial URL using both allow-list and deny-list
++    checkAllowList(currentUrl)
+     await checkDenyList(currentUrl)
+ 
+     while (redirectCount <= maxRedirects) {
+@@ -198,7 +232,8 @@ export async function secureFetch(url: string, init?: RequestInit, maxRedirects:
+         // Resolve the redirect URL (handle relative URLs)
+         const redirectUrl = new URL(location, currentUrl).toString()
+ 
+-        // Validate the redirect URL against the deny list
++        // Validate the redirect URL against the allow-list and deny list
++        checkAllowList(redirectUrl)
+         await checkDenyList(redirectUrl)
+ 
+         // Update current URL for next iteration
+diff --git a/packages/components/src/storageUtils.ts b/packages/components/src/storageUtils.ts
+index ff48bb0569e..4ea9710ab47 100644
+--- a/packages/components/src/storageUtils.ts
++++ b/packages/components/src/storageUtils.ts
+@@ -937,8 +937,12 @@ const _cleanEmptyLocalFolders = (dirPath: string) => {
+  */
+ const _cleanEmptyS3Folders = async (s3Client: S3Client, Bucket: string, prefix: string) => {
+     try {
+-        // Skip if prefix is empty
+-        if (!prefix) return
++        // Defensive: ensure prefix is a string
++        if (Array.isArray(prefix)) {
++            // Use the first value or reject, depending on business logic
++            prefix = prefix[0];
++        }
++        if (typeof prefix !== 'string' || !prefix) return
+ 
+         // List objects in this "folder"
+         const listCmd = new ListObjectsV2Command({
+diff --git a/packages/server/src/controllers/chat-messages/index.ts b/packages/server/src/controllers/chat-messages/index.ts
+index b000c9ea3fb..a1ed241f5f7 100644
+--- a/packages/server/src/controllers/chat-messages/index.ts
++++ b/packages/server/src/controllers/chat-messages/index.ts
+@@ -11,6 +11,35 @@ import { StatusCodes } from 'http-status-codes'
+ import { utilGetChatMessage } from '../../utils/getChatMessage'
+ import { getPageAndLimitParams } from '../../utils/pagination'
+ 
++// Type guard and normalization for feedbackType
++function normalizeFeedbackTypeParam(val: unknown): ChatMessageRatingType[] {
++    // Supported as string or array (possibly from req.query)
++    const validValues = Object.values(ChatMessageRatingType);
++    if (typeof val === 'string') {
++        // Could be CSV, single value, or JSON array string
++        try {
++            // Try JSON parse if it's an array-like
++            const parsed = JSON.parse(val);
++            if (Array.isArray(parsed)) {
++                // Filter & map only valid rating types
++                return parsed.filter((x) => typeof x === 'string' && validValues.includes(x as ChatMessageRatingType));
++            } else if (typeof parsed === 'string' && validValues.includes(parsed)) {
++                return [parsed];
++            }
++        } catch {
++            // Not JSON, fall through
++        }
++        // CSV or single value
++        return val
++            .split(',')
++            .map((x) => x.trim())
++            .filter((x) => validValues.includes(x as ChatMessageRatingType)) as ChatMessageRatingType[];
++    } else if (Array.isArray(val)) {
++        return val.filter((x) => typeof x === 'string' && validValues.includes(x as ChatMessageRatingType));
++    }
++    return [];
++}
++
+ const getFeedbackTypeFilters = (_feedbackTypeFilters: ChatMessageRatingType[]): ChatMessageRatingType[] | undefined => {
+     try {
+         let feedbackTypeFilters
+@@ -75,9 +104,12 @@ const getAllChatMessages = async (req: Request, res: Response, next: NextFunctio
+ 
+         const { page, limit } = getPageAndLimitParams(req)
+ 
+-        let feedbackTypeFilters = req.query?.feedbackType as ChatMessageRatingType[] | undefined
+-        if (feedbackTypeFilters) {
++        // Always normalize and sanitize feedbackType param to ChatMessageRatingType[]
++        let feedbackTypeFilters = normalizeFeedbackTypeParam(req.query?.feedbackType)
++        if (feedbackTypeFilters && feedbackTypeFilters.length > 0) {
+             feedbackTypeFilters = getFeedbackTypeFilters(feedbackTypeFilters)
++        } else {
++            feedbackTypeFilters = undefined
+         }
+         if (typeof req.params === 'undefined' || !req.params.id) {
+             throw new InternalFlowiseError(
+diff --git a/packages/server/src/enterprise/sso/AzureSSO.ts b/packages/server/src/enterprise/sso/AzureSSO.ts
+index 35c6d744f5e..442be92d11b 100644
+--- a/packages/server/src/enterprise/sso/AzureSSO.ts
++++ b/packages/server/src/enterprise/sso/AzureSSO.ts
+@@ -116,6 +116,11 @@ class AzureSSO extends SSOBase {
+     static async testSetup(ssoConfig: any) {
+         const { tenantID, clientID, clientSecret } = ssoConfig
+ 
++        // Validate tenantID before proceeding!
++        if (!AzureSSO.isValidTenantID(tenantID)) {
++            return { error: 'Invalid tenantID format.' }
++        }
++
+         try {
+             const tokenResponse = await axios.post(
+                 `https://login.microsoftonline.com/${tenantID}/oauth2/v2.0/token`,
+@@ -136,6 +141,18 @@ class AzureSSO extends SSOBase {
+         }
+     }
+ 
++    /**
++     * Validate a Microsoft tenant ID (should be a UUID or domain ending with .onmicrosoft.com)
++     */
++    static isValidTenantID(tenantID: string): boolean {
++        if (typeof tenantID !== 'string') return false;
++        // UUID v4 regex (Azure tenant ID is often a GUID), case insensitive
++        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++        // .onmicrosoft.com domain, loose check
++        const domainRegex = /^[a-zA-Z0-9-]+\.onmicrosoft\.com$/;
++        return uuidRegex.test(tenantID) || domainRegex.test(tenantID);
++    }
++
+     async refreshToken(ssoRefreshToken: string) {
+         const { tenantID, clientID, clientSecret } = this.ssoConfig
+ 
+diff --git a/packages/server/src/services/evaluations/index.ts b/packages/server/src/services/evaluations/index.ts
+index 9195ac26f7c..4acc4631708 100644
+--- a/packages/server/src/services/evaluations/index.ts
++++ b/packages/server/src/services/evaluations/index.ts
+@@ -107,15 +107,34 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
+         })
+         ;(dataset as any).rows = items
+ 
++        // Validate chatflowId - ensure all provided IDs exist in the database
++        let chatflowIds: string[] = [];
++        try {
++            chatflowIds = JSON.parse(body.chatflowId);
++        } catch (error) {
++            // fallback: treat as single id
++            chatflowIds = [body.chatflowId];
++        }
++        // Only allow strings that do not contain slashes
++        if (chatflowIds.some((id) => typeof id !== 'string' || id.includes('/') || id.includes('\\'))) {
++            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid chatflowId format');
++        }
++        const appServer = getRunningExpressApp();
++        const existingChatflows = await appServer.AppDataSource.getRepository(ChatFlow).findBy({
++            id: In(chatflowIds)
++        });
++        if (existingChatflows.length !== chatflowIds.length) {
++            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'One or more chatflowIds not found');
++        }
+         const data: ICommonObject = {
+             chatflowId: body.chatflowId,
+             dataset: dataset,
+             evaluationType: body.evaluationType,
+             evaluationId: newEvaluation.id,
+             credentialId: body.credentialId
+-        }
++        };
+         if (body.datasetAsOneConversation) {
+-            data.sessionId = uuidv4()
++            data.sessionId = uuidv4();
+         }
+ 
+         // When chatflow has an APIKey

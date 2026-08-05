@@ -1,0 +1,78 @@
+From a687870ae953696ab4bbae80b8981afba3d074b3 Mon Sep 17 00:00:00 2001
+From: wishhyt <24300810017@m.fudan.edu.cn>
+Date: Wed, 18 Mar 2026 10:22:55 +0800
+Subject: [PATCH] fix(server): use fileInputFieldFromMimeType in MIME type
+ fallback branch
+
+When file extension is unrecognized but MIME type is recognized, the code
+should fall back to the MIME-type-based input field. However, a copy-paste
+error caused it to assign `fileInputFieldFromExt` (which equals 'txtFile')
+instead of `fileInputFieldFromMimeType`, effectively ignoring the MIME type
+detection result.
+
+This bug was duplicated across four files:
+- packages/server/src/utils/buildChatflow.ts
+- packages/server/src/utils/createAttachment.ts
+- packages/server/src/services/documentstore/index.ts
+- packages/server/src/utils/upsertVector.ts
+
+Made-with: Cursor
+---
+ packages/server/src/services/documentstore/index.ts | 2 +-
+ packages/server/src/utils/buildChatflow.ts          | 2 +-
+ packages/server/src/utils/createAttachment.ts       | 2 +-
+ packages/server/src/utils/upsertVector.ts           | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index ee145276d94..34206c0922c 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -1863,7 +1863,7 @@ const upsertDocStore = async (
+             if (fileInputFieldFromExt !== 'txtFile') {
+                 fileInputField = fileInputFieldFromExt
+             } else if (fileInputFieldFromMimeType !== 'txtFile') {
+-                fileInputField = fileInputFieldFromExt
++                fileInputField = fileInputFieldFromMimeType
+             }
+ 
+             if (loaderId === 'unstructuredFileLoader') {
+diff --git a/packages/server/src/utils/buildChatflow.ts b/packages/server/src/utils/buildChatflow.ts
+index c54c009c43a..02cd62ab205 100644
+--- a/packages/server/src/utils/buildChatflow.ts
++++ b/packages/server/src/utils/buildChatflow.ts
+@@ -448,7 +448,7 @@ export const executeFlow = async ({
+             if (fileInputFieldFromExt !== 'txtFile') {
+                 fileInputField = fileInputFieldFromExt
+             } else if (fileInputFieldFromMimeType !== 'txtFile') {
+-                fileInputField = fileInputFieldFromExt
++                fileInputField = fileInputFieldFromMimeType
+             }
+ 
+             if (overrideConfig[fileInputField]) {
+diff --git a/packages/server/src/utils/createAttachment.ts b/packages/server/src/utils/createAttachment.ts
+index 2daec1e2e1d..2cc759c2bf2 100644
+--- a/packages/server/src/utils/createAttachment.ts
++++ b/packages/server/src/utils/createAttachment.ts
+@@ -177,7 +177,7 @@ export const createFileAttachment = async (req: Request) => {
+             if (fileInputFieldFromExt !== 'txtFile') {
+                 fileInputField = fileInputFieldFromExt
+             } else if (fileInputFieldFromMimeType !== 'txtFile') {
+-                fileInputField = fileInputFieldFromExt
++                fileInputField = fileInputFieldFromMimeType
+             }
+ 
+             await removeSpecificFileFromUpload(file.path ?? file.key)
+diff --git a/packages/server/src/utils/upsertVector.ts b/packages/server/src/utils/upsertVector.ts
+index b7c17b45dcf..04e26e3bdf8 100644
+--- a/packages/server/src/utils/upsertVector.ts
++++ b/packages/server/src/utils/upsertVector.ts
+@@ -96,7 +96,7 @@ export const executeUpsert = async ({
+             if (fileInputFieldFromExt !== 'txtFile') {
+                 fileInputField = fileInputFieldFromExt
+             } else if (fileInputFieldFromMimeType !== 'txtFile') {
+-                fileInputField = fileInputFieldFromExt
++                fileInputField = fileInputFieldFromMimeType
+             }
+ 
+             if (overrideConfig[fileInputField]) {

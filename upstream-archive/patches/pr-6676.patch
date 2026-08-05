@@ -1,0 +1,510 @@
+From 9cad861fdedb74baff0eb8fb14b1b583157a1678 Mon Sep 17 00:00:00 2001
+From: modelsell <jie.wag@gmail.com>
+Date: Tue, 28 Jul 2026 09:07:09 +0800
+Subject: [PATCH] feat: add Modelsell chat model provider
+
+---
+ .../credentials/ModelsellApi.credential.ts    |  25 +++
+ .../ChatModelsell/ChatModelsell.test.ts       |  95 +++++++++
+ .../chatmodels/ChatModelsell/ChatModelsell.ts | 201 ++++++++++++++++++
+ .../chatmodels/ChatModelsell/modelsell.png    | Bin 0 -> 7681 bytes
+ 4 files changed, 321 insertions(+)
+ create mode 100644 packages/components/credentials/ModelsellApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.test.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatModelsell/modelsell.png
+
+diff --git a/packages/components/credentials/ModelsellApi.credential.ts b/packages/components/credentials/ModelsellApi.credential.ts
+new file mode 100644
+index 00000000000..0049dba96e4
+--- /dev/null
++++ b/packages/components/credentials/ModelsellApi.credential.ts
+@@ -0,0 +1,25 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class ModelsellApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Modelsell API'
++        this.name = 'modelsellApi'
++        this.version = 1.0
++        this.description = 'Get your API key from <a target="_blank" href="https://modelsell.com/console/token">Modelsell</a>'
++        this.inputs = [
++            {
++                label: 'Modelsell API Key',
++                name: 'modelsellApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: ModelsellApi }
+diff --git a/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.test.ts b/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.test.ts
+new file mode 100644
+index 00000000000..df917e4cb2f
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.test.ts
+@@ -0,0 +1,95 @@
++jest.mock('axios', () => ({
++    get: jest.fn()
++}))
++
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++import axios from 'axios'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ChatModelsell } = require('./ChatModelsell')
++
++describe('ChatModelsell', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ modelsellApiKey: 'sk-test' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++    })
++
++    it('loads model names dynamically with bearer authentication', async () => {
++        ;(axios.get as jest.Mock).mockResolvedValue({
++            data: {
++                data: [{ id: 'provider/model-a' }, { id: 'model-b' }, { id: '' }, {}]
++            }
++        })
++
++        const node = new ChatModelsell()
++        const models = await node.loadMethods.listModels({ credential: 'cred-1', inputs: {} }, {})
++
++        expect(axios.get).toHaveBeenCalledWith('https://modelsell.com/v1/models', {
++            headers: { Authorization: 'Bearer sk-test' }
++        })
++        expect(models).toEqual([
++            { label: 'provider/model-a', name: 'provider/model-a' },
++            { label: 'model-b', name: 'model-b' }
++        ])
++    })
++
++    it('requires a Modelsell API key before loading models', async () => {
++        ;(getCredentialParam as jest.Mock).mockReturnValue(undefined)
++
++        const node = new ChatModelsell()
++
++        await expect(node.loadMethods.listModels({ credential: 'cred-1', inputs: {} }, {})).rejects.toThrow(
++            'Modelsell API Key missing from credential'
++        )
++        expect(axios.get).not.toHaveBeenCalled()
++    })
++
++    it('creates an OpenAI-compatible chat model with the Modelsell base URL', async () => {
++        const node = new ChatModelsell()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'provider/model-a',
++                    temperature: '0.2',
++                    streaming: false,
++                    maxTokens: '512',
++                    topP: '0.8',
++                    frequencyPenalty: '0.1',
++                    presencePenalty: '0.3',
++                    timeout: '30',
++                    defaultHeaders: '{"X-Test":"value"}'
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            model: 'provider/model-a',
++            apiKey: 'sk-test',
++            openAIApiKey: 'sk-test',
++            temperature: 0.2,
++            streaming: false,
++            maxTokens: 512,
++            topP: 0.8,
++            frequencyPenalty: 0.1,
++            presencePenalty: 0.3,
++            timeout: 30,
++            configuration: {
++                baseURL: 'https://modelsell.com/v1',
++                defaultHeaders: { 'X-Test': 'value' }
++            }
++        })
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.ts b/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.ts
+new file mode 100644
+index 00000000000..658839cdd77
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatModelsell/ChatModelsell.ts
+@@ -0,0 +1,201 @@
++import axios from 'axios'
++import { BaseCache } from '@langchain/core/caches'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const MODELSELL_BASE_URL = 'https://modelsell.com/v1'
++
++type ModelsellModelsResponse = {
++    data?: Array<{ id?: unknown }>
++}
++
++class ChatModelsell_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Modelsell'
++        this.name = 'chatModelsell'
++        this.version = 1.0
++        this.type = 'ChatModelsell'
++        this.icon = 'modelsell.png'
++        this.category = 'Chat Models'
++        this.description = 'Connect to Modelsell models through the OpenAI-compatible Chat Completions API'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['modelsellApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                freeSolo: true
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Default Headers',
++                name: 'defaultHeaders',
++                type: 'json',
++                optional: true,
++                additionalParams: true,
++                description: 'Additional headers to include with every request'
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(nodeData: INodeData, options?: ICommonObject): Promise<INodeOptionsValue[]> {
++            if (nodeData.inputs?.credentialId) {
++                nodeData.credential = nodeData.inputs.credentialId as string
++            }
++            const credentialData = await getCredentialData(nodeData.credential ?? '', options ?? {})
++            const apiKey = getCredentialParam('modelsellApiKey', credentialData, nodeData)
++
++            if (!apiKey) {
++                throw new Error('Modelsell API Key missing from credential')
++            }
++
++            const response = await axios.get<ModelsellModelsResponse>(`${MODELSELL_BASE_URL}/models`, {
++                headers: { Authorization: `Bearer ${apiKey}` }
++            })
++
++            return (response.data.data ?? []).flatMap((model) =>
++                typeof model.id === 'string' && model.id.length > 0 ? [{ label: model.id, name: model.id }] : []
++            )
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const modelName = nodeData.inputs?.modelName as string
++        const temperature = nodeData.inputs?.temperature as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const defaultHeaders = nodeData.inputs?.defaultHeaders
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        if (nodeData.inputs?.credentialId) {
++            nodeData.credential = nodeData.inputs.credentialId as string
++        }
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('modelsellApiKey', credentialData, nodeData)
++
++        if (!apiKey) {
++            throw new Error('Modelsell API Key missing from credential')
++        }
++        if (!modelName) {
++            throw new Error('Modelsell Model Name is required')
++        }
++
++        const obj: ChatOpenAIFields = {
++            model: modelName,
++            apiKey,
++            openAIApiKey: apiKey,
++            streaming: streaming ?? true,
++            configuration: {
++                baseURL: MODELSELL_BASE_URL
++            }
++        }
++
++        if (temperature) obj.temperature = parseFloat(temperature)
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        if (defaultHeaders) {
++            try {
++                obj.configuration = {
++                    baseURL: MODELSELL_BASE_URL,
++                    defaultHeaders: typeof defaultHeaders === 'object' ? defaultHeaders : JSON.parse(defaultHeaders)
++                }
++            } catch (exception) {
++                throw new Error('Invalid JSON in Default Headers: ' + exception)
++            }
++        }
++
++        return new ChatOpenAI(obj)
++    }
++}
++
++module.exports = { nodeClass: ChatModelsell_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatModelsell/modelsell.png b/packages/components/nodes/chatmodels/ChatModelsell/modelsell.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..b97bc413834640a5ca59c38e0a882c5a178f0ecb
+GIT binary patch
+literal 7681
+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
+
+literal 0
+HcmV?d00001
+

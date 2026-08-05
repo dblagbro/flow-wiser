@@ -1,0 +1,207 @@
+From d9887422e31c3df8ce32246a63ab6bb2593ec966 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 23 Jul 2026 15:39:42 +0530
+Subject: [PATCH 1/4] feat(types): add child routing fields to IHumanInput
+
+---
+ packages/components/src/Interface.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/components/src/Interface.ts b/packages/components/src/Interface.ts
+index a7442318b1a..f1d3ef049c0 100644
+--- a/packages/components/src/Interface.ts
++++ b/packages/components/src/Interface.ts
+@@ -493,4 +493,8 @@ export interface IHumanInput {
+     type: 'proceed' | 'reject'
+     startNodeId: string
+     feedback?: string
++    childFlowId?: string
++    childExecutionId?: string
++    childChatId?: string
++    childNodeId?: string
+ }
+
+From 37730e7f1a2689bafb9b7e2db7583d28218cddcd Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 23 Jul 2026 15:39:51 +0530
+Subject: [PATCH 2/4] fix(nodes): intercept and propagate nested HITL pause
+ state
+
+---
+ .../agentflow/ExecuteFlow/ExecuteFlow.ts      | 46 ++++++++++++++++---
+ 1 file changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/ExecuteFlow/ExecuteFlow.ts b/packages/components/nodes/agentflow/ExecuteFlow/ExecuteFlow.ts
+index dc48968b8ab..0b229ce3149 100644
+--- a/packages/components/nodes/agentflow/ExecuteFlow/ExecuteFlow.ts
++++ b/packages/components/nodes/agentflow/ExecuteFlow/ExecuteFlow.ts
+@@ -195,21 +195,33 @@ class ExecuteFlow_Agentflow implements INode {
+             if (chatflowApiKey) headers = { ...headers, Authorization: `Bearer ${chatflowApiKey}` }
+ 
+             const finalUrl = `${baseURL}/api/v1/prediction/${selectedFlowId}`
++            let dataObj: any = {
++                question: flowInput,
++                chatId: options.chatId,
++                overrideConfig
++            }
++
++            // Forward humanInput if we are resuming from a paused state
++            const humanInput = nodeData.inputs?.humanInput
++            if (humanInput && typeof humanInput === 'object') {
++                dataObj.humanInput = {
++                    type: humanInput.type,
++                    startNodeId: humanInput.childNodeId || humanInput.startNodeId,
++                    feedback: humanInput.feedback
++                }
++            }
++
+             const requestConfig: AxiosRequestConfig = {
+                 method: 'POST',
+                 url: finalUrl,
+                 headers,
+-                data: {
+-                    question: flowInput,
+-                    chatId: options.chatId,
+-                    overrideConfig
+-                }
++                data: dataObj
+             }
+ 
+             const response = await secureAxiosRequest(requestConfig)
+ 
+             let resultText = ''
+-            const { sourceDocuments, usedTools, artifacts, fileAnnotations } = response.data
++            const { sourceDocuments, usedTools, artifacts, fileAnnotations, action, executionId, chatId: childChatId } = response.data
+             const flattenedSourceDocuments = Array.isArray(sourceDocuments) ? flatten(sourceDocuments) : []
+             const flattenedUsedTools = Array.isArray(usedTools) ? flatten(usedTools) : []
+             const flattenedArtifacts = Array.isArray(artifacts) ? flatten(artifacts) : []
+@@ -291,6 +303,28 @@ class ExecuteFlow_Agentflow implements INode {
+                 ]
+             }
+ 
++            // Propagate human input state if child flow is paused
++            if (action && Object.keys(action).length > 0) {
++                returnOutput.output = {
++                    ...returnOutput.output,
++                    // @ts-ignore
++                    isWaitingForHumanInput: true,
++                    childExecutionId: executionId,
++                    childChatId: childChatId,
++                    childFlowId: selectedFlowId,
++                    humanInputAction: {
++                        ...action,
++                        data: {
++                            ...action.data,
++                            childFlowId: selectedFlowId,
++                            childExecutionId: executionId,
++                            childChatId: childChatId,
++                            childNodeId: action.data?.nodeId
++                        }
++                    }
++                }
++            }
++
+             return returnOutput
+         } catch (error) {
+             console.error('ExecuteFlow Error:', error)
+
+From 4957807c087dd9792ae2d41a925b92381bdade78 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 23 Jul 2026 15:39:55 +0530
+Subject: [PATCH 3/4] fix(server): bubble nested HITL actions to parent SSE
+ stream
+
+---
+ packages/server/src/utils/buildAgentflow.ts | 52 +++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..11c4e7d9927 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1499,6 +1499,58 @@ const executeNode = async ({
+             return { result: results, shouldStop: true, agentFlowExecutedData, humanInput: updatedHumanInput }
+         }
+ 
++        // Stop going through the current route if the node is an executeFlow node waiting for human input in child flow
++        if (reactFlowNode.data.name === 'executeFlowAgentflow' && results?.output?.isWaitingForHumanInput) {
++            const childAction = results.output.humanInputAction
++            const humanInputAction = {
++                id: uuidv4(),
++                mapping: {
++                    approve: 'Proceed',
++                    reject: 'Reject'
++                },
++                elements: [
++                    { type: 'agentflowv2-approve-button', label: 'Proceed' },
++                    { type: 'agentflowv2-reject-button', label: 'Reject' }
++                ],
++                data: {
++                    nodeId,
++                    nodeLabel: reactFlowNode.data.label,
++                    input: results.input,
++                    childFlowId: results.output.childFlowId,
++                    childExecutionId: results.output.childExecutionId,
++                    childChatId: results.output.childChatId,
++                    childNodeId: childAction?.data?.nodeId || childAction?.data?.childNodeId
++                }
++            }
++
++            const newWorkflowExecutedData: IAgentflowExecutedData = {
++                nodeId,
++                nodeLabel: reactFlowNode.data.label,
++                data: {
++                    ...results,
++                    output: {
++                        ...results.output,
++                        humanInputAction
++                    }
++                },
++                previousNodeIds: reversedGraph[nodeId] || [],
++                status: 'STOPPED'
++            }
++            agentFlowExecutedData.push(newWorkflowExecutedData)
++
++            sseStreamer?.streamNextAgentFlowEvent(chatId, {
++                nodeId,
++                nodeLabel: reactFlowNode.data.label,
++                status: 'STOPPED'
++            })
++            sseStreamer?.streamAgentFlowExecutedDataEvent(chatId, agentFlowExecutedData)
++            sseStreamer?.streamAgentFlowEvent(chatId, 'STOPPED')
++
++            sseStreamer?.streamActionEvent(chatId, humanInputAction)
++
++            return { result: results, shouldStop: true, agentFlowExecutedData, humanInput: updatedHumanInput }
++        }
++
+         return { result: results, agentFlowExecutedData, humanInput: updatedHumanInput }
+     } catch (error) {
+         logger.error(`[server]: Error executing node ${nodeId}: ${getErrorMessage(error)}`)
+
+From 3408f444cd1d7dbaac2feed38a1e300129877d93 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 23 Jul 2026 15:40:03 +0530
+Subject: [PATCH 4/4] fix(ui): attach nested flow metadata on HITL button click
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index bf55a262022..17378a10133 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -871,7 +871,11 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+         handleSubmit(undefined, question, undefined, {
+             type: fbType,
+             startNodeId: actionData?.nodeId,
+-            feedback
++            feedback,
++            childFlowId: actionData?.childFlowId,
++            childExecutionId: actionData?.childExecutionId,
++            childChatId: actionData?.childChatId,
++            childNodeId: actionData?.childNodeId
+         })
+     }
+ 

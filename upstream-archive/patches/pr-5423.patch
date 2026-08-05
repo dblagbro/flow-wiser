@@ -1,0 +1,343 @@
+From 8b5866d9806ec33ddeee0d98de85f1cc3a3854bd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?H=C3=A5vard=20Homb?= <maxim289@gmail.com>
+Date: Wed, 5 Nov 2025 11:06:08 +0100
+Subject: [PATCH 1/3] Moved search to server to see all search hits in one page
+
+---
+ .../server/src/controllers/chatflows/index.ts |  4 +-
+ .../server/src/services/chatflows/index.ts    | 19 ++++++---
+ .../src/ui-component/table/FlowListTable.jsx  |  3 +-
+ packages/ui/src/views/agentflows/index.jsx    | 40 ++++++++++++------
+ packages/ui/src/views/chatflows/index.jsx     | 41 +++++++++++++------
+ 5 files changed, 75 insertions(+), 32 deletions(-)
+
+diff --git a/packages/server/src/controllers/chatflows/index.ts b/packages/server/src/controllers/chatflows/index.ts
+index 6b1a554caa9..cf6763232b5 100644
+--- a/packages/server/src/controllers/chatflows/index.ts
++++ b/packages/server/src/controllers/chatflows/index.ts
+@@ -72,12 +72,14 @@ const deleteChatflow = async (req: Request, res: Response, next: NextFunction) =
+ const getAllChatflows = async (req: Request, res: Response, next: NextFunction) => {
+     try {
+         const { page, limit } = getPageAndLimitParams(req)
++        const search = req.query?.search as string
+ 
+         const apiResponse = await chatflowsService.getAllChatflows(
+             req.query?.type as ChatflowType,
+             req.user?.activeWorkspaceId,
+             page,
+-            limit
++            limit,
++            search
+         )
+         return res.json(apiResponse)
+     } catch (error) {
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 17456bc13e9..ffee33d4b82 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -138,7 +138,7 @@ const deleteChatflow = async (chatflowId: string, orgId: string, workspaceId: st
+     }
+ }
+ 
+-const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page: number = -1, limit: number = -1) => {
++const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page: number = -1, limit: number = -1, search?: string) => {
+     try {
+         const appServer = getRunningExpressApp()
+ 
+@@ -146,10 +146,6 @@ const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page:
+             .createQueryBuilder('chat_flow')
+             .orderBy('chat_flow.updatedDate', 'DESC')
+ 
+-        if (page > 0 && limit > 0) {
+-            queryBuilder.skip((page - 1) * limit)
+-            queryBuilder.take(limit)
+-        }
+         if (type === 'MULTIAGENT') {
+             queryBuilder.andWhere('chat_flow.type = :type', { type: 'MULTIAGENT' })
+         } else if (type === 'AGENTFLOW') {
+@@ -161,6 +157,19 @@ const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page:
+             queryBuilder.andWhere('chat_flow.type = :type', { type: 'CHATFLOW' })
+         }
+         if (workspaceId) queryBuilder.andWhere('chat_flow.workspaceId = :workspaceId', { workspaceId })
++
++        // Apply search filter before pagination
++        if (search) {
++            queryBuilder.andWhere(
++                '(LOWER(chat_flow.name) LIKE :search OR LOWER(chat_flow.category) LIKE :search OR LOWER(chat_flow.id) LIKE :search)',
++                { search: `%${search.toLowerCase()}%` }
++            )
++        }
++
++        if (page > 0 && limit > 0) {
++            queryBuilder.skip((page - 1) * limit)
++            queryBuilder.take(limit)
++        }
+         const [data, total] = await queryBuilder.getManyAndCount()
+ 
+         if (page > 0 && limit > 0) {
+diff --git a/packages/ui/src/ui-component/table/FlowListTable.jsx b/packages/ui/src/ui-component/table/FlowListTable.jsx
+index a61df9ed2ed..3a800b5eff7 100644
+--- a/packages/ui/src/ui-component/table/FlowListTable.jsx
++++ b/packages/ui/src/ui-component/table/FlowListTable.jsx
+@@ -55,7 +55,6 @@ export const FlowListTable = ({
+     images = {},
+     icons = {},
+     isLoading,
+-    filterFunction,
+     updateFlowsApi,
+     setError,
+     isAgentCanvas,
+@@ -186,7 +185,7 @@ export const FlowListTable = ({
+                             </>
+                         ) : (
+                             <>
+-                                {sortedData.filter(filterFunction).map((row, index) => (
++                                {sortedData.map((row, index) => (
+                                     <StyledTableRow key={index}>
+                                         <StyledTableCell key='0'>
+                                             <Tooltip title={row.templateName || row.name}>
+diff --git a/packages/ui/src/views/agentflows/index.jsx b/packages/ui/src/views/agentflows/index.jsx
+index b82bfab8a76..9794ea1cdaa 100644
+--- a/packages/ui/src/views/agentflows/index.jsx
++++ b/packages/ui/src/views/agentflows/index.jsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useState } from 'react'
++import { useEffect, useState, useRef } from 'react'
+ import { useNavigate } from 'react-router-dom'
+ import { useSelector } from 'react-redux'
+ 
+@@ -54,17 +54,24 @@ const Agentflows = () => {
+     const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
+     const [total, setTotal] = useState(0)
+ 
++    const searchTimeoutRef = useRef(null)
++
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
+         refresh(page, pageLimit, agentflowVersion)
+     }
+ 
+-    const refresh = (page, limit, nextView) => {
++    const refresh = (page, limit, nextView, searchValue) => {
+         const params = {
+             page: page || currentPage,
+             limit: limit || pageLimit
+         }
++        // Always include search parameter, even if empty (to clear server-side filter)
++        const currentSearch = searchValue !== undefined ? searchValue : search
++        if (currentSearch) {
++            params.search = currentSearch
++        }
+         getAllAgentflows.request(nextView === 'v2' ? 'AGENTFLOW' : 'MULTIAGENT', params)
+     }
+ 
+@@ -82,15 +89,19 @@ const Agentflows = () => {
+     }
+ 
+     const onSearchChange = (event) => {
+-        setSearch(event.target.value)
+-    }
++        const newSearch = event.target.value
++        setSearch(newSearch)
++        setCurrentPage(1)
+ 
+-    function filterFlows(data) {
+-        return (
+-            data.name.toLowerCase().indexOf(search.toLowerCase()) > -1 ||
+-            (data.category && data.category.toLowerCase().indexOf(search.toLowerCase()) > -1) ||
+-            data.id.toLowerCase().indexOf(search.toLowerCase()) > -1
+-        )
++        // Clear existing timeout
++        if (searchTimeoutRef.current) {
++            clearTimeout(searchTimeoutRef.current)
++        }
++
++        // Debounce search - trigger refresh after user stops typing
++        searchTimeoutRef.current = setTimeout(() => {
++            refresh(1, pageLimit, agentflowVersion, newSearch)
++        }, 300)
+     }
+ 
+     const addNew = () => {
+@@ -116,6 +127,12 @@ const Agentflows = () => {
+     useEffect(() => {
+         refresh(currentPage, pageLimit, agentflowVersion)
+ 
++        // Cleanup timeout on unmount
++        return () => {
++            if (searchTimeoutRef.current) {
++                clearTimeout(searchTimeoutRef.current)
++            }
++        }
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [])
+ 
+@@ -304,7 +321,7 @@ const Agentflows = () => {
+                         <>
+                             {!view || view === 'card' ? (
+                                 <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+-                                    {getAllAgentflows.data?.data.filter(filterFlows).map((data, index) => (
++                                    {getAllAgentflows.data?.data.map((data, index) => (
+                                         <ItemCard
+                                             key={index}
+                                             onClick={() => goToCanvas(data)}
+@@ -322,7 +339,6 @@ const Agentflows = () => {
+                                     images={images}
+                                     icons={icons}
+                                     isLoading={isLoading}
+-                                    filterFunction={filterFlows}
+                                     updateFlowsApi={getAllAgentflows}
+                                     setError={setError}
+                                 />
+diff --git a/packages/ui/src/views/chatflows/index.jsx b/packages/ui/src/views/chatflows/index.jsx
+index 62e855f2b3e..dccc1449d9e 100644
+--- a/packages/ui/src/views/chatflows/index.jsx
++++ b/packages/ui/src/views/chatflows/index.jsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useState } from 'react'
++import { useEffect, useState, useRef } from 'react'
+ import { useNavigate } from 'react-router-dom'
+ 
+ // material-ui
+@@ -49,17 +49,24 @@ const Chatflows = () => {
+     const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
+     const [total, setTotal] = useState(0)
+ 
++    const searchTimeoutRef = useRef(null)
++
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
+         applyFilters(page, pageLimit)
+     }
+ 
+-    const applyFilters = (page, limit) => {
++    const applyFilters = (page, limit, searchValue) => {
+         const params = {
+             page: page || currentPage,
+             limit: limit || pageLimit
+         }
++        // Always include search parameter, even if empty (to clear server-side filter)
++        const currentSearch = searchValue !== undefined ? searchValue : search
++        if (currentSearch) {
++            params.search = currentSearch
++        }
+         getAllChatflowsApi.request(params)
+     }
+ 
+@@ -70,15 +77,19 @@ const Chatflows = () => {
+     }
+ 
+     const onSearchChange = (event) => {
+-        setSearch(event.target.value)
+-    }
++        const newSearch = event.target.value
++        setSearch(newSearch)
++        setCurrentPage(1)
++
++        // Clear existing timeout
++        if (searchTimeoutRef.current) {
++            clearTimeout(searchTimeoutRef.current)
++        }
+ 
+-    function filterFlows(data) {
+-        return (
+-            data?.name.toLowerCase().indexOf(search.toLowerCase()) > -1 ||
+-            (data.category && data.category.toLowerCase().indexOf(search.toLowerCase()) > -1) ||
+-            data?.id.toLowerCase().indexOf(search.toLowerCase()) > -1
+-        )
++        // Debounce search - trigger refresh after user stops typing
++        searchTimeoutRef.current = setTimeout(() => {
++            applyFilters(1, pageLimit, newSearch)
++        }, 300)
+     }
+ 
+     const addNew = () => {
+@@ -91,6 +102,13 @@ const Chatflows = () => {
+ 
+     useEffect(() => {
+         applyFilters(currentPage, pageLimit)
++
++        // Cleanup timeout on unmount
++        return () => {
++            if (searchTimeoutRef.current) {
++                clearTimeout(searchTimeoutRef.current)
++            }
++        }
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [])
+ 
+@@ -196,7 +214,7 @@ const Chatflows = () => {
+                         <>
+                             {!view || view === 'card' ? (
+                                 <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+-                                    {getAllChatflowsApi.data?.data?.filter(filterFlows).map((data, index) => (
++                                    {getAllChatflowsApi.data?.data?.map((data, index) => (
+                                         <ItemCard key={index} onClick={() => goToCanvas(data)} data={data} images={images[data.id]} />
+                                     ))}
+                                 </Box>
+@@ -205,7 +223,6 @@ const Chatflows = () => {
+                                     data={getAllChatflowsApi.data?.data}
+                                     images={images}
+                                     isLoading={isLoading}
+-                                    filterFunction={filterFlows}
+                                     updateFlowsApi={getAllChatflowsApi}
+                                     setError={setError}
+                                 />
+
+From a29fc5e35e9cf69a112f045dbf3867e1e9bf03f6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?H=C3=A5vard=20Homb?= <maxim289@gmail.com>
+Date: Wed, 5 Nov 2025 11:25:03 +0100
+Subject: [PATCH 2/3] Update packages/server/src/controllers/chatflows/index.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/server/src/controllers/chatflows/index.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/controllers/chatflows/index.ts b/packages/server/src/controllers/chatflows/index.ts
+index cf6763232b5..4238136bb6d 100644
+--- a/packages/server/src/controllers/chatflows/index.ts
++++ b/packages/server/src/controllers/chatflows/index.ts
+@@ -72,7 +72,7 @@ const deleteChatflow = async (req: Request, res: Response, next: NextFunction) =
+ const getAllChatflows = async (req: Request, res: Response, next: NextFunction) => {
+     try {
+         const { page, limit } = getPageAndLimitParams(req)
+-        const search = req.query?.search as string
++        const search = typeof req.query.search === 'string' ? req.query.search : undefined
+ 
+         const apiResponse = await chatflowsService.getAllChatflows(
+             req.query?.type as ChatflowType,
+
+From c9f34c8965fa35b778b2088d5d920380496c5b34 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?H=C3=A5vard=20Homb?= <maxim289@gmail.com>
+Date: Wed, 5 Nov 2025 12:12:24 +0100
+Subject: [PATCH 3/3] Linting
+
+---
+ packages/ui/src/ui-component/table/FlowListTable.jsx | 11 +----------
+ 1 file changed, 1 insertion(+), 10 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/table/FlowListTable.jsx b/packages/ui/src/ui-component/table/FlowListTable.jsx
+index 3a800b5eff7..eeef8642a75 100644
+--- a/packages/ui/src/ui-component/table/FlowListTable.jsx
++++ b/packages/ui/src/ui-component/table/FlowListTable.jsx
+@@ -50,16 +50,7 @@ const getLocalStorageKeyName = (name, isAgentCanvas) => {
+     return (isAgentCanvas ? 'agentcanvas' : 'chatflowcanvas') + '_' + name
+ }
+ 
+-export const FlowListTable = ({
+-    data,
+-    images = {},
+-    icons = {},
+-    isLoading,
+-    updateFlowsApi,
+-    setError,
+-    isAgentCanvas,
+-    isAgentflowV2
+-}) => {
++export const FlowListTable = ({ data, images = {}, icons = {}, isLoading, updateFlowsApi, setError, isAgentCanvas, isAgentflowV2 }) => {
+     const { hasPermission } = useAuth()
+     const isActionsAvailable = isAgentCanvas
+         ? hasPermission('agentflows:update,agentflows:delete,agentflows:config,agentflows:domains,templates:flowexport,agentflows:export')

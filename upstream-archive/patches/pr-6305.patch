@@ -1,0 +1,457 @@
+From 0496b43973a097ee5f9de3497810afab48d6da6a Mon Sep 17 00:00:00 2001
+From: Sebastian Quendt <sebastian.quendt@outlook.de>
+Date: Tue, 24 Feb 2026 15:51:32 +0100
+Subject: [PATCH 1/5] page sizes for agent execution view, agentflow view,
+ chatflow view and docstore view are now stored in local storage.
+
+---
+ .../ui/src/views/agentexecutions/index.jsx    | 25 ++++++++++---------
+ packages/ui/src/views/agentflows/index.jsx    | 23 +++++++++--------
+ packages/ui/src/views/chatflows/index.jsx     | 19 +++++++-------
+ packages/ui/src/views/docstore/index.jsx      | 13 +++++-----
+ 4 files changed, 42 insertions(+), 38 deletions(-)
+
+diff --git a/packages/ui/src/views/agentexecutions/index.jsx b/packages/ui/src/views/agentexecutions/index.jsx
+index 0f3663cd1df..877b8973359 100644
+--- a/packages/ui/src/views/agentexecutions/index.jsx
++++ b/packages/ui/src/views/agentexecutions/index.jsx
+@@ -5,33 +5,33 @@ import 'react-datepicker/dist/react-datepicker.css'
+ // material-ui
+ import {
+     Box,
+-    Stack,
+-    TextField,
+-    MenuItem,
+     Button,
+-    Grid,
+-    FormControl,
+-    InputLabel,
+-    Select,
+     Dialog,
+     DialogActions,
+     DialogContent,
+     DialogContentText,
+     DialogTitle,
++    FormControl,
++    Grid,
+     IconButton,
++    InputLabel,
++    MenuItem,
++    Select,
++    Stack,
++    TextField,
+     Tooltip,
+     useTheme
+ } from '@mui/material'
+ 
+ // project imports
+-import MainCard from '@/ui-component/cards/MainCard'
+ import ErrorBoundary from '@/ErrorBoundary'
+ import ViewHeader from '@/layout/MainLayout/ViewHeader'
++import MainCard from '@/ui-component/cards/MainCard'
+ import { Available } from '@/ui-component/rbac/available'
+ 
+ // API
+-import useApi from '@/hooks/useApi'
+ import executionsApi from '@/api/executions'
++import useApi from '@/hooks/useApi'
+ import { useSelector } from 'react-redux'
+ 
+ // icons
+@@ -39,10 +39,10 @@ import execution_empty from '@/assets/images/executions_empty.svg'
+ import { IconTrash } from '@tabler/icons-react'
+ 
+ // const
++import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
+ import { ExecutionsListTable } from '@/ui-component/table/ExecutionsListTable'
+-import { ExecutionDetails } from './ExecutionDetails'
+ import { omit } from 'lodash'
+-import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
++import { ExecutionDetails } from './ExecutionDetails'
+ 
+ // ==============================|| AGENT EXECUTIONS ||============================== //
+ 
+@@ -91,11 +91,12 @@ const AgentExecutions = () => {
+ 
+     /* Table Pagination */
+     const [currentPage, setCurrentPage] = useState(1)
+-    const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
++    const [pageLimit, setPageLimit] = useState(parseInt(localStorage.getItem('executionsPageSize') || DEFAULT_ITEMS_PER_PAGE))
+     const [total, setTotal] = useState(0)
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
++        localStorage.setItem('executionsPageSize', pageLimit)
+         applyFilters(page, pageLimit)
+     }
+ 
+diff --git a/packages/ui/src/views/agentflows/index.jsx b/packages/ui/src/views/agentflows/index.jsx
+index c99bd6cf2d7..0d58b461f29 100644
+--- a/packages/ui/src/views/agentflows/index.jsx
++++ b/packages/ui/src/views/agentflows/index.jsx
+@@ -1,22 +1,22 @@
+ import { useEffect, useState } from 'react'
+-import { useNavigate } from 'react-router-dom'
+ import { useSelector } from 'react-redux'
++import { useNavigate } from 'react-router-dom'
+ 
+ // material-ui
+-import { Chip, Box, Stack, ToggleButton, ToggleButtonGroup, IconButton } from '@mui/material'
++import { Box, Chip, IconButton, Stack, ToggleButton, ToggleButtonGroup } from '@mui/material'
+ import { useTheme } from '@mui/material/styles'
+ 
+ // project imports
+-import MainCard from '@/ui-component/cards/MainCard'
+-import ItemCard from '@/ui-component/cards/ItemCard'
+-import { gridSpacing } from '@/store/constant'
+ import AgentsEmptySVG from '@/assets/images/agents_empty.svg'
+-import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
+-import { FlowListTable } from '@/ui-component/table/FlowListTable'
+-import ViewHeader from '@/layout/MainLayout/ViewHeader'
+ import ErrorBoundary from '@/ErrorBoundary'
++import ViewHeader from '@/layout/MainLayout/ViewHeader'
++import { gridSpacing } from '@/store/constant'
+ import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
++import ItemCard from '@/ui-component/cards/ItemCard'
++import MainCard from '@/ui-component/cards/MainCard'
++import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
+ import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
++import { FlowListTable } from '@/ui-component/table/FlowListTable'
+ 
+ // API
+ import chatflowsApi from '@/api/chatflows'
+@@ -25,11 +25,11 @@ import chatflowsApi from '@/api/chatflows'
+ import useApi from '@/hooks/useApi'
+ 
+ // const
+-import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
++import { AGENTFLOW_ICONS, baseURL } from '@/store/constant'
+ import { useError } from '@/store/context/ErrorContext'
+ 
+ // icons
+-import { IconPlus, IconLayoutGrid, IconList, IconX, IconAlertTriangle } from '@tabler/icons-react'
++import { IconAlertTriangle, IconLayoutGrid, IconList, IconPlus, IconX } from '@tabler/icons-react'
+ 
+ // ==============================|| AGENTS ||============================== //
+ 
+@@ -51,12 +51,13 @@ const Agentflows = () => {
+ 
+     /* Table Pagination */
+     const [currentPage, setCurrentPage] = useState(1)
+-    const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
++    const [pageLimit, setPageLimit] = useState(parseInt(localStorage.getItem('flowPageSize') || DEFAULT_ITEMS_PER_PAGE))
+     const [total, setTotal] = useState(0)
+ 
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
++        localStorage.setItem('flowPageSize', pageLimit)
+         refresh(page, pageLimit, agentflowVersion)
+     }
+ 
+diff --git a/packages/ui/src/views/chatflows/index.jsx b/packages/ui/src/views/chatflows/index.jsx
+index ce213313dcb..aaecf6fb7bf 100644
+--- a/packages/ui/src/views/chatflows/index.jsx
++++ b/packages/ui/src/views/chatflows/index.jsx
+@@ -6,16 +6,16 @@ import { Box, Skeleton, Stack, ToggleButton, ToggleButtonGroup } from '@mui/mate
+ import { useTheme } from '@mui/material/styles'
+ 
+ // project imports
+-import MainCard from '@/ui-component/cards/MainCard'
+-import ItemCard from '@/ui-component/cards/ItemCard'
+-import { gridSpacing } from '@/store/constant'
+ import WorkflowEmptySVG from '@/assets/images/workflow_empty.svg'
+-import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
+-import { FlowListTable } from '@/ui-component/table/FlowListTable'
+-import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
+-import ViewHeader from '@/layout/MainLayout/ViewHeader'
+ import ErrorBoundary from '@/ErrorBoundary'
++import ViewHeader from '@/layout/MainLayout/ViewHeader'
++import { gridSpacing } from '@/store/constant'
++import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
++import ItemCard from '@/ui-component/cards/ItemCard'
++import MainCard from '@/ui-component/cards/MainCard'
++import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
+ import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
++import { FlowListTable } from '@/ui-component/table/FlowListTable'
+ 
+ // API
+ import chatflowsApi from '@/api/chatflows'
+@@ -28,7 +28,7 @@ import { baseURL } from '@/store/constant'
+ import { useError } from '@/store/context/ErrorContext'
+ 
+ // icons
+-import { IconPlus, IconLayoutGrid, IconList } from '@tabler/icons-react'
++import { IconLayoutGrid, IconList, IconPlus } from '@tabler/icons-react'
+ 
+ // ==============================|| CHATFLOWS ||============================== //
+ 
+@@ -46,12 +46,13 @@ const Chatflows = () => {
+ 
+     /* Table Pagination */
+     const [currentPage, setCurrentPage] = useState(1)
+-    const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
++    const [pageLimit, setPageLimit] = useState(parseInt(localStorage.getItem('chatFlowPageSize') || DEFAULT_ITEMS_PER_PAGE))
+     const [total, setTotal] = useState(0)
+ 
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
++        localStorage.setItem('chatFlowPageSize', pageLimit)
+         applyFilters(page, pageLimit)
+     }
+ 
+diff --git a/packages/ui/src/views/docstore/index.jsx b/packages/ui/src/views/docstore/index.jsx
+index 60e45aac95e..ab2de278e5d 100644
+--- a/packages/ui/src/views/docstore/index.jsx
++++ b/packages/ui/src/views/docstore/index.jsx
+@@ -7,21 +7,21 @@ import { useTheme } from '@mui/material/styles'
+ 
+ // project imports
+ import ErrorBoundary from '@/ErrorBoundary'
++import ViewHeader from '@/layout/MainLayout/ViewHeader'
+ import { useError } from '@/store/context/ErrorContext'
++import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
++import DocumentStoreCard from '@/ui-component/cards/DocumentStoreCard'
+ import MainCard from '@/ui-component/cards/MainCard'
+ import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
+-import DocumentStoreCard from '@/ui-component/cards/DocumentStoreCard'
+ import AddDocStoreDialog from '@/views/docstore/AddDocStoreDialog'
+-import ViewHeader from '@/layout/MainLayout/ViewHeader'
+-import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
+ 
+ // API
+-import useApi from '@/hooks/useApi'
+ import documentsApi from '@/api/documentstore'
++import useApi from '@/hooks/useApi'
+ 
+ // icons
+-import { IconPlus, IconLayoutGrid, IconList } from '@tabler/icons-react'
+ import doc_store_empty from '@/assets/images/doc_store_empty.svg'
++import { IconLayoutGrid, IconList, IconPlus } from '@tabler/icons-react'
+ 
+ // const
+ import { baseURL, gridSpacing } from '@/store/constant'
+@@ -88,11 +88,12 @@ const Documents = () => {
+ 
+     /* Table Pagination */
+     const [currentPage, setCurrentPage] = useState(1)
+-    const [pageLimit, setPageLimit] = useState(DEFAULT_ITEMS_PER_PAGE)
++    const [pageLimit, setPageLimit] = useState(parseInt(localStorage.getItem('docStorePageSize') || DEFAULT_ITEMS_PER_PAGE))
+     const [total, setTotal] = useState(0)
+     const onChange = (page, pageLimit) => {
+         setCurrentPage(page)
+         setPageLimit(pageLimit)
++        localStorage.setItem('docStorePageSize', pageLimit)
+         applyFilters(page, pageLimit)
+     }
+ 
+
+From c999fa4c35ea397e4f03d9775c8773f1475affb6 Mon Sep 17 00:00:00 2001
+From: Sebastian Quendt <sebastian.quendt@outlook.de>
+Date: Tue, 24 Feb 2026 16:29:33 +0100
+Subject: [PATCH 2/5] added functinality to webcrawler tools to input a
+ ";"-separated list of urls in the link manager popup that automatically gets
+ parsed.
+
+---
+ .../dialog/ManageScrapedLinksDialog.jsx       | 35 ++++++++++++++++---
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+index 55d2a00c2cf..cf3d7ea72f6 100644
+--- a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+@@ -99,6 +99,24 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+         setLoading(false)
+     }
+ 
++    const handleParseLinks = () => {
++        const urlPattern = /(https?:\/\/[^\s]+)/g
++        const matches = url.match(urlPattern)
++        if (matches && matches.length > 0) {
++            const uniqueLinks = []
++            const links = url.split(/[\r\n\t; ]+/).map((link) => link.trim())
++            for (const link of links) {
++                if (!uniqueLinks.some((x) => x === link) && link.length > 0) {
++                    uniqueLinks.push(link)
++                }
++            }
++            if (uniqueLinks.length > 0) {
++                setUrl(uniqueLinks[0])
++                setSelectedLinks(uniqueLinks)
++            }
++        }
++    }
++
+     const handleChangeLink = (index, event) => {
+         const { value } = event.target
+         const links = [...selectedLinks]
+@@ -129,12 +147,12 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+             onClose={onCancel}
+             open={show}
+             fullWidth
+-            maxWidth='sm'
++            maxWidth='md'
+             aria-labelledby='manage-scraped-links-dialog-title'
+             aria-describedby='manage-scraped-links-dialog-description'
+         >
+             <DialogTitle sx={{ fontSize: '1rem' }} id='manage-scraped-links-dialog-title'>
+-                {dialogProps.title || `Manage Scraped Links - ${url}`}
++                {dialogProps.title || `Manage Links - ${url.substring(0, 50)}${url.length > 50 ? '...' : ''}`}
+             </DialogTitle>
+             <DialogContent>
+                 <Box sx={{ mb: 4 }}>
+@@ -151,6 +169,15 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+                                 }}
+                             />
+                         </FormControl>
++                        <Button
++                            disabled={!url}
++                            sx={{ borderRadius: '12px', mt: 1, display: 'flex', flexShrink: 0 }}
++                            size='small'
++                            variant='contained'
++                            onClick={handleParseLinks}
++                        >
++                            Parse Input
++                        </Button>
+                         <Button
+                             disabled={!url}
+                             sx={{ borderRadius: '12px', mt: 1, display: 'flex', flexShrink: 0 }}
+@@ -163,7 +190,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+                     </Stack>
+                 </Box>
+                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+-                    <Typography sx={{ fontWeight: 500 }}>Scraped Links</Typography>
++                    <Typography sx={{ fontWeight: 500 }}>Links</Typography>
+                     <Box sx={{ width: 'auto', flexGrow: 1 }}>
+                         <IconButton
+                             sx={{ height: 30, width: 30, marginLeft: '8px' }}
+@@ -229,7 +256,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+                         </PerfectScrollbar>
+                     ) : (
+                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+-                            <Typography sx={{ my: 2 }}>Links scraped from the URL will appear here</Typography>
++                            <Typography sx={{ my: 2 }}>Links parsed/scraped from the URL will appear here</Typography>
+                         </div>
+                     )}
+                 </>
+
+From 40d8d18fc6bc35711d7a78e58ca6ec25efd5df32 Mon Sep 17 00:00:00 2001
+From: Sebastian Quendt <sebastian.quendt@outlook.de>
+Date: Tue, 24 Feb 2026 22:28:51 +0100
+Subject: [PATCH 3/5] Link count is now shown in link manager dialog.
+
+---
+ .../ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+index cf3d7ea72f6..b8ee49988b7 100644
+--- a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+@@ -190,7 +190,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+                     </Stack>
+                 </Box>
+                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+-                    <Typography sx={{ fontWeight: 500 }}>Links</Typography>
++                    <Typography sx={{ fontWeight: 500 }}>Links ({selectedLinks.length})</Typography>
+                     <Box sx={{ width: 'auto', flexGrow: 1 }}>
+                         <IconButton
+                             sx={{ height: 30, width: 30, marginLeft: '8px' }}
+
+From 89b10d165c8ca534565f64fd52c4da12a154fae3 Mon Sep 17 00:00:00 2001
+From: Sebastian Quendt <sebastian.quendt@outlook.de>
+Date: Tue, 28 Apr 2026 16:27:51 +0200
+Subject: [PATCH 4/5] Added tooltip
+
+Co-authored-by: Copilot <copilot@github.com>
+---
+ .../dialog/ManageScrapedLinksDialog.jsx       | 21 +++++++++++--------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+index b8ee49988b7..b89b7db73a5 100644
+--- a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+@@ -14,6 +14,7 @@ import {
+     IconButton,
+     OutlinedInput,
+     Stack,
++    Tooltip,
+     Typography
+ } from '@mui/material'
+ import { IconEraser, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+@@ -169,15 +170,17 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+                                 }}
+                             />
+                         </FormControl>
+-                        <Button
+-                            disabled={!url}
+-                            sx={{ borderRadius: '12px', mt: 1, display: 'flex', flexShrink: 0 }}
+-                            size='small'
+-                            variant='contained'
+-                            onClick={handleParseLinks}
+-                        >
+-                            Parse Input
+-                        </Button>
++                        <Tooltip title={'Parse a list of links from the input text. Links can be separated by new line, tab or semicolon.'}>
++                            <Button
++                                disabled={!url}
++                                sx={{ borderRadius: '12px', mt: 1, display: 'flex', flexShrink: 0 }}
++                                size='small'
++                                variant='contained'
++                                onClick={handleParseLinks}
++                            >
++                                Parse Input
++                            </Button>
++                        </Tooltip>
+                         <Button
+                             disabled={!url}
+                             sx={{ borderRadius: '12px', mt: 1, display: 'flex', flexShrink: 0 }}
+
+From 93c5638beaee3dd5b131977e0fbd797ea0c1b1ec Mon Sep 17 00:00:00 2001
+From: Sebastian Quendt <sebastian.quendt@outlook.de>
+Date: Tue, 28 Apr 2026 18:22:01 +0200
+Subject: [PATCH 5/5] Updated function.
+
+Co-authored-by: Copilot <copilot@github.com>
+---
+ .../dialog/ManageScrapedLinksDialog.jsx       | 24 ++++++++-----------
+ 1 file changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+index b89b7db73a5..fb184f8f787 100644
+--- a/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ManageScrapedLinksDialog.jsx
+@@ -101,20 +101,16 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
+     }
+ 
+     const handleParseLinks = () => {
+-        const urlPattern = /(https?:\/\/[^\s]+)/g
+-        const matches = url.match(urlPattern)
+-        if (matches && matches.length > 0) {
+-            const uniqueLinks = []
+-            const links = url.split(/[\r\n\t; ]+/).map((link) => link.trim())
+-            for (const link of links) {
+-                if (!uniqueLinks.some((x) => x === link) && link.length > 0) {
+-                    uniqueLinks.push(link)
+-                }
+-            }
+-            if (uniqueLinks.length > 0) {
+-                setUrl(uniqueLinks[0])
+-                setSelectedLinks(uniqueLinks)
+-            }
++        const urlPattern = /^https?:\/\/\S+$/
++        const links = url
++            .split(/[\r\n\t; ]+/)
++            .map((link) => link.trim())
++            .filter((link) => urlPattern.test(link))
++
++        const uniqueLinks = [...new Set(links)]
++        if (uniqueLinks.length > 0) {
++            setUrl(uniqueLinks[0])
++            setSelectedLinks(uniqueLinks)
+         }
+     }
+ 

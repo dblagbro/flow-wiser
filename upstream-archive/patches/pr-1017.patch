@@ -1,0 +1,21 @@
+From 1713070b8e6833900c50ac6e604a02386cb938f2 Mon Sep 17 00:00:00 2001
+From: vincent-pli <justdoit.pli@gmail.com>
+Date: Mon, 9 Oct 2023 09:38:58 +0800
+Subject: [PATCH] credential should be-rebuild eveytimes
+
+---
+ packages/server/src/utils/index.ts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index bb048490d47..7d0823a526a 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -481,6 +481,7 @@ export const isStartNodeDependOnInput = (startingNodes: IReactFlowNode[], nodes:
+             const inputVariables = getInputVariables(node.data.inputs[inputName])
+             if (inputVariables.length > 0) return true
+         }
++        if (Object.prototype.hasOwnProperty.call(node.data, 'credential')) return true
+     }
+     const whitelistNodeNames = ['vectorStoreToDocument', 'autoGPT']
+     for (const node of nodes) {

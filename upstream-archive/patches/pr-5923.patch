@@ -1,0 +1,838 @@
+From 9186cc8a5f9eedc139db5b43c2c62e558fb57e6b Mon Sep 17 00:00:00 2001
+From: William Espegren <espegren.w@gmail.com>
+Date: Fri, 6 Mar 2026 23:45:48 +0100
+Subject: [PATCH 1/3] feat: add Seltz Search tool integration
+
+---
+ .../credentials/SeltzApi.credential.ts        |  26 ++++
+ .../nodes/tools/SeltzSearch/README.md         |  39 +++++
+ .../nodes/tools/SeltzSearch/SeltzSearch.ts    | 147 ++++++++++++++++++
+ .../nodes/tools/SeltzSearch/seltz.svg         |   1 +
+ packages/components/package.json              |   1 +
+ .../SeltzSearch.integration.test.ts           |  63 ++++++++
+ .../tools/SeltzSearch/SeltzSearch.test.ts     | 144 +++++++++++++++++
+ pnpm-lock.yaml                                | 100 ++++++++++--
+ 8 files changed, 510 insertions(+), 11 deletions(-)
+ create mode 100644 packages/components/credentials/SeltzApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/SeltzSearch/README.md
+ create mode 100644 packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+ create mode 100644 packages/components/nodes/tools/SeltzSearch/seltz.svg
+ create mode 100644 packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
+ create mode 100644 packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
+
+diff --git a/packages/components/credentials/SeltzApi.credential.ts b/packages/components/credentials/SeltzApi.credential.ts
+new file mode 100644
+index 00000000000..5d783fc50c3
+--- /dev/null
++++ b/packages/components/credentials/SeltzApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class SeltzApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Seltz API'
++        this.name = 'seltzApi'
++        this.version = 1.0
++        this.description =
++            'You can get your API key from the <a target="_blank" href="https://console.seltz.ai">Seltz Console</a>. Refer to <a target="_blank" href="https://docs.seltz.ai">official docs</a> for more information.'
++        this.inputs = [
++            {
++                label: 'Seltz API Key',
++                name: 'seltzApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: SeltzApi }
+diff --git a/packages/components/nodes/tools/SeltzSearch/README.md b/packages/components/nodes/tools/SeltzSearch/README.md
+new file mode 100644
+index 00000000000..437fcb05cb3
+--- /dev/null
++++ b/packages/components/nodes/tools/SeltzSearch/README.md
+@@ -0,0 +1,39 @@
++# Seltz Search Tool
++
++A wrapper around the [Seltz](https://seltz.ai) Web Knowledge API. Returns web search results with source URLs, suitable for use in LLM tool-calling, agents, and RAG pipelines.
++
++## Setup
++
++1. Get your API key from the [Seltz Console](https://console.seltz.ai)
++2. In Flowise, add the **Seltz Search** tool node to your flow
++3. Create a new **Seltz API** credential with your API key
++4. Connect the credential to the tool node
++
++## Configuration
++
++| Parameter            | Description                                                        | Required |
++| -------------------- | ------------------------------------------------------------------ | -------- |
++| **API Key**          | Your Seltz API key (via credential)                                | Yes      |
++| **Tool Description** | Custom description for the LLM to understand when to use this tool | No       |
++| **Max Documents**    | Maximum number of documents to return                              | No       |
++| **Context**          | Additional context to refine the search                            | No       |
++| **Profile**          | Search profile to use                                              | No       |
++
++## Output Format
++
++The tool returns a JSON array of documents:
++
++```json
++[
++    {
++        "url": "https://example.com/article",
++        "content": "The relevant content from the web page..."
++    }
++]
++```
++
++## Resources
++
++-   [Seltz Documentation](https://docs.seltz.ai)
++-   [Seltz Console](https://console.seltz.ai)
++-   [npm Package](https://www.npmjs.com/package/seltz)
+diff --git a/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts b/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+new file mode 100644
+index 00000000000..150897e3d92
+--- /dev/null
++++ b/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+@@ -0,0 +1,147 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const defaultDesc =
++    'A context-engineered web search tool powered by Seltz. Useful for when you need to answer questions using fast, up-to-date web knowledge with sources for real-time AI reasoning. Input should be a search query. Output is a JSON array of documents with url and content fields.'
++
++class SeltzSearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Seltz Search'
++        this.name = 'seltzSearch'
++        this.version = 1.0
++        this.type = 'SeltzSearch'
++        this.icon = 'seltz.svg'
++        this.category = 'Tools'
++        this.description = 'Wrapper around Seltz Web Knowledge API - context-engineered web content with sources for real-time AI reasoning'
++        this.inputs = [
++            {
++                label: 'Tool Description',
++                name: 'toolDescription',
++                type: 'string',
++                rows: 4,
++                default: defaultDesc,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Documents',
++                name: 'maxDocuments',
++                type: 'number',
++                description: 'Maximum number of documents to return',
++                optional: true,
++                step: 1,
++                additionalParams: true
++            },
++            {
++                label: 'Context',
++                name: 'context',
++                type: 'string',
++                description: 'Additional context to refine the search',
++                rows: 2,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Profile',
++                name: 'profile',
++                type: 'string',
++                description: 'Search profile to use',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['seltzApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(SeltzSearchTool)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const seltzApiKey = getCredentialParam('seltzApiKey', credentialData, nodeData)
++
++        const toolDescription = nodeData.inputs?.toolDescription as string
++        const maxDocuments = nodeData.inputs?.maxDocuments as string
++        const context = nodeData.inputs?.context as string
++        const profile = nodeData.inputs?.profile as string
++
++        const tool = new SeltzSearchTool({
++            apiKey: seltzApiKey,
++            maxDocuments: maxDocuments ? parseInt(maxDocuments, 10) : undefined,
++            context: context || undefined,
++            profile: profile || undefined
++        })
++
++        if (toolDescription) tool.description = toolDescription
++
++        return tool
++    }
++}
++
++class SeltzSearchTool extends Tool {
++    static lc_name() {
++        return 'SeltzSearchTool'
++    }
++
++    name = 'seltz-search'
++    description = defaultDesc
++
++    private apiKey: string
++    private maxDocuments?: number
++    private context?: string
++    private profile?: string
++
++    constructor({ apiKey, maxDocuments, context, profile }: { apiKey: string; maxDocuments?: number; context?: string; profile?: string }) {
++        super()
++        this.apiKey = apiKey
++        this.maxDocuments = maxDocuments
++        this.context = context
++        this.profile = profile
++    }
++
++    async _call(input: string): Promise<string> {
++        const { Seltz } = await import('seltz')
++        const client = new Seltz({ apiKey: this.apiKey })
++
++        const searchOptions: Record<string, any> = {}
++        if (this.maxDocuments) {
++            searchOptions.includes = { maxDocuments: this.maxDocuments }
++        }
++        if (this.context) {
++            searchOptions.context = this.context
++        }
++        if (this.profile) {
++            searchOptions.profile = this.profile
++        }
++
++        const response = await client.search(input, Object.keys(searchOptions).length > 0 ? searchOptions : undefined)
++
++        if (!response.documents || response.documents.length === 0) {
++            return 'No results found.'
++        }
++
++        const results = response.documents.map((doc: any) => ({
++            url: doc.url || '',
++            content: doc.content || ''
++        }))
++
++        return JSON.stringify(results)
++    }
++}
++
++module.exports = { nodeClass: SeltzSearch_Tools, SeltzSearchTool }
+diff --git a/packages/components/nodes/tools/SeltzSearch/seltz.svg b/packages/components/nodes/tools/SeltzSearch/seltz.svg
+new file mode 100644
+index 00000000000..dcdb2d3fb67
+--- /dev/null
++++ b/packages/components/nodes/tools/SeltzSearch/seltz.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" id="a" width="100" height="100"><defs><style>.b{fill:#1cc19c}</style></defs><rect width="12.78" height="12.78" x="1" y="43.61" class="b" rx="5.18" ry="5.18"/><rect width="12.78" height="12.78" x="86.22" y="43.61" class="b" rx="5.18" ry="5.18"/><path d="M79.83 31.95v-6.51a5.27 5.27 0 0 0-5.27-5.27h-8.09c-1.4 0-2.74-.55-3.72-1.54l-4.81-4.81a5.26 5.26 0 0 1-1.54-3.72V6.27A5.27 5.27 0 0 0 51.13 1h-2.25a5.27 5.27 0 0 0-5.27 5.27v3.83c0 1.4-.55 2.74-1.54 3.72l-4.81 4.81a5.26 5.26 0 0 1-3.72 1.54h-8.09a5.27 5.27 0 0 0-5.27 5.27v6.51a5.27 5.27 0 0 0 5.27 5.27h8.45c1.16 0 2.28.46 3.1 1.29a4.4 4.4 0 0 1 1.29 3.1v14.84a5.27 5.27 0 0 0 5.27 5.27H58.4c1.16 0 2.28.46 3.1 1.29a4.4 4.4 0 0 1 1.29 3.1v10.03c0 1.4-.55 2.74-1.54 3.72l-4.81 4.81a5.26 5.26 0 0 1-3.72 1.54h-5.41c-1.4 0-2.74-.55-3.72-1.54l-4.81-4.81a5.26 5.26 0 0 1-1.54-3.72v-8.09a5.27 5.27 0 0 0-5.27-5.27h-6.51a5.27 5.27 0 0 0-5.27 5.27v6.51a5.27 5.27 0 0 0 5.27 5.27h8.09c1.4 0 2.74.55 3.72 1.54l4.81 4.81a5.26 5.26 0 0 1 1.54 3.72v3.83A5.27 5.27 0 0 0 48.89 99h2.25a5.27 5.27 0 0 0 5.27-5.27V89.9c0-1.4.55-2.74 1.54-3.72l4.81-4.81a5.26 5.26 0 0 1 3.72-1.54h8.09a5.27 5.27 0 0 0 5.27-5.27v-6.51a5.27 5.27 0 0 0-5.27-5.27h-8.45c-1.16 0-2.28-.46-3.1-1.29a4.4 4.4 0 0 1-1.29-3.1V43.55a5.27 5.27 0 0 0-5.27-5.27H41.62c-1.16 0-2.28-.46-3.1-1.29a4.4 4.4 0 0 1-1.29-3.1V23.86c0-1.4.55-2.74 1.54-3.72l4.81-4.81a5.26 5.26 0 0 1 3.72-1.54h5.41c1.4 0 2.74.55 3.72 1.54l4.81 4.81a5.26 5.26 0 0 1 1.54 3.72v8.09a5.27 5.27 0 0 0 5.27 5.27h6.51a5.27 5.27 0 0 0 5.27-5.27Z" class="b"/></svg>
+diff --git a/packages/components/package.json b/packages/components/package.json
+index c8cce49b0e6..ce7c0447528 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -160,6 +160,7 @@
+         "remove-markdown": "^0.6.2",
+         "replicate": "^0.31.1",
+         "sanitize-filename": "^1.6.3",
++        "seltz": "^0.2.0",
+         "srt-parser-2": "^1.2.3",
+         "supergateway": "3.0.1",
+         "typeorm": "^0.3.6",
+diff --git a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
+new file mode 100644
+index 00000000000..1bbd7d6b11d
+--- /dev/null
++++ b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
+@@ -0,0 +1,63 @@
++/**
++ * Integration test for SeltzSearch tool.
++ * Requires SELTZ_API_KEY environment variable to be set.
++ * Run with: SELTZ_API_KEY=your-key npx jest --testPathPattern=SeltzSearch.integration
++ */
++
++// Mock @langchain/core/tools to avoid ESM issues in Jest
++jest.mock('@langchain/core/tools', () => {
++    class MockTool {
++        name = ''
++        description = ''
++    }
++    return { Tool: MockTool }
++})
++
++jest.mock('../../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['Tool']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++const { SeltzSearchTool } = require('../../../../nodes/tools/SeltzSearch/SeltzSearch')
++
++const SELTZ_API_KEY = process.env.SELTZ_API_KEY
++
++const describeIfKey = SELTZ_API_KEY ? describe : describe.skip
++
++describeIfKey('SeltzSearchTool Integration', () => {
++    it('should return search results for a basic query', async () => {
++        const tool = new SeltzSearchTool({ apiKey: SELTZ_API_KEY! })
++        const result = await tool._call('What is Flowise AI?')
++
++        const parsed = JSON.parse(result)
++        expect(Array.isArray(parsed)).toBe(true)
++        expect(parsed.length).toBeGreaterThan(0)
++        expect(parsed[0]).toHaveProperty('url')
++        expect(parsed[0]).toHaveProperty('content')
++        expect(parsed[0].url).toMatch(/^https?:\/\//)
++        expect(parsed[0].content.length).toBeGreaterThan(0)
++    }, 30000)
++
++    it('should respect maxDocuments option', async () => {
++        const tool = new SeltzSearchTool({ apiKey: SELTZ_API_KEY!, maxDocuments: 3 })
++        const result = await tool._call('TypeScript programming')
++
++        const parsed = JSON.parse(result)
++        expect(parsed.length).toBeLessThanOrEqual(3)
++        expect(parsed.length).toBeGreaterThan(0)
++    }, 30000)
++
++    it('should work with context option', async () => {
++        const tool = new SeltzSearchTool({
++            apiKey: SELTZ_API_KEY!,
++            context: 'open source AI workflow tools',
++            maxDocuments: 5
++        })
++        const result = await tool._call('low-code AI automation')
++
++        const parsed = JSON.parse(result)
++        expect(Array.isArray(parsed)).toBe(true)
++        expect(parsed.length).toBeGreaterThan(0)
++    }, 30000)
++})
+diff --git a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
+new file mode 100644
+index 00000000000..e9742b3722d
+--- /dev/null
++++ b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
+@@ -0,0 +1,144 @@
++// Mock @langchain/core/tools before any import that pulls it in
++jest.mock('@langchain/core/tools', () => {
++    class MockTool {
++        name = ''
++        description = ''
++    }
++    return { Tool: MockTool }
++})
++
++// Mock utils to avoid pulling in more dependencies
++jest.mock('../../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['Tool']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++// Mock seltz SDK
++jest.mock('seltz', () => ({
++    Seltz: jest.fn()
++}))
++
++const { SeltzSearchTool } = require('../../../../nodes/tools/SeltzSearch/SeltzSearch')
++
++describe('SeltzSearchTool', () => {
++    let mockSearch: jest.Mock
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++        mockSearch = jest.fn()
++        const { Seltz } = require('seltz')
++        ;(Seltz as jest.Mock).mockImplementation(() => ({
++            search: mockSearch
++        }))
++    })
++
++    describe('constructor', () => {
++        it('should create tool with required properties', () => {
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            expect(tool.name).toBe('seltz-search')
++            expect(tool.description).toContain('context-engineered web search tool powered by Seltz')
++        })
++    })
++
++    describe('_call', () => {
++        it('should return formatted results on successful search', async () => {
++            mockSearch.mockResolvedValue({
++                documents: [
++                    { url: 'https://example.com/1', content: 'First result content' },
++                    { url: 'https://example.com/2', content: 'Second result content' }
++                ]
++            })
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            const result = await tool._call('test query')
++
++            const parsed = JSON.parse(result)
++            expect(parsed).toHaveLength(2)
++            expect(parsed[0]).toEqual({ url: 'https://example.com/1', content: 'First result content' })
++            expect(parsed[1]).toEqual({ url: 'https://example.com/2', content: 'Second result content' })
++        })
++
++        it('should return "No results found." when no documents', async () => {
++            mockSearch.mockResolvedValue({ documents: [] })
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            const result = await tool._call('no results query')
++
++            expect(result).toBe('No results found.')
++        })
++
++        it('should handle documents with missing fields', async () => {
++            mockSearch.mockResolvedValue({
++                documents: [{ url: undefined, content: undefined }]
++            })
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            const result = await tool._call('partial query')
++
++            const parsed = JSON.parse(result)
++            expect(parsed[0]).toEqual({ url: '', content: '' })
++        })
++
++        it('should pass maxDocuments option when configured', async () => {
++            mockSearch.mockResolvedValue({ documents: [] })
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key', maxDocuments: 5 })
++            await tool._call('test')
++
++            expect(mockSearch).toHaveBeenCalledWith('test', {
++                includes: { maxDocuments: 5 }
++            })
++        })
++
++        it('should pass context and profile options when configured', async () => {
++            mockSearch.mockResolvedValue({ documents: [] })
++
++            const tool = new SeltzSearchTool({
++                apiKey: 'test-key',
++                context: 'AI tools',
++                profile: 'technical'
++            })
++            await tool._call('test')
++
++            expect(mockSearch).toHaveBeenCalledWith('test', {
++                context: 'AI tools',
++                profile: 'technical'
++            })
++        })
++
++        it('should pass all options together when configured', async () => {
++            mockSearch.mockResolvedValue({ documents: [] })
++
++            const tool = new SeltzSearchTool({
++                apiKey: 'test-key',
++                maxDocuments: 3,
++                context: 'AI tools',
++                profile: 'technical'
++            })
++            await tool._call('test')
++
++            expect(mockSearch).toHaveBeenCalledWith('test', {
++                includes: { maxDocuments: 3 },
++                context: 'AI tools',
++                profile: 'technical'
++            })
++        })
++
++        it('should not pass options when none are configured', async () => {
++            mockSearch.mockResolvedValue({ documents: [] })
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            await tool._call('test')
++
++            expect(mockSearch).toHaveBeenCalledWith('test', undefined)
++        })
++
++        it('should propagate errors from the SDK', async () => {
++            mockSearch.mockRejectedValue(new Error('API Error'))
++
++            const tool = new SeltzSearchTool({ apiKey: 'test-key' })
++            await expect(tool._call('test')).rejects.toThrow('API Error')
++        })
++    })
++})
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 8257b779cf2..3098161b694 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -316,7 +316,7 @@ importers:
+         version: 0.0.7(encoding@0.1.13)(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4))
+       '@langchain/community':
+         specifier: ^0.3.47
+-        version: 0.3.49(96a2dea491375c22412401f1555fc2c2)
++        version: 0.3.49(6d0192fcaee5e5825c491623a8779f5b)
+       '@langchain/core':
+         specifier: 0.3.61
+         version: 0.3.61(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4))
+@@ -361,7 +361,7 @@ importers:
+         version: 0.0.1(@langchain/core@0.3.61(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4)))(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       '@mem0/community':
+         specifier: ^0.0.1
+-        version: 0.0.1(5a79e038a0f9851c2336c9f7472dc8f5)
++        version: 0.0.1(d3caac209844649520d9f85c7fa399b4)
+       '@mendable/firecrawl-js':
+         specifier: ^1.18.2
+         version: 1.25.1
+@@ -641,6 +641,9 @@ importers:
+       sanitize-filename:
+         specifier: ^1.6.3
+         version: 1.6.3
++      seltz:
++        specifier: ^0.2.0
++        version: 0.2.0
+       srt-parser-2:
+         specifier: ^1.2.3
+         version: 1.2.3
+@@ -1442,6 +1445,9 @@ packages:
+     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
+     engines: {node: '>=6.0.0'}
+ 
++  '@anthropic-ai/sdk@0.18.0':
++    resolution: {integrity: sha512-3XsWEn/4nPGRd4AdSguugbSDFy6Z2AWTNOeI3iK+aV22+w23+vY9CEb3Hiy0kvKIQuxSmZz/+5WKC8nPWy8gVg==}
++
+   '@anthropic-ai/sdk@0.20.9':
+     resolution: {integrity: sha512-Lq74+DhiEQO6F9/gdVOLmHx57pX45ebK2Q/zH14xYe1157a7QeUVknRqIp0Jz5gQI01o7NKbuv9Dag2uQsLjDg==}
+ 
+@@ -9309,6 +9315,9 @@ packages:
+       bare-events:
+         optional: true
+ 
++  base-64@0.1.0:
++    resolution: {integrity: sha512-Y5gU45svrR5tI2Vt/X9GPd3L0HNIKzGu202EjxrXMpuc2V2CiKgemAbUUsqYmZJvPtCXoUKjNZwBJzsNScUbXA==}
++
+   base-64@1.0.0:
+     resolution: {integrity: sha512-kwDPIFCGx0NZHog36dj+tHiwP4QMzsZ3AgMViUBKI0+V5n4U0ufTCUMhnQ04diaRI8EX/QcPfql7zlhZ7j4zgg==}
+ 
+@@ -9647,6 +9656,9 @@ packages:
+   chardet@0.7.0:
+     resolution: {integrity: sha512-mT8iDcrh03qDGRRmoA2hmBJnxpllMR+0/0qlzjqZES6NdiWDcZkCNAk4rPFZ9Q85r27unkiNNg8ZOiwZXBHwcA==}
+ 
++  charenc@0.0.2:
++    resolution: {integrity: sha512-yrLQ/yVUFXkzg7EDQsPieE/53+0RlaWTs+wBrvW36cyilJ2SaDWfl4Yj7MtLTXleV9uEKefbAGUPv2/iWSooRA==}
++
+   check-more-types@2.24.0:
+     resolution: {integrity: sha512-Pj779qHxV2tuapviy1bSZNEL1maXr13bPYpsvSDB68HlYcYuhlDrmGd63i0JHMCLKzc7rUSNIrpdJlhVlNwrxA==}
+     engines: {node: '>= 0.8.0'}
+@@ -10206,6 +10218,9 @@ packages:
+     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
+     engines: {node: '>= 8'}
+ 
++  crypt@0.0.2:
++    resolution: {integrity: sha512-mCxBlsHFYh9C+HVpiEacem8FEBnMXgU9gy4zmNC+SXAZNB/1idgp/aulFJ4FgCi7GPEVbfyng092GqL2k2rmow==}
++
+   crypto-js@4.2.0:
+     resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+ 
+@@ -10771,6 +10786,9 @@ packages:
+     resolution: {integrity: sha512-uIFDxqpRZGZ6ThOk84hEfqWoHx2devRFvpTZcTHur85vImfaxUbTW9Ryh4CpCuDnToOP1CEtXKIgytHBPVff5A==}
+     engines: {node: '>=0.3.1'}
+ 
++  digest-fetch@1.3.0:
++    resolution: {integrity: sha512-CGJuv6iKNM7QyZlM2T3sPAdZWd/p9zQiRNS9G+9COUCwzWFTs0Xp8NF5iePx7wtvhDykReiRRrSeNb4oMmB8lA==}
++
+   dingbat-to-unicode@1.0.1:
+     resolution: {integrity: sha512-98l0sW87ZT58pU4i61wa2OHwxbiYSbuxsCBozaVnYX2iCnr3bLM3fIes1/ej7h1YdOKuKt/MLs706TVnALA65w==}
+ 
+@@ -12177,6 +12195,9 @@ packages:
+     resolution: {integrity: sha512-59LZHPdGZVh695Ud9lRzPBVTtlX9ZCV150Er2W43ro37wVof0ctenSaskPPjN7lVTIN8mSZt8PHUNKZuNQUuxw==}
+     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
+ 
++  groq-sdk@0.3.0:
++    resolution: {integrity: sha512-Cdgjh4YoSBE2X4S9sxPGXaAy1dlN4bRtAaDZ3cnq+XsxhhN9WSBeHF64l7LWwuD5ntmw7YC5Vf4Ff1oHCg1LOg==}
++
+   groq-sdk@0.5.0:
+     resolution: {integrity: sha512-RVmhW7qZ+XZoy5fIuSdx/LGQJONpL8MHgZEW7dFwTdgkzStub2XQx6OKv28CHogijdwH41J+Npj/z2jBPu3vmw==}
+ 
+@@ -14035,6 +14056,9 @@ packages:
+   md5.js@1.3.5:
+     resolution: {integrity: sha512-xitP+WxNPcTTOgnTJcrhM0xvdPepipPSf3I8EIpGKeFLjt3PlJLIDG3u8EX53ZIubkb+5U2+3rELYpEhHhzdkg==}
+ 
++  md5@2.3.0:
++    resolution: {integrity: sha512-T1GITYmFaKuO91vxyoQMFETst+O71VUPEU3ze5GNzDm0OWdP8v1ziTaAEPUr/3kLsY3Sftgz242A1SetQiDL7g==}
++
+   mdast-util-definitions@5.1.2:
+     resolution: {integrity: sha512-8SVPMuHqlPME/z3gqVwWY4zVXn8lqKv/pAhC57FuJ40ImXyBpmO5ukh98zB2v7Blql2FiHjHv9LVztSIqjY+MA==}
+ 
+@@ -17022,6 +17046,10 @@ packages:
+     resolution: {integrity: sha512-th5B4L2U+eGLq1TVh7zNRGBapioSORUeymIydxgFpwww9d2qyKvtuPU2jJuHvYAwwqi2Y596QBL3eEqcPEYL8Q==}
+     engines: {node: '>=10'}
+ 
++  seltz@0.2.0:
++    resolution: {integrity: sha512-AAvwhYbfa+nvuoFuLiNBtCZqybqvduz3z0r8dohI4DrcjGwhrCXbbIO306jF2dnnMVA/PTy8Gi8r3TSHOaSt7w==}
++    engines: {node: '>=18.0.0'}
++
+   semver-compare@1.0.0:
+     resolution: {integrity: sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow==}
+ 
+@@ -19172,7 +19200,7 @@ packages:
+     engines: {node: '>=4'}
+ 
+   xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:
+-    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
++    resolution: {integrity: sha512-oLDq3jw7AcLqKWH2AhCpVTZl8mf6X2YReP+Neh0SJUzV/BdZYjth94tG5toiMB1PPrYtxOCfaoUCkvtuH+3AJA==, tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
+     version: 0.20.3
+     engines: {node: '>=0.8'}
+     hasBin: true
+@@ -19459,6 +19487,20 @@ snapshots:
+       '@jridgewell/gen-mapping': 0.3.5
+       '@jridgewell/trace-mapping': 0.3.25
+ 
++  '@anthropic-ai/sdk@0.18.0(encoding@0.1.13)':
++    dependencies:
++      '@types/node': 18.19.23
++      '@types/node-fetch': 2.6.12
++      abort-controller: 3.0.0
++      agentkeepalive: 4.5.0
++      digest-fetch: 1.3.0
++      form-data-encoder: 1.7.2
++      formdata-node: 4.4.1
++      node-fetch: 2.7.0(encoding@0.1.13)
++      web-streams-polyfill: 3.3.3
++    transitivePeerDependencies:
++      - encoding
++
+   '@anthropic-ai/sdk@0.20.9(encoding@0.1.13)':
+     dependencies:
+       '@types/node': 18.19.23
+@@ -25100,7 +25142,7 @@ snapshots:
+       - encoding
+       - openai
+ 
+-  '@langchain/community@0.3.49(96a2dea491375c22412401f1555fc2c2)':
++  '@langchain/community@0.3.49(6d0192fcaee5e5825c491623a8779f5b)':
+     dependencies:
+       '@browserbasehq/stagehand': 1.9.0(@playwright/test@1.49.1)(bufferutil@4.0.8)(deepmerge@4.3.1)(dotenv@16.4.5)(encoding@0.1.13)(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4))(utf-8-validate@6.0.4)(zod@3.22.4)
+       '@ibm-cloud/watsonx-ai': 1.2.0
+@@ -25167,7 +25209,7 @@ snapshots:
+       lodash: 4.17.21
+       lunary: 0.7.12(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4))(react@18.2.0)
+       mammoth: 1.7.0
+-      mem0ai: 2.1.16(@anthropic-ai/sdk@0.65.0(zod@3.22.4))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.5.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
++      mem0ai: 2.1.16(@anthropic-ai/sdk@0.18.0(encoding@0.1.13))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       mongodb: 6.3.0(socks@2.8.1)
+       mysql2: 3.11.4
+       neo4j-driver: 5.27.0
+@@ -25444,12 +25486,12 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  '@mem0/community@0.0.1(5a79e038a0f9851c2336c9f7472dc8f5)':
++  '@mem0/community@0.0.1(d3caac209844649520d9f85c7fa399b4)':
+     dependencies:
+-      '@langchain/community': 0.3.49(96a2dea491375c22412401f1555fc2c2)
++      '@langchain/community': 0.3.49(6d0192fcaee5e5825c491623a8779f5b)
+       '@langchain/core': 0.3.61(openai@4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.22.4))
+       axios: 1.12.0(debug@4.3.4)
+-      mem0ai: 2.1.16(@anthropic-ai/sdk@0.65.0(zod@3.22.4))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.5.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
++      mem0ai: 2.1.16(@anthropic-ai/sdk@0.18.0(encoding@0.1.13))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       uuid: 9.0.1
+       zod: 3.22.4
+     transitivePeerDependencies:
+@@ -30779,6 +30821,8 @@ snapshots:
+       bare-events: 2.6.0
+     optional: true
+ 
++  base-64@0.1.0: {}
++
+   base-64@1.0.0: {}
+ 
+   base16@1.0.0: {}
+@@ -31161,6 +31205,8 @@ snapshots:
+ 
+   chardet@0.7.0: {}
+ 
++  charenc@0.0.2: {}
++
+   check-more-types@2.24.0: {}
+ 
+   check-types@11.2.3: {}
+@@ -31797,6 +31843,8 @@ snapshots:
+       shebang-command: 2.0.0
+       which: 2.0.2
+ 
++  crypt@0.0.2: {}
++
+   crypto-js@4.2.0: {}
+ 
+   crypto-random-string@2.0.0: {}
+@@ -32353,6 +32401,11 @@ snapshots:
+ 
+   diff@5.2.0: {}
+ 
++  digest-fetch@1.3.0:
++    dependencies:
++      base-64: 0.1.0
++      md5: 2.3.0
++
+   dingbat-to-unicode@1.0.1: {}
+ 
+   dir-glob@3.0.1:
+@@ -34437,6 +34490,20 @@ snapshots:
+ 
+   graphql@16.8.1: {}
+ 
++  groq-sdk@0.3.0(encoding@0.1.13):
++    dependencies:
++      '@types/node': 18.19.23
++      '@types/node-fetch': 2.6.12
++      abort-controller: 3.0.0
++      agentkeepalive: 4.5.0
++      digest-fetch: 1.3.0
++      form-data-encoder: 1.7.2
++      formdata-node: 4.4.1
++      node-fetch: 2.7.0(encoding@0.1.13)
++      web-streams-polyfill: 3.3.3
++    transitivePeerDependencies:
++      - encoding
++
+   groq-sdk@0.5.0(encoding@0.1.13):
+     dependencies:
+       '@types/node': 18.19.23
+@@ -37061,6 +37128,12 @@ snapshots:
+       inherits: 2.0.4
+       safe-buffer: 5.2.1
+ 
++  md5@2.3.0:
++    dependencies:
++      charenc: 0.0.2
++      crypt: 0.0.2
++      is-buffer: 1.1.6
++
+   mdast-util-definitions@5.1.2:
+     dependencies:
+       '@types/mdast': 3.0.15
+@@ -37214,9 +37287,9 @@ snapshots:
+     transitivePeerDependencies:
+       - encoding
+ 
+-  mem0ai@2.1.16(@anthropic-ai/sdk@0.65.0(zod@3.22.4))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.5.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4)):
++  mem0ai@2.1.16(@anthropic-ai/sdk@0.18.0(encoding@0.1.13))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@0.1.3(encoding@0.1.13))(@qdrant/js-client-rest@1.9.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4)):
+     dependencies:
+-      '@anthropic-ai/sdk': 0.65.0(zod@3.22.4)
++      '@anthropic-ai/sdk': 0.18.0(encoding@0.1.13)
+       '@google/genai': 0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4)
+       '@mistralai/mistralai': 0.1.3(encoding@0.1.13)
+       '@qdrant/js-client-rest': 1.9.0(typescript@5.5.2)
+@@ -37225,7 +37298,7 @@ snapshots:
+       '@types/pg': 8.11.2
+       '@types/sqlite3': 3.1.11
+       axios: 1.12.0(debug@4.3.4)
+-      groq-sdk: 0.5.0(encoding@0.1.13)
++      groq-sdk: 0.3.0(encoding@0.1.13)
+       neo4j-driver: 5.27.0
+       ollama: 0.5.11
+       openai: 4.96.0(encoding@0.1.13)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@3.25.32)
+@@ -40674,6 +40747,11 @@ snapshots:
+       '@types/node-forge': 1.3.11
+       node-forge: 1.3.1
+ 
++  seltz@0.2.0:
++    dependencies:
++      '@bufbuild/protobuf': 2.6.1
++      '@grpc/grpc-js': 1.10.10
++
+   semver-compare@1.0.0: {}
+ 
+   semver-greatest-satisfied-range@1.1.0:
+
+From d0f364670a06f9aafcf1c01d329d42be4407130b Mon Sep 17 00:00:00 2001
+From: William Espegren <131612909+WilliamEspegren@users.noreply.github.com>
+Date: Fri, 6 Mar 2026 23:52:06 +0100
+Subject: [PATCH 2/3] Update
+ packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts b/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+index 150897e3d92..258d552db89 100644
+--- a/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
++++ b/packages/components/nodes/tools/SeltzSearch/SeltzSearch.ts
+@@ -75,6 +75,10 @@ class SeltzSearch_Tools implements INode {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const seltzApiKey = getCredentialParam('seltzApiKey', credentialData, nodeData)
+ 
++        if (seltzApiKey == null) {
++            throw new Error('Seltz API key is missing. Please connect a Seltz API credential.')
++        }
++
+         const toolDescription = nodeData.inputs?.toolDescription as string
+         const maxDocuments = nodeData.inputs?.maxDocuments as string
+         const context = nodeData.inputs?.context as string
+
+From e157a0c6e6b87e160a9c1f517ccadcdfb03c2e4f Mon Sep 17 00:00:00 2001
+From: William Espegren <espegren.w@gmail.com>
+Date: Fri, 6 Mar 2026 23:58:37 +0100
+Subject: [PATCH 3/3] fix(seltz): resolve TS2451 redeclaration error in test
+ files
+
+Add `export {}` to both SeltzSearch test files so TypeScript treats
+them as modules rather than scripts, preventing the block-scoped
+variable redeclaration conflict.
+---
+ .../nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts     | 2 ++
+ .../components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
+index 1bbd7d6b11d..b7371d63314 100644
+--- a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
++++ b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.integration.test.ts
+@@ -4,6 +4,8 @@
+  * Run with: SELTZ_API_KEY=your-key npx jest --testPathPattern=SeltzSearch.integration
+  */
+ 
++export {}
++
+ // Mock @langchain/core/tools to avoid ESM issues in Jest
+ jest.mock('@langchain/core/tools', () => {
+     class MockTool {
+diff --git a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
+index e9742b3722d..9b1d308f732 100644
+--- a/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
++++ b/packages/components/test/nodes/tools/SeltzSearch/SeltzSearch.test.ts
+@@ -1,3 +1,5 @@
++export {}
++
+ // Mock @langchain/core/tools before any import that pulls it in
+ jest.mock('@langchain/core/tools', () => {
+     class MockTool {

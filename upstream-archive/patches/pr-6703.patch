@@ -1,0 +1,672 @@
+From 38afa305b23e40a871fd878d0597112cc20c085a Mon Sep 17 00:00:00 2001
+From: Muhammad Faraz Baig <baigfaraz000@gmail.com>
+Date: Mon, 3 Aug 2026 17:40:01 +0500
+Subject: [PATCH] fix: reuse MySQL Record Manager DataSource across operations
+
+Avoid creating and destroying a TypeORM pool on every CRUD call by
+keeping an instance-level DataSource, releasing QueryRunners after
+each op, and closing the pool after indexing and document-store deletion.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .../MySQLrecordManager.test.ts                | 184 ++++++++++++++++++
+ .../MySQLRecordManager/MySQLrecordManager.ts  | 179 ++++++++++-------
+ packages/components/src/indexing.test.ts      |  80 ++++++++
+ packages/components/src/indexing.ts           |  11 ++
+ .../src/services/documentstore/index.ts       |   6 +-
+ 5 files changed, 394 insertions(+), 66 deletions(-)
+ create mode 100644 packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.test.ts
+ create mode 100644 packages/components/src/indexing.test.ts
+
+diff --git a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.test.ts b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.test.ts
+new file mode 100644
+index 00000000000..9d48ae5cb49
+--- /dev/null
++++ b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.test.ts
+@@ -0,0 +1,184 @@
++const mockDataSourceInstances: Array<{
++    isInitialized: boolean
++    initialize: jest.Mock
++    destroy: jest.Mock
++    createQueryRunner: jest.Mock
++}> = []
++
++const mockQueryRunners: Array<{
++    isReleased: boolean
++    manager: {
++        query: jest.Mock
++    }
++    release: jest.Mock
++}> = []
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: () => [],
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++jest.mock('../../../src/sanitizeDataSourceOptions', () => ({
++    sanitizeDataSourceOptions: (options: unknown) => options
++}))
++
++jest.mock('typeorm', () => {
++    class MockDataSource {
++        options: unknown
++        isInitialized = false
++        initialize = jest.fn(async () => {
++            this.isInitialized = true
++            return this
++        })
++        destroy = jest.fn(async () => {
++            this.isInitialized = false
++        })
++        createQueryRunner = jest.fn(() => {
++            const queryRunner = {
++                isReleased: false,
++                manager: {
++                    query: jest.fn(async (query: string) => {
++                        if (query.includes('UNIX_TIMESTAMP')) {
++                            return [{ epoch: '123' }]
++                        }
++
++                        if (query.includes('SELECT `key`')) {
++                            return [{ key: 'a' }]
++                        }
++
++                        return []
++                    })
++                },
++                release: jest.fn(async () => {
++                    queryRunner.isReleased = true
++                })
++            }
++
++            mockQueryRunners.push(queryRunner)
++            return queryRunner
++        })
++
++        constructor(options: unknown) {
++            this.options = options
++            mockDataSourceInstances.push(this)
++        }
++    }
++
++    return {
++        DataSource: MockDataSource
++    }
++})
++
++const { MySQLRecordManager } = require('./MySQLrecordManager')
++
++const createManager = (tableName = 'upsertion_records') =>
++    new MySQLRecordManager('test_namespace', {
++        mysqlOptions: {
++            type: 'mysql',
++            host: 'localhost',
++            port: 3306,
++            username: 'user',
++            password: 'password',
++            database: 'flowise'
++        },
++        tableName
++    })
++
++describe('MySQLRecordManager connection lifecycle', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        mockDataSourceInstances.length = 0
++        mockQueryRunners.length = 0
++    })
++
++    it('reuses one initialized DataSource across operations and destroys it only on close', async () => {
++        const manager = createManager()
++
++        await expect(manager.exists(['a'])).resolves.toEqual([true])
++        await expect(manager.listKeys()).resolves.toEqual(['a'])
++        await expect(manager.getTime()).resolves.toBe(123)
++
++        expect(mockDataSourceInstances).toHaveLength(1)
++        expect(mockDataSourceInstances[0].initialize).toHaveBeenCalledTimes(1)
++        expect(mockDataSourceInstances[0].destroy).not.toHaveBeenCalled()
++        expect(mockDataSourceInstances[0].createQueryRunner).toHaveBeenCalledTimes(3)
++        expect(mockQueryRunners).toHaveLength(3)
++        mockQueryRunners.forEach((queryRunner) => {
++            expect(queryRunner.release).toHaveBeenCalledTimes(1)
++            expect(queryRunner.isReleased).toBe(true)
++        })
++
++        await manager.close()
++
++        expect(mockDataSourceInstances[0].destroy).toHaveBeenCalledTimes(1)
++        expect(mockDataSourceInstances[0].isInitialized).toBe(false)
++    })
++
++    it('shares the pending DataSource initialization across concurrent operations', async () => {
++        const manager = createManager()
++
++        await expect(Promise.all([manager.exists(['a']), manager.listKeys()])).resolves.toEqual([[true], ['a']])
++
++        expect(mockDataSourceInstances).toHaveLength(1)
++        expect(mockDataSourceInstances[0].initialize).toHaveBeenCalledTimes(1)
++        expect(mockDataSourceInstances[0].destroy).not.toHaveBeenCalled()
++        expect(mockDataSourceInstances[0].createQueryRunner).toHaveBeenCalledTimes(2)
++
++        await manager.close()
++    })
++
++    it('destroys the cached DataSource once when close is called concurrently', async () => {
++        const manager = createManager()
++
++        await expect(manager.getTime()).resolves.toBe(123)
++        await Promise.all([manager.close(), manager.close()])
++
++        expect(mockDataSourceInstances).toHaveLength(1)
++        expect(mockDataSourceInstances[0].destroy).toHaveBeenCalledTimes(1)
++        expect(mockDataSourceInstances[0].isInitialized).toBe(false)
++    })
++
++    it('uses the active query runner for update time checks', async () => {
++        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
++        const manager = createManager()
++
++        await expect(manager.update(['a'], { timeAtLeast: 999 })).rejects.toThrow('Time sync issue with database 123 < 999')
++
++        expect(mockDataSourceInstances).toHaveLength(1)
++        expect(mockDataSourceInstances[0].destroy).not.toHaveBeenCalled()
++        expect(mockDataSourceInstances[0].createQueryRunner).toHaveBeenCalledTimes(1)
++        expect(mockQueryRunners).toHaveLength(1)
++        expect(mockQueryRunners[0].manager.query).toHaveBeenCalledTimes(1)
++        expect(mockQueryRunners[0].manager.query).toHaveBeenCalledWith('SELECT UNIX_TIMESTAMP(NOW()) AS epoch')
++        mockQueryRunners.forEach((queryRunner) => {
++            expect(queryRunner.release).toHaveBeenCalledTimes(1)
++            expect(queryRunner.isReleased).toBe(true)
++        })
++
++        await manager.close()
++        consoleErrorSpy.mockRestore()
++    })
++
++    it('releases query runners when table name validation fails', async () => {
++        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
++        const manager = createManager('invalid-table-name')
++
++        await expect(manager.exists(['a'])).rejects.toThrow('Invalid table name')
++        await expect(manager.listKeys()).rejects.toThrow('Invalid table name')
++        await expect(manager.deleteKeys(['a'])).rejects.toThrow('Invalid table name')
++
++        expect(mockDataSourceInstances).toHaveLength(1)
++        expect(mockDataSourceInstances[0].destroy).not.toHaveBeenCalled()
++        expect(mockDataSourceInstances[0].createQueryRunner).toHaveBeenCalledTimes(3)
++        expect(mockQueryRunners).toHaveLength(3)
++        mockQueryRunners.forEach((queryRunner) => {
++            expect(queryRunner.manager.query).not.toHaveBeenCalled()
++            expect(queryRunner.release).toHaveBeenCalledTimes(1)
++            expect(queryRunner.isReleased).toBe(true)
++        })
++
++        await manager.close()
++        consoleErrorSpy.mockRestore()
++    })
++})
+diff --git a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+index 37793f38aa1..4896734b4f3 100644
+--- a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
++++ b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+@@ -2,7 +2,7 @@ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Inter
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { sanitizeDataSourceOptions } from '../../../src/sanitizeDataSourceOptions'
+ import { ListKeyOptions, RecordManagerInterface, UpdateOptions } from '@langchain/community/indexes/base'
+-import { DataSource } from 'typeorm'
++import { DataSource, QueryRunner } from 'typeorm'
+ 
+ class MySQLRecordManager_RecordManager implements INode {
+     label: string
+@@ -173,6 +173,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+     config: MySQLRecordManagerOptions
+     tableName: string
+     namespace: string
++    private dataSource?: DataSource
++    private dataSourcePromise?: Promise<DataSource>
++    private dataSourceInitToken?: symbol
+ 
+     constructor(namespace: string, config: MySQLRecordManagerOptions) {
+         const { tableName } = config
+@@ -202,15 +205,70 @@ class MySQLRecordManager implements RecordManagerInterface {
+         if (mysqlOptions.port === 5432) {
+             throw new Error('Invalid port number')
+         }
+-        const dataSource = new DataSource(mysqlOptions)
+-        await dataSource.initialize()
+-        return dataSource
++
++        if (this.dataSource?.isInitialized) {
++            return this.dataSource
++        }
++
++        if (this.dataSourcePromise) {
++            return this.dataSourcePromise
++        }
++
++        const dataSourceInitToken = Symbol('dataSourceInit')
++        this.dataSourceInitToken = dataSourceInitToken
++
++        const dataSourcePromise = (async () => {
++            const dataSource = new DataSource(mysqlOptions)
++            await dataSource.initialize()
++            if (this.dataSourceInitToken === dataSourceInitToken) {
++                this.dataSource = dataSource
++            }
++            return dataSource
++        })()
++        this.dataSourcePromise = dataSourcePromise
++
++        try {
++            return await dataSourcePromise
++        } catch (error) {
++            if (this.dataSourceInitToken === dataSourceInitToken) {
++                this.dataSource = undefined
++                this.dataSourceInitToken = undefined
++            }
++            throw error
++        } finally {
++            if (this.dataSourcePromise === dataSourcePromise) {
++                this.dataSourcePromise = undefined
++            }
++        }
+     }
+ 
+-    async createSchema(): Promise<void> {
++    private async getQueryRunner(): Promise<QueryRunner> {
+         const dataSource = await this.getDataSource()
++        return dataSource.createQueryRunner()
++    }
++
++    async close(): Promise<void> {
++        const dataSourcePromise = this.dataSourcePromise
++        const dataSource = this.dataSource
++        this.dataSourcePromise = undefined
++        this.dataSource = undefined
++        this.dataSourceInitToken = undefined
++
++        const ds = dataSourcePromise ? await dataSourcePromise.catch(() => undefined) : dataSource
++        if (ds?.isInitialized) {
++            await ds.destroy()
++        }
++    }
++
++    private async releaseQueryRunner(queryRunner: QueryRunner): Promise<void> {
++        if (!queryRunner.isReleased) {
++            await queryRunner.release()
++        }
++    }
++
++    async createSchema(): Promise<void> {
++        const queryRunner = await this.getQueryRunner()
+         try {
+-            const queryRunner = dataSource.createQueryRunner()
+             const tableName = this.sanitizeTableName(this.tableName)
+ 
+             await queryRunner.manager.query(`create table if not exists \`${this.sanitizeTableName(tableName)}\` (
+@@ -259,8 +317,6 @@ class MySQLRecordManager implements RecordManagerInterface {
+                     }
+                 }
+             }
+-
+-            await queryRunner.release()
+         } catch (e: any) {
+             // This error indicates that the table already exists
+             // Due to asynchronous nature of the code, it is possible that
+@@ -271,72 +327,71 @@ class MySQLRecordManager implements RecordManagerInterface {
+             }
+             throw e
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ 
+     async getTime(): Promise<number> {
+-        const dataSource = await this.getDataSource()
++        const queryRunner = await this.getQueryRunner()
+         try {
+-            const queryRunner = dataSource.createQueryRunner()
+-            const res = await queryRunner.manager.query(`SELECT UNIX_TIMESTAMP(NOW()) AS epoch`)
+-            await queryRunner.release()
+-            return Number.parseFloat(res[0].epoch)
++            return await this.getTimeWithQueryRunner(queryRunner)
+         } catch (error) {
+             console.error('Error getting time in MySQLRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ 
++    private async getTimeWithQueryRunner(queryRunner: QueryRunner): Promise<number> {
++        const res = await queryRunner.manager.query(`SELECT UNIX_TIMESTAMP(NOW()) AS epoch`)
++        return Number.parseFloat(res[0].epoch)
++    }
++
+     async update(keys: Array<{ uid: string; docId: string }> | string[], updateOptions?: UpdateOptions): Promise<void> {
+         if (keys.length === 0) {
+             return
+         }
+ 
+-        const dataSource = await this.getDataSource()
+-        const queryRunner = dataSource.createQueryRunner()
+-        const tableName = this.sanitizeTableName(this.tableName)
++        const queryRunner = await this.getQueryRunner()
++        try {
++            const tableName = this.sanitizeTableName(this.tableName)
+ 
+-        const updatedAt = await this.getTime()
+-        const { timeAtLeast, groupIds: _groupIds } = updateOptions ?? {}
++            const updatedAt = await this.getTimeWithQueryRunner(queryRunner)
++            const { timeAtLeast, groupIds: _groupIds } = updateOptions ?? {}
+ 
+-        if (timeAtLeast && updatedAt < timeAtLeast) {
+-            throw new Error(`Time sync issue with database ${updatedAt} < ${timeAtLeast}`)
+-        }
++            if (timeAtLeast && updatedAt < timeAtLeast) {
++                throw new Error(`Time sync issue with database ${updatedAt} < ${timeAtLeast}`)
++            }
+ 
+-        // Handle both new format (objects with uid and docId) and old format (strings)
+-        const isNewFormat = keys.length > 0 && typeof keys[0] === 'object' && 'uid' in keys[0]
+-        const keyStrings = isNewFormat ? (keys as Array<{ uid: string; docId: string }>).map((k) => k.uid) : (keys as string[])
+-        const docIds = isNewFormat ? (keys as Array<{ uid: string; docId: string }>).map((k) => k.docId) : keys.map(() => null)
++            // Handle both new format (objects with uid and docId) and old format (strings)
++            const isNewFormat = keys.length > 0 && typeof keys[0] === 'object' && 'uid' in keys[0]
++            const keyStrings = isNewFormat ? (keys as Array<{ uid: string; docId: string }>).map((k) => k.uid) : (keys as string[])
++            const docIds = isNewFormat ? (keys as Array<{ uid: string; docId: string }>).map((k) => k.docId) : keys.map(() => null)
+ 
+-        const groupIds = _groupIds ?? keyStrings.map(() => null)
++            const groupIds = _groupIds ?? keyStrings.map(() => null)
+ 
+-        if (groupIds.length !== keyStrings.length) {
+-            throw new Error(`Number of keys (${keyStrings.length}) does not match number of group_ids (${groupIds.length})`)
+-        }
++            if (groupIds.length !== keyStrings.length) {
++                throw new Error(`Number of keys (${keyStrings.length}) does not match number of group_ids (${groupIds.length})`)
++            }
+ 
+-        const recordsToUpsert = keyStrings.map((key, i) => [key, this.namespace, updatedAt, groupIds[i] ?? null, docIds[i] ?? null])
++            const recordsToUpsert = keyStrings.map((key, i) => [key, this.namespace, updatedAt, groupIds[i] ?? null, docIds[i] ?? null])
+ 
+-        const query = `
++            const query = `
+             INSERT INTO \`${tableName}\` (\`key\`, \`namespace\`, \`updated_at\`, \`group_id\`, \`doc_id\`)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE \`updated_at\` = VALUES(\`updated_at\`), \`doc_id\` = VALUES(\`doc_id\`)`
+ 
+-        // To handle multiple files upsert
+-        try {
++            // To handle multiple files upsert
+             for (const record of recordsToUpsert) {
+                 // Consider using a transaction for batch operations
+                 await queryRunner.manager.query(query, record.flat())
+             }
+-
+-            await queryRunner.release()
+         } catch (error) {
+             console.error('Error updating in MySQLRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ 
+@@ -345,21 +400,19 @@ class MySQLRecordManager implements RecordManagerInterface {
+             return []
+         }
+ 
+-        const dataSource = await this.getDataSource()
+-        const queryRunner = dataSource.createQueryRunner()
+-        const tableName = this.sanitizeTableName(this.tableName)
++        const queryRunner = await this.getQueryRunner()
++        try {
++            const tableName = this.sanitizeTableName(this.tableName)
+ 
+-        // Prepare the placeholders and the query
+-        const placeholders = keys.map(() => `?`).join(', ')
+-        const query = `
++            // Prepare the placeholders and the query
++            const placeholders = keys.map(() => `?`).join(', ')
++            const query = `
+     SELECT \`key\`
+     FROM \`${tableName}\`
+     WHERE \`namespace\` = ? AND \`key\` IN (${placeholders})`
+ 
+-        // Initialize an array to fill with the existence checks
+-        const existsArray = new Array(keys.length).fill(false)
+-
+-        try {
++            // Initialize an array to fill with the existence checks
++            const existsArray = new Array(keys.length).fill(false)
+             // Execute the query
+             const rows = await queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
+             // Create a set of existing keys for faster lookup
+@@ -368,22 +421,20 @@ class MySQLRecordManager implements RecordManagerInterface {
+             keys.forEach((key, index) => {
+                 existsArray[index] = existingKeysSet.has(key)
+             })
+-            await queryRunner.release()
+             return existsArray
+         } catch (error) {
+             console.error('Error checking existence of keys')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ 
+     async listKeys(options?: ListKeyOptions & { docId?: string }): Promise<string[]> {
+-        const dataSource = await this.getDataSource()
+-        const queryRunner = dataSource.createQueryRunner()
+-        const tableName = this.sanitizeTableName(this.tableName)
++        const queryRunner = await this.getQueryRunner()
+ 
+         try {
++            const tableName = this.sanitizeTableName(this.tableName)
+             const { before, after, limit, groupIds, docId } = options ?? {}
+             let query = `SELECT \`key\` FROM \`${tableName}\` WHERE \`namespace\` = ?`
+             const values: (string | number | string[])[] = [this.namespace]
+@@ -420,13 +471,12 @@ class MySQLRecordManager implements RecordManagerInterface {
+ 
+             // Directly using try/catch with async/await for cleaner flow
+             const result = await queryRunner.manager.query(query, values)
+-            await queryRunner.release()
+             return result.map((row: { key: string }) => row.key)
+         } catch (error) {
+             console.error('MySQLRecordManager listKeys Error: ')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ 
+@@ -435,25 +485,24 @@ class MySQLRecordManager implements RecordManagerInterface {
+             return
+         }
+ 
+-        const dataSource = await this.getDataSource()
+-        const queryRunner = dataSource.createQueryRunner()
+-        const tableName = this.sanitizeTableName(this.tableName)
+-
+-        const placeholders = keys.map(() => '?').join(', ')
+-        const query = `DELETE FROM \`${tableName}\` WHERE \`namespace\` = ? AND \`key\` IN (${placeholders});`
+-        const values = [this.namespace, ...keys].map((v) => (typeof v !== 'string' ? `${v}` : v))
++        const queryRunner = await this.getQueryRunner()
+ 
+         // Directly using try/catch with async/await for cleaner flow
+         try {
++            const tableName = this.sanitizeTableName(this.tableName)
++
++            const placeholders = keys.map(() => '?').join(', ')
++            const query = `DELETE FROM \`${tableName}\` WHERE \`namespace\` = ? AND \`key\` IN (${placeholders});`
++            const values = [this.namespace, ...keys].map((v) => (typeof v !== 'string' ? `${v}` : v))
++
+             await queryRunner.manager.query(query, values)
+-            await queryRunner.release()
+         } catch (error) {
+             console.error('Error deleting keys')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            await this.releaseQueryRunner(queryRunner)
+         }
+     }
+ }
+ 
+-module.exports = { nodeClass: MySQLRecordManager_RecordManager }
++module.exports = { nodeClass: MySQLRecordManager_RecordManager, MySQLRecordManager }
+diff --git a/packages/components/src/indexing.test.ts b/packages/components/src/indexing.test.ts
+new file mode 100644
+index 00000000000..f126f93bd1f
+--- /dev/null
++++ b/packages/components/src/indexing.test.ts
+@@ -0,0 +1,80 @@
++import { Document } from '@langchain/core/documents'
++import { index } from './indexing'
++
++const createRecordManager = () => ({
++    getTime: jest.fn().mockResolvedValue(100),
++    exists: jest.fn().mockResolvedValue([false]),
++    update: jest.fn().mockResolvedValue(undefined),
++    listKeys: jest.fn().mockResolvedValue(['stored-key']),
++    deleteKeys: jest.fn().mockResolvedValue(undefined),
++    close: jest.fn().mockResolvedValue(undefined)
++})
++
++const createDocs = () => [
++    new Document({
++        pageContent: 'hello',
++        metadata: {
++            docId: 'doc-1',
++            source: 'source-1'
++        }
++    })
++]
++
++describe('index record manager lifecycle', () => {
++    it('closes record managers that expose a close method after successful indexing', async () => {
++        const recordManager = createRecordManager()
++        const vectorStore = {
++            addDocuments: jest.fn().mockResolvedValue(undefined),
++            delete: jest.fn().mockResolvedValue(undefined)
++        }
++
++        await expect(
++            index({
++                docsSource: createDocs(),
++                recordManager: recordManager as any,
++                vectorStore: vectorStore as any,
++                options: {
++                    sourceIdKey: 'source'
++                }
++            })
++        ).resolves.toEqual({
++            numAdded: 1,
++            numDeleted: 0,
++            numUpdated: 0,
++            numSkipped: 0,
++            totalKeys: 1,
++            addedDocs: [
++                {
++                    pageContent: 'hello',
++                    metadata: {
++                        docId: 'doc-1',
++                        source: 'source-1'
++                    }
++                }
++            ]
++        })
++
++        expect(recordManager.close).toHaveBeenCalledTimes(1)
++    })
++
++    it('closes record managers that expose a close method when indexing fails', async () => {
++        const recordManager = createRecordManager()
++        const vectorStore = {
++            addDocuments: jest.fn().mockRejectedValue(new Error('add failed')),
++            delete: jest.fn().mockResolvedValue(undefined)
++        }
++
++        await expect(
++            index({
++                docsSource: createDocs(),
++                recordManager: recordManager as any,
++                vectorStore: vectorStore as any,
++                options: {
++                    sourceIdKey: 'source'
++                }
++            })
++        ).rejects.toThrow('add failed')
++
++        expect(recordManager.close).toHaveBeenCalledTimes(1)
++    })
++})
+diff --git a/packages/components/src/indexing.ts b/packages/components/src/indexing.ts
+index 44c22469625..b870f70c064 100644
+--- a/packages/components/src/indexing.ts
++++ b/packages/components/src/indexing.ts
+@@ -9,6 +9,7 @@ type Metadata = Record<string, unknown>
+ 
+ export interface ExtendedRecordManagerInterface extends RecordManagerInterface {
+     update(keys: Array<{ uid: string; docId: string }> | string[], updateOptions?: Record<string, any>): Promise<void>
++    close?(): Promise<void>
+ }
+ 
+ type StringOrDocFunc = string | ((doc: DocumentInterface) => string)
+@@ -255,6 +256,16 @@ interface IndexArgs {
+  * @returns {Promise<IndexingResult>}
+  */
+ export async function index(args: IndexArgs): Promise<IndexingResult> {
++    const { recordManager } = args
++
++    try {
++        return await indexWithRecordManager(args)
++    } finally {
++        await recordManager.close?.()
++    }
++}
++
++async function indexWithRecordManager(args: IndexArgs): Promise<IndexingResult> {
+     const { docsSource, recordManager, vectorStore, options } = args
+     const { batchSize = 100, cleanup, sourceIdKey, cleanupBatchSize = 1000, forceUpdate = false, vectorStoreName } = options ?? {}
+ 
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index a7dc444f1d6..6edac1bf914 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -397,6 +397,8 @@ const deleteDocumentStoreFileChunk = async (storeId: string, docId: string, chun
+ }
+ 
+ const deleteVectorStoreFromStore = async (storeId: string, workspaceId: string, docId?: string) => {
++    let recordManagerObj: any
++
+     try {
+         const appServer = getRunningExpressApp()
+         const componentNodes = appServer.nodesPool.componentNodes
+@@ -433,7 +435,7 @@ const deleteVectorStoreFromStore = async (storeId: string, workspaceId: string,
+ 
+         // Get Record Manager Instance
+         const recordManagerConfig = JSON.parse(entity.recordManagerConfig)
+-        const recordManagerObj = await _createRecordManagerObject(
++        recordManagerObj = await _createRecordManagerObject(
+             componentNodes,
+             { recordManagerName: recordManagerConfig.name, recordManagerConfig: recordManagerConfig.config },
+             options
+@@ -473,6 +475,8 @@ const deleteVectorStoreFromStore = async (storeId: string, workspaceId: string,
+             StatusCodes.INTERNAL_SERVER_ERROR,
+             `Error: documentStoreServices.deleteVectorStoreFromStore - ${getErrorMessage(error)}`
+         )
++    } finally {
++        await recordManagerObj?.close?.()
+     }
+ }
+ 

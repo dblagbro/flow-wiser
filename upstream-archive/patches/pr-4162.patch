@@ -1,0 +1,22 @@
+From e28224b21fcb70184f5242e72bab152fde258ad3 Mon Sep 17 00:00:00 2001
+From: Egor Kopylov <koegit@gmail.com>
+Date: Wed, 5 Mar 2025 17:55:54 +0100
+Subject: [PATCH] enhance json parses
+
+---
+ .../StructuredOutputParser/StructuredOutputParser.ts            | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/outputparsers/StructuredOutputParser/StructuredOutputParser.ts b/packages/components/nodes/outputparsers/StructuredOutputParser/StructuredOutputParser.ts
+index 85110e71894..50e05322be3 100644
+--- a/packages/components/nodes/outputparsers/StructuredOutputParser/StructuredOutputParser.ts
++++ b/packages/components/nodes/outputparsers/StructuredOutputParser/StructuredOutputParser.ts
+@@ -79,7 +79,7 @@ class StructuredOutputParser implements INode {
+ 
+             // Fix broken JSON from LLM
+             structuredOutputParser.parse = (text) => {
+-                const jsonString = text.includes('```') ? text.trim().split(/```(?:json)?/)[1] : text.trim()
++                const jsonString = text.replace(/(?:^[^{[]*)|(?:[^}\]]*$)/g, '')
+                 return baseParse.call(structuredOutputParser, jsonrepair(jsonString))
+             }
+ 

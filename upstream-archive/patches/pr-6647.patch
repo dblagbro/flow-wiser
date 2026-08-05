@@ -1,0 +1,1833 @@
+From bed002710f4a9a3764f8baed329363b7c0310d8a Mon Sep 17 00:00:00 2001
+From: Jan Skola <jan@skolovi.eu>
+Date: Tue, 21 Jul 2026 23:05:51 +0200
+Subject: [PATCH] Add Sparse and Hybrid retrieval modes to Qdrant vector store
+
+---
+ .../nodes/vectorstores/Qdrant/Qdrant.test.ts  | 1063 +++++++++++++++++
+ .../nodes/vectorstores/Qdrant/Qdrant.ts       |  621 +++++++++-
+ 2 files changed, 1631 insertions(+), 53 deletions(-)
+ create mode 100644 packages/components/nodes/vectorstores/Qdrant/Qdrant.test.ts
+
+diff --git a/packages/components/nodes/vectorstores/Qdrant/Qdrant.test.ts b/packages/components/nodes/vectorstores/Qdrant/Qdrant.test.ts
+new file mode 100644
+index 00000000000..e19d5fef6c4
+--- /dev/null
++++ b/packages/components/nodes/vectorstores/Qdrant/Qdrant.test.ts
+@@ -0,0 +1,1063 @@
++import { Document } from '@langchain/core/documents'
++
++// Mock the Qdrant REST client the way AWSDynamoDBKVStorage.test.ts mocks @aws-sdk/client-dynamodb:
++// capture jest.fn()s for each method actually called by Qdrant.ts / @langchain/qdrant.
++jest.mock('@qdrant/js-client-rest', () => {
++    const getCollectionsMock = jest.fn()
++    const createCollectionMock = jest.fn()
++    const upsertMock = jest.fn()
++    // Sparse/Hybrid collection create-or-validate path (Qdrant.ensureCollectionForRetrievalMode)
++    // and direct query path — not used by @langchain/qdrant's own ensureCollection(), which only
++    // ever calls getCollections/createCollection above.
++    const collectionExistsMock = jest.fn()
++    const getCollectionMock = jest.fn()
++    // No code path calls updateCollection anymore (Qdrant has no in-place way to add a named
++    // vector to an existing collection — see qdrant/qdrant#8892), so this mock exists purely as
++    // a regression guard: tests assert it's never called.
++    const updateCollectionMock = jest.fn()
++    const queryMock = jest.fn()
++    const deleteMock = jest.fn()
++
++    return {
++        QdrantClient: jest.fn().mockImplementation(() => ({
++            getCollections: getCollectionsMock,
++            createCollection: createCollectionMock,
++            upsert: upsertMock,
++            collectionExists: collectionExistsMock,
++            getCollection: getCollectionMock,
++            updateCollection: updateCollectionMock,
++            query: queryMock,
++            delete: deleteMock
++        })),
++        __getCollectionsMock: getCollectionsMock,
++        __createCollectionMock: createCollectionMock,
++        __upsertMock: upsertMock,
++        __collectionExistsMock: collectionExistsMock,
++        __getCollectionMock: getCollectionMock,
++        __updateCollectionMock: updateCollectionMock,
++        __queryMock: queryMock
++    }
++})
++
++describe('Qdrant', () => {
++    let Qdrant_VectorStores: any
++    let getCollectionsMock: jest.Mock
++    let createCollectionMock: jest.Mock
++    let upsertMock: jest.Mock
++    let collectionExistsMock: jest.Mock
++    let getCollectionMock: jest.Mock
++    let updateCollectionMock: jest.Mock
++    let queryMock: jest.Mock
++    let fakeEmbeddings: { embedQuery: jest.Mock; embedDocuments: jest.Mock }
++
++    // Minimal fake Embeddings-shaped object. embedQuery's fixed-length return also sizes the
++    // ensureCollection() fallback path when no collectionConfig is supplied.
++    const createFakeEmbeddings = () => ({
++        embedQuery: jest.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
++        embedDocuments: jest.fn((texts: string[]) => Promise.resolve(texts.map(() => [0.1, 0.2, 0.3, 0.4])))
++    })
++
++    const createNodeData = (overrides: Record<string, any> = {}) => ({
++        inputs: {
++            qdrantServerUrl: 'http://localhost:6333',
++            qdrantCollection: 'test-collection',
++            embeddings: fakeEmbeddings,
++            qdrantSimilarity: 'Cosine',
++            qdrantVectorDimension: '1536',
++            document: [new Document({ pageContent: 'hello world', metadata: { source: 'test-source' } })],
++            ...overrides
++        }
++    })
++
++    // Minimal recordManager stub — shape read off src/indexing.ts's index() function directly,
++    // not guessed: createSchema (called by Qdrant.ts itself), getTime/exists/update/listKeys/deleteKeys
++    // (called by index()).
++    const createFakeRecordManager = () => ({
++        createSchema: jest.fn().mockResolvedValue(undefined),
++        getTime: jest.fn().mockResolvedValue(Date.now()),
++        exists: jest.fn().mockImplementation(async (uids: string[]) => uids.map(() => false)),
++        update: jest.fn().mockResolvedValue(undefined),
++        listKeys: jest.fn().mockResolvedValue([]),
++        deleteKeys: jest.fn().mockResolvedValue(undefined),
++        namespace: 'test-namespace'
++    })
++
++    beforeEach(async () => {
++        jest.clearAllMocks()
++
++        const qdrantClientModule = require('@qdrant/js-client-rest')
++        getCollectionsMock = qdrantClientModule.__getCollectionsMock
++        createCollectionMock = qdrantClientModule.__createCollectionMock
++        upsertMock = qdrantClientModule.__upsertMock
++        collectionExistsMock = qdrantClientModule.__collectionExistsMock
++        getCollectionMock = qdrantClientModule.__getCollectionMock
++        updateCollectionMock = qdrantClientModule.__updateCollectionMock
++        queryMock = qdrantClientModule.__queryMock
++
++        // Default to "collection doesn't exist yet" so a test that forgets to override this
++        // fails on a clear assertion mismatch instead of an unhelpful "Cannot read properties
++        // of undefined (reading 'map')" inside ensureCollection().
++        getCollectionsMock.mockReset().mockResolvedValue({ collections: [] })
++        createCollectionMock.mockReset().mockResolvedValue({})
++        upsertMock.mockReset().mockResolvedValue({})
++        collectionExistsMock.mockReset().mockResolvedValue({ exists: false })
++        getCollectionMock.mockReset().mockResolvedValue({ config: { params: { vectors: undefined, sparse_vectors: undefined } } })
++        updateCollectionMock.mockReset().mockResolvedValue(true)
++        queryMock.mockReset().mockResolvedValue({ points: [] })
++
++        fakeEmbeddings = createFakeEmbeddings()
++
++        // Dynamic import to load this file's `module.exports = { nodeClass }` CommonJS export
++        // style (mirroring AWSDynamoDBKVStorage.test.ts). Note this does NOT get a fresh module
++        // instance per test — there's no jest.resetModules() call, so it's the same cached
++        // module every time; harmless since the module holds no mutable state between tests.
++        const qdrantNodeModule = (await import('./Qdrant')) as any
++        Qdrant_VectorStores = qdrantNodeModule.nodeClass
++    })
++
++    describe('determinePortByUrl (pure function, no mocking)', () => {
++        it.each([
++            ['http://10.0.0.1:6333', 6333],
++            ['https://foo.com:8443', 8443],
++            ['https://foo.com', 443],
++            ['http://foo.com', 80],
++            // The doc comment above determinePortByUrl describes a 6663 fallback for an edge case.
++            // Empirically verified (not assumed from the comment): http/https URLs always resolve
++            // to an explicit port, 443, or 80 — they never reach the 6663 branch. It IS reachable,
++            // but only for a URL whose parsed protocol isn't "http:"/"https:": either a non-HTTP
++            // scheme, or (surprisingly) a scheme-less input like "localhost:6333", which Node's URL
++            // parser reads as protocol "localhost:" with an empty port — silently landing on 6663
++            // despite the literal port number being present in the string.
++            ['ftp://foo.com', 6663],
++            ['localhost:6333', 6663]
++        ])('determinePortByUrl(%s) returns %d', (url, expectedPort) => {
++            expect(Qdrant_VectorStores.determinePortByUrl(url)).toBe(expectedPort)
++        })
++    })
++
++    describe('init() — ensureCollection-triggered creation, Dense mode', () => {
++        it('creates the collection, sized via the embedQuery("test") fallback, when it does not exist', async () => {
++            getCollectionsMock.mockResolvedValue({ collections: [] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData()
++
++            await node.init(nodeData, '', {})
++
++            // qdrantCollectionConfiguration input isn't set, so Qdrant.ts's init() never sets
++            // dbConfig.collectionConfig — ensureCollection() falls back to sizing via embedQuery.
++            expect(fakeEmbeddings.embedQuery).toHaveBeenCalledWith('test')
++            expect(createCollectionMock).toHaveBeenCalledTimes(1)
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                vectors: { size: 4, distance: 'Cosine' }
++            })
++        })
++
++        it('does not create the collection when it already exists', async () => {
++            getCollectionsMock.mockResolvedValue({ collections: [{ name: 'test-collection' }] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData()
++
++            await node.init(nodeData, '', {})
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++        })
++    })
++
++    describe('init() (query-only): never creates a missing collection in named-vector modes', () => {
++        it.each(['Sparse', 'Hybrid'])('%s: collectionExists -> { exists: false } throws, createCollection never called', async (mode) => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: mode })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            await expect(node.init(nodeData, '', {})).rejects.toThrow(/does not exist/)
++            expect(createCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Dense with vectorName set: collectionExists -> { exists: false } throws, createCollection never called', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense', vectorName: 'dense-vector' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            await expect(node.init(nodeData, '', {})).rejects.toThrow(/does not exist/)
++            expect(createCollectionMock).not.toHaveBeenCalled()
++        })
++    })
++
++    describe('upsert() without recordManager — ensureCollection-triggered creation, Dense mode', () => {
++        it.each([
++            ['collection does not exist', 1, [] as { name: string }[]],
++            ['collection already exists', 0, [{ name: 'test-collection' }]]
++        ])('%s -> createCollection called %d time(s)', async (_label, expectedCalls, collections) => {
++            getCollectionsMock.mockResolvedValue({ collections })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData()
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            // fromDocuments() -> base (unoverridden) addVectors() -> exactly one ensureCollection() call.
++            expect(createCollectionMock).toHaveBeenCalledTimes(expectedCalls)
++            if (expectedCalls > 0) {
++                expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                    vectors: { size: 1536, distance: 'Cosine' }
++                })
++            }
++        })
++    })
++
++    describe('upsert() with recordManager — ensureCollection-triggered creation, Dense mode', () => {
++        it.each([
++            ['collection does not exist', 2, [] as { name: string }[]],
++            ['collection already exists', 0, [{ name: 'test-collection' }]]
++        ])('%s -> createCollection called %d time(s)', async (_label, expectedCalls, collections) => {
++            getCollectionsMock.mockResolvedValue({ collections })
++
++            const node = new Qdrant_VectorStores()
++            const recordManager = createFakeRecordManager()
++            const nodeData: any = createNodeData({ recordManager })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            // Qdrant.ts calls vectorStore.ensureCollection() explicitly before indexing, AND the
++            // Flowise-overridden addVectors calls it again before every upsert batch — so with a
++            // single batch this fires twice, not once, when the collection is missing.
++            expect(createCollectionMock).toHaveBeenCalledTimes(expectedCalls)
++            expect(recordManager.createSchema).toHaveBeenCalledTimes(1)
++        })
++    })
++
++    // ---------------------------------------------------------------------------------------
++    // Hybrid search (retrievalMode = Sparse / Hybrid)
++    // ---------------------------------------------------------------------------------------
++
++    describe('input schema — new fields', () => {
++        it('bumps this.version to 6.0', () => {
++            const node = new Qdrant_VectorStores()
++            expect(node.version).toBe(6.0)
++        })
++
++        it('retrievalMode: top-level (not additionalParams), options Dense/Sparse/Hybrid, default Dense', () => {
++            const node = new Qdrant_VectorStores()
++            const field = node.inputs.find((i: any) => i.name === 'retrievalMode')
++
++            expect(field).toBeDefined()
++            expect(field.additionalParams).toBeFalsy()
++            expect(field.default).toBe('Dense')
++            expect(field.options.map((o: any) => o.name)).toEqual(['Dense', 'Sparse', 'Hybrid'])
++        })
++
++        it('vectorName: additionalParams, optional, string, shown only in Dense/Hybrid (unused in Sparse)', () => {
++            const node = new Qdrant_VectorStores()
++            const field = node.inputs.find((i: any) => i.name === 'vectorName')
++
++            expect(field.additionalParams).toBe(true)
++            expect(field.optional).toBe(true)
++            expect(field.type).toBe('string')
++            expect(field.show).toEqual({ retrievalMode: ['Dense', 'Hybrid'] })
++        })
++
++        it('sparseVectorName: additionalParams, default "sparse", visible only for Sparse/Hybrid', () => {
++            const node = new Qdrant_VectorStores()
++            const field = node.inputs.find((i: any) => i.name === 'sparseVectorName')
++
++            expect(field.additionalParams).toBe(true)
++            expect(field.default).toBe('sparse')
++            expect(field.show).toEqual({ retrievalMode: ['Sparse', 'Hybrid'] })
++        })
++
++        it('sparseInferenceModel: additionalParams, fixed default "qdrant/bm25", visible only for Sparse/Hybrid', () => {
++            const node = new Qdrant_VectorStores()
++            const field = node.inputs.find((i: any) => i.name === 'sparseInferenceModel')
++
++            expect(field.additionalParams).toBe(true)
++            expect(field.default).toBe('qdrant/bm25')
++            expect(field.show).toEqual({ retrievalMode: ['Sparse', 'Hybrid'] })
++        })
++
++        it('fusionMethod: additionalParams, options RRF/DBSF, default RRF, visible only for Hybrid', () => {
++            const node = new Qdrant_VectorStores()
++            const field = node.inputs.find((i: any) => i.name === 'fusionMethod')
++
++            expect(field.additionalParams).toBe(true)
++            expect(field.default).toBe('RRF')
++            expect(field.options.map((o: any) => o.name)).toEqual(['RRF', 'DBSF'])
++            expect(field.show).toEqual({ retrievalMode: ['Hybrid'] })
++        })
++    })
++
++    describe('collection creation — ensureCollectionForRetrievalMode branches', () => {
++        let client: any
++
++        beforeEach(() => {
++            const { QdrantClient } = require('@qdrant/js-client-rest')
++            client = new QdrantClient({})
++        })
++
++        it('Sparse, new collection: sparse_vectors only, no dense "vectors" field at all', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Sparse',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense',
++                sparseVectorName: 'sparse',
++                allowCreate: true
++            })
++
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                sparse_vectors: { sparse: { modifier: 'idf' } }
++            })
++        })
++
++        it('Hybrid, new collection: named dense vector + sparse_vectors', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Hybrid',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense',
++                sparseVectorName: 'sparse',
++                allowCreate: true
++            })
++
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                vectors: { dense: { size: 1536, distance: 'Cosine' } },
++                sparse_vectors: { sparse: { modifier: 'idf' } }
++            })
++        })
++
++        it('Hybrid, new collection with a custom vectorName: uses that name, not the "dense" default', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Hybrid',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'my-embedding',
++                sparseVectorName: 'sparse',
++                allowCreate: true
++            })
++
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                vectors: { 'my-embedding': { size: 1536, distance: 'Cosine' } },
++                sparse_vectors: { sparse: { modifier: 'idf' } }
++            })
++        })
++
++        it('new collection: qdrantCollectionConfiguration passthrough is layered underneath the computed vectors/sparse_vectors', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Hybrid',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense',
++                sparseVectorName: 'sparse',
++                allowCreate: true,
++                extraCollectionConfig: { on_disk_payload: false }
++            })
++
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                on_disk_payload: false,
++                vectors: { dense: { size: 1536, distance: 'Cosine' } },
++                sparse_vectors: { sparse: { modifier: 'idf' } }
++            })
++        })
++
++        it('allowCreate=false + collection does not exist -> throws, createCollection never called', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Sparse',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense',
++                    sparseVectorName: 'sparse',
++                    allowCreate: false
++                })
++            ).rejects.toThrow(/does not exist/)
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Hybrid, existing collection with an unnamed dense vector: throws (unnamed vectors are not usable in named-vector modes), never mutates', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { size: 1536, distance: 'Cosine' }, sparse_vectors: undefined } }
++            })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Hybrid',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense',
++                    sparseVectorName: 'sparse',
++                    allowCreate: true
++                })
++            ).rejects.toThrow(/uses an unnamed dense vector/)
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++            expect(queryMock).not.toHaveBeenCalled()
++        })
++
++        it('existing collection already has a matching named dense vector and matching sparse vector -> neither createCollection nor updateCollection called', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: {
++                    params: {
++                        vectors: { dense: { size: 1536, distance: 'Cosine' } },
++                        sparse_vectors: { sparse: { modifier: 'idf' } }
++                    }
++                }
++            })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Hybrid',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense',
++                sparseVectorName: 'sparse',
++                allowCreate: true
++            })
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Hybrid, existing collection with a mismatched named dense vector size -> throws, never mutates', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { dense: { size: 768, distance: 'Cosine' } }, sparse_vectors: {} } }
++            })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Hybrid',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense',
++                    sparseVectorName: 'sparse',
++                    allowCreate: true
++                })
++            ).rejects.toThrow(/does not match the requested configuration/)
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Hybrid, existing collection with no dense vector at all -> throws, never mutates', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Hybrid',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense',
++                    sparseVectorName: 'sparse',
++                    allowCreate: true
++                })
++            ).rejects.toThrow(/has no dense vector configured/)
++
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('missing sparse vector on an existing collection -> throws citing the qdrant/qdrant#8892 upstream gap, regardless of allowCreate', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: {} } }
++            })
++
++            let caught: Error | undefined
++            try {
++                await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Sparse',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense',
++                    sparseVectorName: 'sparse',
++                    allowCreate: false
++                })
++            } catch (e: any) {
++                caught = e
++            }
++
++            expect(caught?.message).toMatch(/has no sparse vector named "sparse"/)
++            expect(caught?.message).toMatch(/qdrant\/qdrant#8892/)
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++            expect(createCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Dense, new collection: named dense vector only, no sparse_vectors field at all', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Dense',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense-vector',
++                sparseVectorName: 'sparse',
++                allowCreate: true
++            })
++
++            expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                vectors: { 'dense-vector': { size: 1536, distance: 'Cosine' } }
++            })
++        })
++
++        it('Dense, existing collection with a matching named dense vector -> neither createCollection nor updateCollection called', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { 'dense-vector': { size: 1536, distance: 'Cosine' } }, sparse_vectors: undefined } }
++            })
++
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                retrievalMode: 'Dense',
++                vectorSize: 1536,
++                distance: 'Cosine',
++                denseVectorName: 'dense-vector',
++                sparseVectorName: 'sparse',
++                allowCreate: false
++            })
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Dense, existing collection missing the named dense vector -> throws, never mutates', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { other: { size: 1536, distance: 'Cosine' } }, sparse_vectors: undefined } }
++            })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Dense',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense-vector',
++                    sparseVectorName: 'sparse',
++                    allowCreate: false
++                })
++            ).rejects.toThrow(/has no dense vector named "dense-vector"/)
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('Dense, existing collection with a mismatched named dense vector -> throws, never mutates', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { 'dense-vector': { size: 768, distance: 'Cosine' } }, sparse_vectors: undefined } }
++            })
++
++            await expect(
++                Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, 'test-collection', {
++                    retrievalMode: 'Dense',
++                    vectorSize: 1536,
++                    distance: 'Cosine',
++                    denseVectorName: 'dense-vector',
++                    sparseVectorName: 'sparse',
++                    allowCreate: false
++                })
++            ).rejects.toThrow(/does not match the requested configuration/)
++
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++    })
++
++    describe('upsert() — Sparse/Hybrid wiring and point shape', () => {
++        it('Hybrid, no recordManager: single collectionExists call (collapsed, not doubled like Dense), named dense + sparse Document point', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Hybrid' })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            expect(collectionExistsMock).toHaveBeenCalledTimes(1)
++            expect(createCollectionMock).toHaveBeenCalledTimes(1)
++            expect(upsertMock).toHaveBeenCalledWith('test-collection', {
++                wait: true,
++                points: [
++                    expect.objectContaining({
++                        vector: {
++                            dense: [0.1, 0.2, 0.3, 0.4],
++                            sparse: { text: 'hello world', model: 'qdrant/bm25' }
++                        },
++                        payload: {
++                            content: 'hello world',
++                            metadata: { source: 'test-source' },
++                            customPayload: undefined
++                        }
++                    })
++                ]
++            })
++        })
++
++        it('Sparse, no recordManager: sparse-only vector field, no dense key, and never calls embedDocuments', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            // Sparse has no dense component — building points directly from finalDocs must never
++            // trigger an (unused, paid) dense embedding computation.
++            expect(fakeEmbeddings.embedDocuments).not.toHaveBeenCalled()
++            expect(upsertMock).toHaveBeenCalledWith('test-collection', {
++                wait: true,
++                points: [
++                    expect.objectContaining({
++                        vector: { sparse: { text: 'hello world', model: 'qdrant/bm25' } },
++                        payload: {
++                            content: 'hello world',
++                            metadata: { source: 'test-source' },
++                            customPayload: undefined
++                        }
++                    })
++                ]
++            })
++        })
++
++        it('Hybrid + recordManager: collectionExists call also collapsed to one (deliberate divergence from Dense’s double-call quirk)', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const recordManager = createFakeRecordManager()
++            const nodeData: any = createNodeData({ retrievalMode: 'Hybrid', recordManager })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            expect(collectionExistsMock).toHaveBeenCalledTimes(1)
++            expect(createCollectionMock).toHaveBeenCalledTimes(1)
++            expect(recordManager.createSchema).toHaveBeenCalledTimes(1)
++        })
++
++        it('missing sparse vector on an existing collection, from upsert(): throws instead of upgrading (no in-place upgrade path exists)', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: {} } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++
++            await expect(node.vectorStoreMethods.upsert(nodeData, {})).rejects.toThrow(/has no sparse vector named "sparse"/)
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++            expect(createCollectionMock).not.toHaveBeenCalled()
++            expect(upsertMock).not.toHaveBeenCalled()
++        })
++
++        it('batching: batchSize=1 with 2 documents through the named-vector path -> two separate upsert calls, correctly sliced', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({
++                retrievalMode: 'Hybrid',
++                batchSize: 1,
++                document: [
++                    new Document({ pageContent: 'doc one', metadata: { source: 'a' } }),
++                    new Document({ pageContent: 'doc two', metadata: { source: 'b' } })
++                ]
++            })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            expect(upsertMock).toHaveBeenCalledTimes(2)
++            expect(upsertMock).toHaveBeenNthCalledWith(1, 'test-collection', {
++                wait: true,
++                points: [
++                    expect.objectContaining({
++                        vector: { dense: [0.1, 0.2, 0.3, 0.4], sparse: { text: 'doc one', model: 'qdrant/bm25' } }
++                    })
++                ]
++            })
++            expect(upsertMock).toHaveBeenNthCalledWith(2, 'test-collection', {
++                wait: true,
++                points: [
++                    expect.objectContaining({
++                        vector: { dense: [0.1, 0.2, 0.3, 0.4], sparse: { text: 'doc two', model: 'qdrant/bm25' } }
++                    })
++                ]
++            })
++        })
++
++        it('upsert(): sparseInferenceModel value other than qdrant/bm25 throws before any collection calls', async () => {
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse', sparseInferenceModel: 'some-other-model' })
++
++            await expect(node.vectorStoreMethods.upsert(nodeData, {})).rejects.toThrow(
++                /Sparse Inference Model "some-other-model" is not supported/
++            )
++            expect(collectionExistsMock).not.toHaveBeenCalled()
++        })
++    })
++
++    describe('query building — client.query() call shape per mode', () => {
++        it('Dense (regression, unchanged): plain vector query, using stays undefined', async () => {
++            getCollectionsMock.mockResolvedValue({ collections: [{ name: 'test-collection' }] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(queryMock).toHaveBeenCalledWith('test-collection', {
++                query: [0.1, 0.2, 0.3, 0.4],
++                limit: 4,
++                filter: undefined,
++                with_payload: ['metadata', 'content'],
++                with_vector: false
++            })
++        })
++
++        it('Sparse: sends the {text, model} Document shape, not a literal {indices, values} sparse vector', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(queryMock).toHaveBeenCalledWith('test-collection', {
++                query: { text: 'hello world', model: 'qdrant/bm25' },
++                using: 'sparse',
++                limit: 4,
++                filter: undefined,
++                with_payload: ['metadata', 'content'],
++                with_vector: false
++            })
++            // Sparse mode must not need a dense embedding for the query itself.
++            expect(fakeEmbeddings.embedQuery).not.toHaveBeenCalled()
++        })
++
++        it('sparseInferenceModel: a value other than qdrant/bm25 throws instead of being silently ignored', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse', sparseInferenceModel: 'some-other-model' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            await expect(node.init(nodeData, '', {})).rejects.toThrow(/Sparse Inference Model "some-other-model" is not supported/)
++            expect(collectionExistsMock).not.toHaveBeenCalled()
++        })
++
++        it.each([
++            ['RRF', 'rrf'],
++            ['DBSF', 'dbsf']
++        ])('Hybrid (%s): prefetch dense + sparse, fused outer query', async (fusionInput, expectedFusion) => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: {
++                    params: {
++                        vectors: { dense: { size: 1536, distance: 'Cosine' } },
++                        sparse_vectors: { sparse: { modifier: 'idf' } }
++                    }
++                }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Hybrid', fusionMethod: fusionInput })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(queryMock).toHaveBeenCalledWith('test-collection', {
++                prefetch: [
++                    { using: 'dense', query: [0.1, 0.2, 0.3, 0.4], filter: undefined, limit: 4 },
++                    { using: 'sparse', query: { text: 'hello world', model: 'qdrant/bm25' }, filter: undefined, limit: 4 }
++                ],
++                query: { fusion: expectedFusion },
++                limit: 4,
++                filter: undefined,
++                with_payload: ['metadata', 'content'],
++                with_vector: false
++            })
++        })
++    })
++
++    describe('response mapping — client.query() points map to Document[]', () => {
++        it.each(['Dense', 'Sparse', 'Hybrid'])('%s: id/payload map to Document id/metadata/pageContent, score preserved', async (mode) => {
++            if (mode === 'Dense') {
++                getCollectionsMock.mockResolvedValue({ collections: [{ name: 'test-collection' }] })
++            } else {
++                collectionExistsMock.mockResolvedValue({ exists: true })
++                getCollectionMock.mockResolvedValue({
++                    config: {
++                        params: {
++                            vectors: mode === 'Hybrid' ? { dense: { size: 1536, distance: 'Cosine' } } : undefined,
++                            sparse_vectors: { sparse: { modifier: 'idf' } }
++                        }
++                    }
++                })
++            }
++            queryMock.mockResolvedValue({
++                points: [{ id: 'point-1', score: 0.87, payload: { content: 'hello world', metadata: { source: 'test-source' } } }]
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: mode })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            const [[doc, score]] = await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(doc.id).toBe('point-1')
++            expect(doc.pageContent).toBe('hello world')
++            expect(doc.metadata).toEqual({ source: 'test-source' })
++            expect(score).toBe(0.87)
++        })
++
++        it('a point with no payload content key falls back to an empty string, not undefined', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++            queryMock.mockResolvedValue({
++                points: [{ id: 'point-1', score: 0.5, payload: { metadata: { source: 'test-source' } } }]
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            const [[doc]] = await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(doc.pageContent).toBe('')
++        })
++    })
++
++    describe('error paths — missing sparse vector must never silently degrade to dense-only', () => {
++        it('init() (query-only): existing collection with no matching sparse vector throws an actionable error citing qdrant/qdrant#8892', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: {} } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            let caught: Error | undefined
++            try {
++                await node.init(nodeData, '', {})
++            } catch (e: any) {
++                caught = e
++            }
++
++            expect(caught?.message).toMatch(/has no sparse vector named "sparse"/)
++            expect(caught?.message).toMatch(/qdrant\/qdrant#8892/)
++            expect(updateCollectionMock).not.toHaveBeenCalled()
++        })
++
++        it('init() (query-only), Hybrid: existing collection with no dense vector at all throws instead of silently querying dense-less', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Hybrid' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            await expect(node.init(nodeData, '', {})).rejects.toThrow(/has no dense vector configured/)
++            expect(queryMock).not.toHaveBeenCalled()
++        })
++    })
++
++    describe('retriever output — filter propagation (Sparse/Hybrid/named-Dense)', () => {
++        it("asRetriever + fileUpload/chatId: the FLOWISE_CHATID should-clause reaches client.query's filter", async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++            queryMock.mockResolvedValue({ points: [] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse', fileUpload: true })
++            nodeData.outputs = { output: 'retriever' }
++
++            const retriever = await node.init(nodeData, '', { chatId: 'chat-123' })
++            await retriever.invoke('hello world')
++
++            expect(queryMock).toHaveBeenCalledWith(
++                'test-collection',
++                expect.objectContaining({
++                    filter: {
++                        should: [
++                            { key: 'metadata.flowise_chatId', match: { value: 'chat-123' } },
++                            { is_empty: { key: 'metadata.flowise_chatId' } }
++                        ]
++                    }
++                })
++            )
++        })
++
++        it('asRetriever without fileUpload: no filter reaches client.query', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: undefined, sparse_vectors: { sparse: { modifier: 'idf' } } } }
++            })
++            queryMock.mockResolvedValue({ points: [] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Sparse' })
++            nodeData.outputs = { output: 'retriever' }
++
++            const retriever = await node.init(nodeData, '', {})
++            await retriever.invoke('hello world')
++
++            expect(queryMock).toHaveBeenCalledWith('test-collection', expect.objectContaining({ filter: undefined }))
++        })
++    })
++
++    // ---------------------------------------------------------------------------------------
++    // Dense mode honoring "Dense Vector Name" (vectorName) when explicitly set
++    // ---------------------------------------------------------------------------------------
++
++    describe('Dense mode with vectorName set', () => {
++        it('backward compatibility: vectorName left blank -> init() still goes through the unnamed-vector path (collectionExists never called)', async () => {
++            getCollectionsMock.mockResolvedValue({ collections: [{ name: 'test-collection' }] })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense' })
++
++            await node.init(nodeData, '', {})
++
++            expect(collectionExistsMock).not.toHaveBeenCalled()
++        })
++
++        it('backward compatibility: vectorName left blank -> upsert() (both paths) still goes through the unnamed-vector path (collectionExists never called)', async () => {
++            getCollectionsMock.mockResolvedValue({ collections: [{ name: 'test-collection' }] })
++
++            const node = new Qdrant_VectorStores()
++
++            await node.vectorStoreMethods.upsert(createNodeData({ retrievalMode: 'Dense' }), {})
++            expect(collectionExistsMock).not.toHaveBeenCalled()
++
++            const recordManager = createFakeRecordManager()
++            await node.vectorStoreMethods.upsert(createNodeData({ retrievalMode: 'Dense', recordManager }), {})
++            expect(collectionExistsMock).not.toHaveBeenCalled()
++        })
++
++        it('init(): collection exists with a matching named dense vector -> query uses using: vectorName, correct Document mapping', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { 'dense-vector': { size: 1536, distance: 'Cosine' } }, sparse_vectors: undefined } }
++            })
++            queryMock.mockResolvedValue({
++                points: [{ id: 'point-1', score: 0.9, payload: { content: 'hello world', metadata: { source: 'test-source' } } }]
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense', vectorName: 'dense-vector' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            const vectorStore = await node.init(nodeData, '', {})
++            const [[doc, score]] = await vectorStore.similaritySearchWithScore('hello world', 4)
++
++            expect(queryMock).toHaveBeenCalledWith('test-collection', {
++                query: [0.1, 0.2, 0.3, 0.4],
++                using: 'dense-vector',
++                limit: 4,
++                filter: undefined,
++                with_payload: ['metadata', 'content'],
++                with_vector: false
++            })
++            expect(doc.id).toBe('point-1')
++            expect(doc.pageContent).toBe('hello world')
++            expect(doc.metadata).toEqual({ source: 'test-source' })
++            expect(score).toBe(0.9)
++        })
++
++        it('init(): collection exists but the named dense vector is missing/mismatched -> throws instead of silently querying the unnamed vector', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: true })
++            getCollectionMock.mockResolvedValue({
++                config: { params: { vectors: { other: { size: 1536, distance: 'Cosine' } }, sparse_vectors: undefined } }
++            })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense', vectorName: 'dense-vector' })
++            nodeData.outputs = { output: 'vectorStore' }
++
++            await expect(node.init(nodeData, '', {})).rejects.toThrow(/has no dense vector named "dense-vector"/)
++            expect(queryMock).not.toHaveBeenCalled()
++        })
++
++        it.each([
++            ['non-recordManager', undefined],
++            ['recordManager', 'recordManager']
++        ])(
++            'upsert() (%s): collection does not exist -> createCollection called with named vectors only, no sparse_vectors key',
++            async (_label, recordManagerFlag) => {
++                collectionExistsMock.mockResolvedValue({ exists: false })
++
++                const node = new Qdrant_VectorStores()
++                const overrides: Record<string, any> = { retrievalMode: 'Dense', vectorName: 'dense-vector' }
++                if (recordManagerFlag) {
++                    overrides.recordManager = createFakeRecordManager()
++                }
++                const nodeData: any = createNodeData(overrides)
++
++                await node.vectorStoreMethods.upsert(nodeData, {})
++
++                expect(createCollectionMock).toHaveBeenCalledWith('test-collection', {
++                    vectors: { 'dense-vector': { size: 1536, distance: 'Cosine' } }
++                })
++                expect(createCollectionMock.mock.calls[0][1]).not.toHaveProperty('sparse_vectors')
++            }
++        )
++
++        it('upsert(): points upserted with vector: { [vectorName]: embedding }, not the unnamed shape', async () => {
++            collectionExistsMock.mockResolvedValue({ exists: false })
++
++            const node = new Qdrant_VectorStores()
++            const nodeData: any = createNodeData({ retrievalMode: 'Dense', vectorName: 'dense-vector' })
++
++            await node.vectorStoreMethods.upsert(nodeData, {})
++
++            expect(upsertMock).toHaveBeenCalledWith('test-collection', {
++                wait: true,
++                points: [
++                    expect.objectContaining({
++                        vector: { 'dense-vector': [0.1, 0.2, 0.3, 0.4] },
++                        payload: {
++                            content: 'hello world',
++                            metadata: { source: 'test-source' },
++                            customPayload: undefined
++                        }
++                    })
++                ]
++            })
++        })
++    })
++})
+diff --git a/packages/components/nodes/vectorstores/Qdrant/Qdrant.ts b/packages/components/nodes/vectorstores/Qdrant/Qdrant.ts
+index da87efaceb6..ccc791e767b 100644
+--- a/packages/components/nodes/vectorstores/Qdrant/Qdrant.ts
++++ b/packages/components/nodes/vectorstores/Qdrant/Qdrant.ts
+@@ -1,6 +1,7 @@
+ import { flatten } from 'lodash'
+ import { v4 as uuid } from 'uuid'
+ import { QdrantClient } from '@qdrant/js-client-rest'
++import type { Schemas } from '@qdrant/js-client-rest'
+ import { VectorStoreRetrieverInput } from '@langchain/core/vectorstores'
+ import { Document } from '@langchain/core/documents'
+ import { QdrantVectorStore, QdrantLibArgs } from '@langchain/qdrant'
+@@ -16,6 +17,56 @@ type QdrantAddDocumentOptions = {
+     ids?: string[]
+ }
+ 
++// BM25-only, server-side inference; not user-configurable in v1. The "Sparse Inference Model"
++// field stays visible so users know it exists, but init()/upsert() throw if it's ever changed
++// from this value, since no other model is supported yet.
++const SPARSE_INFERENCE_MODEL = 'qdrant/bm25'
++const DEFAULT_SPARSE_VECTOR_NAME = 'sparse'
++// Sensible default name for the dense vector once a collection needs named vectors
++// (Qdrant requires named vectors as soon as a collection holds more than one).
++const DEFAULT_DENSE_VECTOR_NAME = 'dense'
++
++type RetrievalMode = 'Dense' | 'Sparse' | 'Hybrid'
++type FusionMethod = 'RRF' | 'DBSF'
++
++const RETRIEVAL_MODES: RetrievalMode[] = ['Dense', 'Sparse', 'Hybrid']
++const FUSION_METHODS: FusionMethod[] = ['RRF', 'DBSF']
++
++// Validates (case-insensitively) rather than just casting, so an unexpected stored value
++// (e.g. lowercase "hybrid" from a stale flow) throws instead of silently taking the wrong branch.
++const normalizeRetrievalMode = (value: unknown): RetrievalMode => {
++    if (value === undefined || value === null || value === '') return 'Dense'
++    const match = RETRIEVAL_MODES.find((mode) => mode.toLowerCase() === String(value).toLowerCase())
++    if (!match) {
++        throw new Error(`Invalid retrievalMode "${value}" — expected one of: ${RETRIEVAL_MODES.join(', ')}.`)
++    }
++    return match
++}
++
++const normalizeFusionMethod = (value: unknown): FusionMethod => {
++    if (value === undefined || value === null || value === '') return 'RRF'
++    const match = FUSION_METHODS.find((method) => method.toLowerCase() === String(value).toLowerCase())
++    if (!match) {
++        throw new Error(`Invalid fusionMethod "${value}" — expected one of: ${FUSION_METHODS.join(', ')}.`)
++    }
++    return match
++}
++
++// The field is shown for visibility of a possible future option; it isn't wired up to anything
++// yet, so a changed value must fail loudly instead of being silently discarded.
++const assertSupportedSparseInferenceModel = (retrievalMode: RetrievalMode, sparseInferenceModel: string): void => {
++    if (retrievalMode !== 'Dense' && sparseInferenceModel !== SPARSE_INFERENCE_MODEL) {
++        throw new Error(
++            `Sparse Inference Model "${sparseInferenceModel}" is not supported yet — only "${SPARSE_INFERENCE_MODEL}" is available in ` +
++                `this version.`
++        )
++    }
++}
++
++// Server-side-inference input shape: Qdrant computes the actual sparse {indices, values} vector
++// from `text` using `model` — the client never builds {indices, values} itself.
++const buildSparseQueryDocument = (text: string) => ({ text, model: SPARSE_INFERENCE_MODEL })
++
+ class Qdrant_VectorStores implements INode {
+     label: string
+     name: string
+@@ -33,7 +84,7 @@ class Qdrant_VectorStores implements INode {
+     constructor() {
+         this.label = 'Qdrant'
+         this.name = 'qdrant'
+-        this.version = 5.0
++        this.version = 6.0
+         this.type = 'Qdrant'
+         this.icon = 'qdrant.png'
+         this.category = 'Vector Stores'
+@@ -80,6 +131,27 @@ class Qdrant_VectorStores implements INode {
+                 type: 'string',
+                 acceptVariable: true
+             },
++            {
++                label: 'Retrieval Mode',
++                name: 'retrievalMode',
++                description: 'Dense (embeddings only), Sparse (BM25 only), or Hybrid (both, fused)',
++                type: 'options',
++                default: 'Dense',
++                options: [
++                    {
++                        label: 'Dense',
++                        name: 'Dense'
++                    },
++                    {
++                        label: 'Sparse',
++                        name: 'Sparse'
++                    },
++                    {
++                        label: 'Hybrid',
++                        name: 'Hybrid'
++                    }
++                ]
++            },
+             {
+                 label: 'File Upload',
+                 name: 'fileUpload',
+@@ -148,6 +220,66 @@ class Qdrant_VectorStores implements INode {
+                 ],
+                 additionalParams: true
+             },
++            {
++                label: 'Dense Vector Name',
++                name: 'vectorName',
++                description:
++                    'Named dense vector slot. In Dense mode, leave empty to keep using the default unnamed vector (unchanged, ' +
++                    'backward-compatible behavior); setting it switches Dense mode to a named-vector collection created/validated/' +
++                    'queried by this name instead. In Hybrid mode the dense vector is always named — this sets that name (defaults ' +
++                    'to "dense" if left blank).',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    retrievalMode: ['Dense', 'Hybrid']
++                }
++            },
++            {
++                label: 'Sparse Vector Name',
++                name: 'sparseVectorName',
++                description: 'Named sparse vector slot used for BM25.',
++                type: 'string',
++                default: DEFAULT_SPARSE_VECTOR_NAME,
++                additionalParams: true,
++                show: {
++                    retrievalMode: ['Sparse', 'Hybrid']
++                }
++            },
++            {
++                label: 'Sparse Inference Model',
++                name: 'sparseInferenceModel',
++                description:
++                    'Server-side sparse inference model used for BM25 scoring. Fixed to qdrant/bm25 for v1 — shown for visibility ' +
++                    'of a possible future option; changing this value throws an error rather than being silently ignored.',
++                type: 'string',
++                default: SPARSE_INFERENCE_MODEL,
++                additionalParams: true,
++                show: {
++                    retrievalMode: ['Sparse', 'Hybrid']
++                }
++            },
++            {
++                label: 'Fusion Method',
++                name: 'fusionMethod',
++                description: 'How dense and sparse results are combined. Tunable RRF (k, weights) is a future addition, not present in v1.',
++                type: 'options',
++                default: 'RRF',
++                options: [
++                    {
++                        label: 'RRF (Reciprocal Rank Fusion)',
++                        name: 'RRF'
++                    },
++                    {
++                        label: 'DBSF (Distribution-Based Score Fusion)',
++                        name: 'DBSF'
++                    }
++                ],
++                additionalParams: true,
++                show: {
++                    retrievalMode: ['Hybrid']
++                }
++            },
+             {
+                 label: 'Additional Collection Cofiguration',
+                 name: 'qdrantCollectionConfiguration',
+@@ -204,6 +336,14 @@ class Qdrant_VectorStores implements INode {
+             const contentPayloadKey = nodeData.inputs?.contentPayloadKey || 'content'
+             const metadataPayloadKey = nodeData.inputs?.metadataPayloadKey || 'metadata'
+             const isFileUploadEnabled = nodeData.inputs?.fileUpload as boolean
++            const retrievalMode = normalizeRetrievalMode(nodeData.inputs?.retrievalMode)
++            const vectorName = (nodeData.inputs?.vectorName as string) || undefined
++            const sparseVectorName = (nodeData.inputs?.sparseVectorName as string) || DEFAULT_SPARSE_VECTOR_NAME
++            const sparseInferenceModel = (nodeData.inputs?.sparseInferenceModel as string) || SPARSE_INFERENCE_MODEL
++            const denseVectorName = vectorName || DEFAULT_DENSE_VECTOR_NAME
++            let qdrantCollectionConfiguration = nodeData.inputs?.qdrantCollectionConfiguration
++
++            assertSupportedSparseInferenceModel(retrievalMode, sparseInferenceModel)
+ 
+             const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+             const qdrantApiKey = getCredentialParam('qdrantApiKey', credentialData, nodeData)
+@@ -227,68 +367,136 @@ class Qdrant_VectorStores implements INode {
+                 }
+             }
+ 
++            const vectorSize = qdrantVectorDimension ? parseInt(qdrantVectorDimension, 10) : 1536
++            const distance: Schemas['Distance'] = qdrantSimilarity ?? 'Cosine'
++
+             const dbConfig: QdrantLibArgs = {
+                 client: client as any,
+                 url: qdrantServerUrl,
+                 collectionName,
+                 collectionConfig: {
+                     vectors: {
+-                        size: qdrantVectorDimension ? parseInt(qdrantVectorDimension, 10) : 1536,
+-                        distance: qdrantSimilarity ?? 'Cosine'
++                        size: vectorSize,
++                        distance
+                     }
+                 },
+                 contentPayloadKey,
+                 metadataPayloadKey
+             }
+ 
+-            try {
+-                if (recordManager) {
+-                    const vectorStore = new QdrantVectorStore(embeddings, dbConfig)
+-                    await vectorStore.ensureCollection()
+-
+-                    vectorStore.addVectors = async (
+-                        vectors: number[][],
+-                        documents: Document[],
+-                        documentOptions?: QdrantAddDocumentOptions
+-                    ): Promise<void> => {
+-                        if (vectors.length === 0) {
+-                            return
++            // Escape hatch: in Sparse/Hybrid and Dense-with-vectorName-set modes, the user's
++            // Additional Collection Configuration JSON is passed through when a brand-new collection
++            // is created, with the computed vectors/sparse_vectors config layered on top of it.
++            let extraCollectionConfig: Record<string, any> | undefined
++            if ((retrievalMode !== 'Dense' || !!vectorName) && qdrantCollectionConfiguration) {
++                qdrantCollectionConfiguration =
++                    typeof qdrantCollectionConfiguration === 'object'
++                        ? qdrantCollectionConfiguration
++                        : parseJsonBody(qdrantCollectionConfiguration)
++                extraCollectionConfig = qdrantCollectionConfiguration
++            }
++
++            // Builds the point's `vector` field for the named-vector modes: Sparse/Hybrid (always
++            // named), and Dense-with-vectorName-set. Dense mode with vectorName left blank never uses
++            // this — see buildAddVectors's Dense-unnamed call below.
++            const buildNamedVector = (embedding: number[], doc: Document): Schemas['VectorStruct'] => {
++                if (retrievalMode === 'Dense') {
++                    return { [denseVectorName]: embedding }
++                }
++                const sparseVector = buildSparseQueryDocument(doc.pageContent)
++                return retrievalMode === 'Hybrid'
++                    ? { [denseVectorName]: embedding, [sparseVectorName]: sparseVector }
++                    : { [sparseVectorName]: sparseVector }
++            }
++
++            const upsertPoints = async (points: Schemas['PointStruct'][]): Promise<void> => {
++                if (points.length === 0) {
++                    return
++                }
++                try {
++                    if (_batchSize) {
++                        const batchSize = parseInt(_batchSize, 10)
++                        for (let i = 0; i < points.length; i += batchSize) {
++                            await client.upsert(collectionName, {
++                                wait: true,
++                                points: points.slice(i, i + batchSize)
++                            })
+                         }
++                    } else {
++                        await client.upsert(collectionName, {
++                            wait: true,
++                            points
++                        })
++                    }
++                } catch (e: any) {
++                    throw new Error(`${e?.status ?? 'Undefined error code'} ${e?.message}: ${e?.data?.status?.error}`)
++                }
++            }
+ 
+-                        await vectorStore.ensureCollection()
++            // Shared addVectors builder for both Dense-unnamed (raw vector, per-call ensureCollection()
++            // pre-upsert hook) and the named-vector modes (record shape, no hook — the collection is
++            // already ensured once before addVectors is ever assigned). Keeping one builder avoids
++            // duplicating the batching/upsert/error-formatting logic per shape.
++            const buildAddVectors = (
++                buildVector: (embedding: number[], doc: Document) => Schemas['VectorStruct'],
++                beforeUpsert?: () => Promise<void>
++            ) => {
++                return async (vectors: number[][], documents: Document[], documentOptions?: QdrantAddDocumentOptions): Promise<void> => {
++                    if (vectors.length === 0) {
++                        return
++                    }
+ 
+-                        const points = vectors.map((embedding, idx) => ({
+-                            id: documentOptions?.ids?.length ? documentOptions?.ids[idx] : uuid(),
+-                            vector: embedding,
+-                            payload: {
+-                                [contentPayloadKey]: documents[idx].pageContent,
+-                                [metadataPayloadKey]: documents[idx].metadata,
+-                                customPayload: documentOptions?.customPayload?.length ? documentOptions?.customPayload[idx] : undefined
+-                            }
+-                        }))
++                    if (beforeUpsert) {
++                        await beforeUpsert()
++                    }
+ 
+-                        try {
+-                            if (_batchSize) {
+-                                const batchSize = parseInt(_batchSize, 10)
+-                                for (let i = 0; i < points.length; i += batchSize) {
+-                                    const batchPoints = points.slice(i, i + batchSize)
+-                                    await client.upsert(collectionName, {
+-                                        wait: true,
+-                                        points: batchPoints
+-                                    })
+-                                }
+-                            } else {
+-                                await client.upsert(collectionName, {
+-                                    wait: true,
+-                                    points
+-                                })
+-                            }
+-                        } catch (e: any) {
+-                            const error = new Error(`${e?.status ?? 'Undefined error code'} ${e?.message}: ${e?.data?.status?.error}`)
+-                            throw error
++                    const points = vectors.map((embedding, idx) => ({
++                        id: documentOptions?.ids?.length ? documentOptions?.ids[idx] : uuid(),
++                        vector: buildVector(embedding, documents[idx]),
++                        payload: {
++                            [contentPayloadKey]: documents[idx].pageContent,
++                            [metadataPayloadKey]: documents[idx].metadata,
++                            customPayload: documentOptions?.customPayload?.length ? documentOptions?.customPayload[idx] : undefined
+                         }
++                    }))
++
++                    await upsertPoints(points)
++                }
++            }
++
++            try {
++                if (recordManager) {
++                    const vectorStore = new QdrantVectorStore(embeddings, dbConfig)
++
++                    if (retrievalMode === 'Dense' && !vectorName) {
++                        await vectorStore.ensureCollection()
++                    } else {
++                        // Bypass @langchain/qdrant's ensureCollection() (dense-only, no named-vector
++                        // or sparse concept) and go straight to @qdrant/js-client-rest. Called once
++                        // here, not again inside addVectors below — a deliberate difference from
++                        // Dense-unnamed mode's double-ensureCollection-call behavior on a cold
++                        // collection (kept unmodified for Dense-unnamed, since existing tests pin
++                        // it); for Sparse/Hybrid/Dense-named a single call is cleaner and avoids
++                        // repeating a getCollection/createCollection round trip per batch.
++                        await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, collectionName, {
++                            retrievalMode,
++                            vectorSize,
++                            distance,
++                            denseVectorName,
++                            sparseVectorName,
++                            allowCreate: true,
++                            extraCollectionConfig
++                        })
+                     }
+ 
++                    vectorStore.addVectors =
++                        retrievalMode === 'Dense' && !vectorName
++                            ? buildAddVectors(
++                                  (embedding) => embedding,
++                                  () => vectorStore.ensureCollection()
++                              )
++                            : buildAddVectors(buildNamedVector)
++
+                     vectorStore.delete = async (params: { ids: string[] }): Promise<void> => {
+                         const { ids } = params
+ 
+@@ -305,6 +513,11 @@ class Qdrant_VectorStores implements INode {
+ 
+                     await recordManager.createSchema()
+ 
++                    // Sparse mode still goes through embedDocuments() here (recordManager's index()
++                    // owns the embed loop) even though buildNamedVector discards the resulting
++                    // embedding for Sparse — wasted embedding-provider cost/latency per document. Not
++                    // fixed for the recordManager path; the non-recordManager Sparse path below
++                    // avoids it by building points directly.
+                     const res = await index({
+                         docsSource: finalDocs,
+                         recordManager,
+@@ -318,14 +531,66 @@ class Qdrant_VectorStores implements INode {
+ 
+                     return res
+                 } else {
+-                    if (_batchSize) {
+-                        const batchSize = parseInt(_batchSize, 10)
+-                        for (let i = 0; i < finalDocs.length; i += batchSize) {
+-                            const batch = finalDocs.slice(i, i + batchSize)
+-                            await QdrantVectorStore.fromDocuments(batch, embeddings, dbConfig)
++                    if (retrievalMode === 'Dense' && !vectorName) {
++                        if (_batchSize) {
++                            const batchSize = parseInt(_batchSize, 10)
++                            for (let i = 0; i < finalDocs.length; i += batchSize) {
++                                const batch = finalDocs.slice(i, i + batchSize)
++                                await QdrantVectorStore.fromDocuments(batch, embeddings, dbConfig)
++                            }
++                        } else {
++                            await QdrantVectorStore.fromDocuments(finalDocs, embeddings, dbConfig)
+                         }
++                    } else if (retrievalMode === 'Sparse') {
++                        await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, collectionName, {
++                            retrievalMode,
++                            vectorSize,
++                            distance,
++                            denseVectorName,
++                            sparseVectorName,
++                            allowCreate: true,
++                            extraCollectionConfig
++                        })
++
++                        // Sparse has no dense component, so there is no embedding to compute at all —
++                        // build points directly from finalDocs and upsert them without ever calling
++                        // embedDocuments() (unlike the recordManager path above).
++                        const points = finalDocs.map((doc) => ({
++                            id: uuid(),
++                            vector: { [sparseVectorName]: buildSparseQueryDocument(doc.pageContent) },
++                            payload: {
++                                [contentPayloadKey]: doc.pageContent,
++                                [metadataPayloadKey]: doc.metadata,
++                                customPayload: undefined
++                            }
++                        }))
++                        await upsertPoints(points)
+                     } else {
+-                        await QdrantVectorStore.fromDocuments(finalDocs, embeddings, dbConfig)
++                        // Hybrid and Dense-with-vectorName-set both need a dense embedding, so go
++                        // through addDocuments() -> embedDocuments() -> addVectors() like Dense-unnamed
++                        // does above.
++                        await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, collectionName, {
++                            retrievalMode,
++                            vectorSize,
++                            distance,
++                            denseVectorName,
++                            sparseVectorName,
++                            allowCreate: true,
++                            extraCollectionConfig
++                        })
++
++                        const vectorStore = new QdrantVectorStore(embeddings, dbConfig)
++                        vectorStore.addVectors = buildAddVectors(buildNamedVector)
++
++                        if (_batchSize) {
++                            const batchSize = parseInt(_batchSize, 10)
++                            for (let i = 0; i < finalDocs.length; i += batchSize) {
++                                const batch = finalDocs.slice(i, i + batchSize)
++                                await vectorStore.addDocuments(batch)
++                            }
++                        } else {
++                            await vectorStore.addDocuments(finalDocs)
++                        }
+                     }
+                     return { numAdded: finalDocs.length, addedDocs: finalDocs }
+                 }
+@@ -415,6 +680,14 @@ class Qdrant_VectorStores implements INode {
+         const contentPayloadKey = nodeData.inputs?.contentPayloadKey || 'content'
+         const metadataPayloadKey = nodeData.inputs?.metadataPayloadKey || 'metadata'
+         const isFileUploadEnabled = nodeData.inputs?.fileUpload as boolean
++        const retrievalMode = normalizeRetrievalMode(nodeData.inputs?.retrievalMode)
++        const vectorName = (nodeData.inputs?.vectorName as string) || undefined
++        const sparseVectorName = (nodeData.inputs?.sparseVectorName as string) || DEFAULT_SPARSE_VECTOR_NAME
++        const sparseInferenceModel = (nodeData.inputs?.sparseInferenceModel as string) || SPARSE_INFERENCE_MODEL
++        const denseVectorName = vectorName || DEFAULT_DENSE_VECTOR_NAME
++        const fusionMethod = normalizeFusionMethod(nodeData.inputs?.fusionMethod)
++
++        assertSupportedSparseInferenceModel(retrievalMode, sparseInferenceModel)
+ 
+         const k = topK ? parseFloat(topK) : 4
+ 
+@@ -429,6 +702,9 @@ class Qdrant_VectorStores implements INode {
+             port: port
+         })
+ 
++        const vectorSize = qdrantVectorDimension ? parseInt(qdrantVectorDimension, 10) : 1536
++        const distance: Schemas['Distance'] = qdrantSimilarity ?? 'Cosine'
++
+         const dbConfig: QdrantLibArgs = {
+             client: client as any,
+             collectionName,
+@@ -440,6 +716,7 @@ class Qdrant_VectorStores implements INode {
+             k
+         }
+ 
++        let extraCollectionConfig: Record<string, any> | undefined
+         if (qdrantCollectionConfiguration) {
+             qdrantCollectionConfiguration =
+                 typeof qdrantCollectionConfiguration === 'object'
+@@ -449,10 +726,11 @@ class Qdrant_VectorStores implements INode {
+                 ...qdrantCollectionConfiguration,
+                 vectors: {
+                     ...qdrantCollectionConfiguration.vectors,
+-                    size: qdrantVectorDimension ? parseInt(qdrantVectorDimension, 10) : 1536,
+-                    distance: qdrantSimilarity ?? 'Cosine'
++                    size: vectorSize,
++                    distance
+                 }
+             }
++            extraCollectionConfig = qdrantCollectionConfiguration
+         }
+ 
+         if (queryFilter) {
+@@ -478,7 +756,100 @@ class Qdrant_VectorStores implements INode {
+             )
+         }
+ 
+-        const vectorStore = await QdrantVectorStore.fromExistingCollection(embeddings, dbConfig)
++        let vectorStore: QdrantVectorStore
++
++        if (retrievalMode === 'Dense' && !vectorName) {
++            vectorStore = await QdrantVectorStore.fromExistingCollection(embeddings, dbConfig)
++        } else {
++            vectorStore = new QdrantVectorStore(embeddings, dbConfig)
++
++            // Query-only path: never create or alter the collection schema here. If the collection
++            // doesn't exist, or the vector this mode needs isn't there, fail loudly rather than
++            // silently degrading (e.g. falling back to dense-only) or creating an empty collection
++            // that would return zero results forever. Schema creation only happens from upsert().
++            await Qdrant_VectorStores.ensureCollectionForRetrievalMode(client, collectionName, {
++                retrievalMode,
++                vectorSize,
++                distance,
++                denseVectorName,
++                sparseVectorName,
++                allowCreate: false,
++                extraCollectionConfig
++            })
++
++            // TS gotcha: client.query() takes snake_case fields matching the REST/Python API
++            // exactly (with_payload, with_vector, score_threshold) — no camelCase conversion layer,
++            // and these are plain object literals against a generated schema, not class instances.
++            //
++            // Base VectorStore.similaritySearch()/similaritySearchWithScore() both embed the query
++            // themselves and hand only the resulting vector to similaritySearchVectorWithScore() —
++            // by the time that method runs, the original query text is gone. Sparse/Hybrid need the
++            // raw text for server-side BM25 inference, so the override has to happen one level up,
++            // on similaritySearch/similaritySearchWithScore themselves.
++            const performSearch = async (queryText: string, k?: number, filter?: any): Promise<[Document, number][]> => {
++                let response: Schemas['QueryResponse']
++
++                if (retrievalMode === 'Sparse') {
++                    response = await client.query(collectionName, {
++                        query: buildSparseQueryDocument(queryText),
++                        using: sparseVectorName,
++                        limit: k,
++                        filter,
++                        with_payload: [metadataPayloadKey, contentPayloadKey],
++                        with_vector: false
++                    })
++                } else if (retrievalMode === 'Hybrid') {
++                    const denseVector = await embeddings.embedQuery(queryText)
++                    response = await client.query(collectionName, {
++                        prefetch: [
++                            { using: denseVectorName, query: denseVector, filter, limit: k },
++                            { using: sparseVectorName, query: buildSparseQueryDocument(queryText), filter, limit: k }
++                        ],
++                        query: { fusion: fusionMethod.toLowerCase() as 'rrf' | 'dbsf' },
++                        limit: k,
++                        filter,
++                        with_payload: [metadataPayloadKey, contentPayloadKey],
++                        with_vector: false
++                    })
++                } else {
++                    // Dense mode with a named vector: plain dense query against the named slot, no
++                    // prefetch/fusion — structurally the Hybrid branch's dense half only.
++                    const denseVector = await embeddings.embedQuery(queryText)
++                    response = await client.query(collectionName, {
++                        query: denseVector,
++                        using: denseVectorName,
++                        limit: k,
++                        filter,
++                        with_payload: [metadataPayloadKey, contentPayloadKey],
++                        with_vector: false
++                    })
++                }
++
++                const points = response?.points ?? []
++                return points.map((point: Schemas['ScoredPoint']) => [
++                    new Document({
++                        id: point.id as string,
++                        metadata: (point.payload?.[metadataPayloadKey] as Record<string, any>) ?? {},
++                        pageContent: (point.payload?.[contentPayloadKey] as string | undefined) ?? ''
++                    }),
++                    point.score
++                ])
++            }
++
++            vectorStore.similaritySearchWithScore = async (query: string, k?: number, filter?: any): Promise<[Document, number][]> => {
++                if (!query) return []
++                return performSearch(query, k, filter)
++            }
++
++            vectorStore.similaritySearch = async (query: string, k?: number, filter?: any): Promise<Document[]> => {
++                if (!query) return []
++                const results = await performSearch(query, k, filter)
++                return results.map(([doc]) => doc)
++            }
++
++            // MMR stays dense-only (query: { nearest, mmr: {...} }) — this node doesn't expose a
++            // search-type toggle that would route through it, so there's no gap to close here.
++        }
+ 
+         if (output === 'retriever') {
+             const retriever = vectorStore.asRetriever(retrieverConfig)
+@@ -514,6 +885,150 @@ class Qdrant_VectorStores implements INode {
+ 
+         return port
+     }
++
++    /**
++     * Shared create-or-validate helper for named-vector collections: Sparse, Hybrid, and Dense with
++     * `vectorName` set. Dense mode with `vectorName` left blank never calls this — it keeps going
++     * through @langchain/qdrant's own ensureCollection(), unmodified.
++     *
++     * `allowCreate` controls what happens when the collection doesn't exist yet: upsert() passes
++     * true (creating a collection on first write is expected); init() passes false and gets an
++     * actionable error instead — a read must never have the side effect of creating a collection.
++     *
++     * A missing sparse vector on an already-existing collection always throws regardless of
++     * `allowCreate` — Qdrant has no in-place way to add a named vector to an existing collection
++     * (qdrant/qdrant#8892), so there is no upgrade path left to gate.
++     */
++    static async ensureCollectionForRetrievalMode(
++        client: QdrantClient,
++        collectionName: string,
++        params: {
++            retrievalMode: RetrievalMode
++            vectorSize: number
++            distance: Schemas['Distance']
++            denseVectorName: string
++            sparseVectorName: string
++            allowCreate: boolean
++            extraCollectionConfig?: Record<string, any>
++        }
++    ): Promise<void> {
++        const { retrievalMode, vectorSize, distance, denseVectorName, sparseVectorName, allowCreate, extraCollectionConfig } = params
++
++        const sparseVectorsConfig = {
++            [sparseVectorName]: { modifier: 'idf' as const }
++        }
++
++        const { exists } = await client.collectionExists(collectionName)
++
++        if (!exists) {
++            if (!allowCreate) {
++                throw new Error(
++                    `Qdrant collection "${collectionName}" does not exist. This is a query-only path and will not create it — ` +
++                        `upsert documents first to create the collection.`
++                )
++            }
++
++            // Sparse mode: no dense vector at all. Hybrid and named-Dense mode: dense vector gets a
++            // name (Qdrant requires named vectors once a collection holds more than one, and named-
++            // Dense is explicitly a named-vector collection by the user's own request).
++            const vectorsConfig = retrievalMode === 'Sparse' ? undefined : { [denseVectorName]: { size: vectorSize, distance } }
++
++            await client.createCollection(collectionName, {
++                ...(extraCollectionConfig ?? {}),
++                ...(vectorsConfig ? { vectors: vectorsConfig } : {}),
++                // Dense mode has no sparse vector to configure — omit the field entirely rather
++                // than sending an empty one.
++                ...(retrievalMode === 'Dense' ? {} : { sparse_vectors: sparseVectorsConfig })
++            })
++            return
++        }
++
++        const info = await client.getCollection(collectionName)
++        // Schemas['VectorsConfig'] is a `VectorParams | Record<string, VectorParams>` union with no
++        // discriminant field TS can narrow automatically — `any` here avoids fighting that; the
++        // runtime shape checks below (isUnnamedShape, hasOwnProperty) do the real narrowing.
++        const existingVectors = info?.config?.params?.vectors as any
++        const existingSparseVectors = info?.config?.params?.sparse_vectors as Record<string, any> | null | undefined
++
++        if (retrievalMode === 'Hybrid' || retrievalMode === 'Dense') {
++            Qdrant_VectorStores.validateExistingDenseVector(
++                collectionName,
++                existingVectors,
++                denseVectorName,
++                vectorSize,
++                distance,
++                retrievalMode
++            )
++        }
++
++        if (retrievalMode === 'Dense') {
++            // Dense mode has no sparse vector to check — nothing left to do.
++            return
++        }
++
++        const hasMatchingSparse = !!existingSparseVectors && Object.prototype.hasOwnProperty.call(existingSparseVectors, sparseVectorName)
++
++        if (!hasMatchingSparse) {
++            // Qdrant cannot add a new named vector to an already-existing collection in place
++            // (confirmed live against Qdrant v1.18.3) — see the open feature request at
++            // https://github.com/qdrant/qdrant/issues/8892. There is currently no in-place way to do
++            // this, so both the query-only and upsert paths fail loudly here rather than silently
++            // degrading or half-succeeding.
++            throw new Error(
++                `Qdrant collection "${collectionName}" has no sparse vector named "${sparseVectorName}", and Qdrant's server API does ` +
++                    `not support adding a new named vector to an existing collection (see qdrant/qdrant#8892) — retrying or upserting ` +
++                    `will not fix this. To use ${retrievalMode} mode with this data, create a new collection with both dense and ` +
++                    `sparse vectors configured from the start, or manually migrate this collection's points into one.`
++            )
++        }
++    }
++
++    /**
++     * Validates an existing collection's dense vector against what Hybrid/named-Dense mode expects.
++     * Only the named shape (`{ [name]: { size, distance } }`) is usable — an unnamed dense vector
++     * (`{ size, distance }`) can't be addressed by name in queries or upserts (Qdrant addresses it
++     * as `''`, not by name), so it's rejected here even when size/distance would otherwise match,
++     * rather than surfacing as an opaque server error later.
++     */
++    static validateExistingDenseVector(
++        collectionName: string,
++        existingVectors: any,
++        denseVectorName: string,
++        vectorSize: number,
++        distance: Schemas['Distance'],
++        retrievalMode: RetrievalMode
++    ): void {
++        if (!existingVectors || (typeof existingVectors === 'object' && Object.keys(existingVectors).length === 0)) {
++            throw new Error(
++                `Qdrant collection "${collectionName}" has no dense vector configured — ${retrievalMode} mode requires one. Create a ` +
++                    `new collection, or switch to Sparse mode.`
++            )
++        }
++
++        const isUnnamedShape = typeof existingVectors.size === 'number'
++        if (isUnnamedShape) {
++            throw new Error(
++                `Qdrant collection "${collectionName}" uses an unnamed dense vector; ${retrievalMode} mode requires named vectors ` +
++                    `(dense vector "${denseVectorName}") — create a new collection with named vectors configured from the start.`
++            )
++        }
++
++        const target = existingVectors[denseVectorName]
++
++        if (!target) {
++            const availableNames = Object.keys(existingVectors).join(', ') || 'none'
++            throw new Error(
++                `Qdrant collection "${collectionName}" has no dense vector named "${denseVectorName}". Available named vectors: ${availableNames}.`
++            )
++        }
++
++        if (target.size !== vectorSize || target.distance !== distance) {
++            throw new Error(
++                `Qdrant collection "${collectionName}"'s existing dense vector (size=${target.size}, distance=${target.distance}) ` +
++                    `does not match the requested configuration (size=${vectorSize}, distance=${distance}).`
++            )
++        }
++    }
+ }
+ 
+ module.exports = { nodeClass: Qdrant_VectorStores }

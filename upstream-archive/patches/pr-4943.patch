@@ -1,0 +1,362 @@
+From 9eb17af3eba6473e01407d158dc546e50419ab7d Mon Sep 17 00:00:00 2001
+From: Jonnie Russell <jonnie@invotra.co>
+Date: Tue, 22 Jul 2025 15:47:23 +0100
+Subject: [PATCH 1/4] Added changes
+
+---
+ .../nodes/documentloaders/Github/Github.ts    |  79 ++++++++++++-
+ .../src/services/documentstore/index.ts       | 111 ++++++++++++++++--
+ 2 files changed, 176 insertions(+), 14 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Github/Github.ts b/packages/components/nodes/documentloaders/Github/Github.ts
+index 3edef63f342..50c3a308917 100644
+--- a/packages/components/nodes/documentloaders/Github/Github.ts
++++ b/packages/components/nodes/documentloaders/Github/Github.ts
+@@ -2,7 +2,10 @@ import { omit } from 'lodash'
+ import { ICommonObject, IDocument, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { TextSplitter } from 'langchain/text_splitter'
+ import { GithubRepoLoader, GithubRepoLoaderParams } from '@langchain/community/document_loaders/web/github'
+-import { getCredentialData, getCredentialParam, handleEscapeCharacters, INodeOutputsValue } from '../../../src'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters, IDatabaseEntity, INodeOutputsValue } from '../../../src'
++import { v4 as uuidv4 } from 'uuid'
++
++import { DataSource } from 'typeorm'
+ 
+ class Github_DocumentLoaders implements INode {
+     label: string
+@@ -61,6 +64,14 @@ class Github_DocumentLoaders implements INode {
+                 optional: true,
+                 additionalParams: true
+             },
++            {
++                label: 'Stream',
++                name: 'stream',
++                type: 'boolean',
++                optional: true,
++                default: false,
++                description: 'Process documents as they are loaded'
++            },
+             {
+                 label: 'Github Base URL',
+                 name: 'githubBaseUrl',
+@@ -154,6 +165,7 @@ class Github_DocumentLoaders implements INode {
+         const output = nodeData.outputs?.output as string
+         const githubInstanceApi = nodeData.inputs?.githubInstanceApi as string
+         const githubBaseUrl = nodeData.inputs?.githubBaseUrl as string
++        const streamMode = nodeData.inputs?.stream as boolean
+ 
+         let omitMetadataKeys: string[] = []
+         if (_omitMetadataKeys) {
+@@ -181,9 +193,66 @@ class Github_DocumentLoaders implements INode {
+         }
+ 
+         const loader = new GithubRepoLoader(repoLink, githubOptions)
+-
+         let docs: IDocument[] = []
+ 
++        if (streamMode) {
++            // Load the external entities as stream
++            const dataSource: DataSource = options.appDataSource
++            const databaseEntities = options.databaseEntities as IDatabaseEntity
++            const loaderId = options.loaderId as string
++            const storeId = options.storeId as string
++
++            // If preview mode is enabled, limit the number of chunks processed
++            let previewLimit = Infinity
++            if (options.preview) {
++                previewLimit = 1
++            }
++
++            let seq = 0
++            let totalChars = 0
++
++            for await (const fileDoc of (loader as any).loadAsStream()) {
++                // fileDoc.pageContent = handleEscapeCharacters(fileDoc.pageContent ?? '', false)
++                const doc = textSplitter ? await (textSplitter as TextSplitter).splitDocuments([fileDoc]) : [fileDoc]
++                if (options.preview) {
++                    // As we are in preview mode, just return the data don't save
++                    docs.push(...doc)
++                    return docs
++                }
++
++                for (const chunk of doc) {
++                    seq += 1
++                    const entity = dataSource.getRepository(databaseEntities['DocumentStoreFileChunk']).create({
++                        docId: loaderId as string,
++                        storeId: storeId as string,
++                        id: uuidv4(),
++                        chunkNo: seq,
++                        pageContent: this.sanitizeChunkContent(chunk.pageContent ?? ''),
++                        metadata: JSON.stringify(chunk.metadata)
++                    })
++                    try {
++                        await dataSource.getRepository(databaseEntities['DocumentStoreFileChunk']).save(entity)
++                    } catch (err) {
++                        options.logger.error(`Error streaming chunk to DB: ${err instanceof Error ? err.message : String(err)}`)
++                        throw new Error(`Error streaming chunk to DB: ${err instanceof Error ? err.message : String(err)}`)
++                    }
++
++                    totalChars += entity.pageContent.length
++                }
++            }
++
++            options.logger.info(`Streaming loader ${loaderId} total chunks: ${seq} total characters: ${totalChars}`)
++
++            return [
++                {
++                    metadata: {
++                        totalChunks: seq,
++                        totalChars
++                    }
++                }
++            ]
++        }
++
+         if (textSplitter) {
+             docs = await loader.load()
+             docs = await textSplitter.splitDocuments(docs)
+@@ -233,6 +302,12 @@ class Github_DocumentLoaders implements INode {
+             return handleEscapeCharacters(finaltext, false)
+         }
+     }
++
++    // remove null bytes from chunk content
++    sanitizeChunkContent = (content: string) => {
++        // eslint-disable-next-line no-control-regex
++        return content.replaceAll(/\u0000/g, '')
++    }
+ }
+ 
+ module.exports = { nodeClass: Github_DocumentLoaders }
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index a9a12fd47ce..ab5a9b65b3c 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -573,7 +573,10 @@ const _splitIntoChunks = async (appDataSource: DataSource, componentNodes: IComp
+             chatflowid: uuidv4(),
+             appDataSource,
+             databaseEntities,
+-            logger
++            logger,
++            preview: data.preview || false,
++            storeId: data.storeId,
++            loaderId: data.id
+         }
+         const docNodeInstance = new nodeModule.nodeClass()
+         let docs: IDocument[] = await docNodeInstance.init(nodeData, '', options)
+@@ -821,17 +824,37 @@ export const processLoader = async ({
+             throw new Error('Unauthorized access')
+         }
+     }
+-    await _saveChunksToStorage(
+-        appDataSource,
+-        componentNodes,
+-        data,
+-        entity,
+-        docLoaderId,
+-        orgId,
+-        workspaceId,
+-        subscriptionId,
+-        usageCacheManager
+-    )
++    
++    // Check for existing loader and if stream is enabled
++    if (entity.loaders && entity.loaders.length > 0) {
++        const existingLoaders = JSON.parse(entity.loaders)
++        const existingLoader = existingLoaders.find((ldr: IDocumentStoreLoader) => ldr.id === docLoaderId)
++
++        // Check if the loader is configured for streaming
++        if (existingLoader && existingLoader.loaderConfig?.stream) {
++            // Handle streaming
++            await _streamChunksToStorage(
++                appDataSource,
++                componentNodes,
++                data,
++                entity,
++                docLoaderId
++            )
++        }
++    } else {
++        await _saveChunksToStorage(
++            appDataSource,
++            componentNodes,
++            data,
++            entity,
++            docLoaderId,
++            orgId,
++            workspaceId,
++            subscriptionId,
++            usageCacheManager
++        )
++    }
++
+     return getDocumentStoreFileChunks(appDataSource, data.storeId as string, docLoaderId)
+ }
+ 
+@@ -1046,6 +1069,70 @@ const _saveChunksToStorage = async (
+     }
+ }
+ 
++const _streamChunksToStorage = async (
++    appDataSource: DataSource,
++    componentNodes: IComponentNodes,
++    data: IDocumentStoreLoaderForPreview,
++    entity: DocumentStore,
++    newLoaderId: string
++) => {
++    try {
++        // Step 1: remove all previous chunks for the loader
++        await appDataSource.getRepository(DocumentStoreFileChunk).delete({ docId: newLoaderId })
++
++        // Step 2: set the loader to SYNCING status
++        await updateDocumentStoreLoaderStatus(entity, newLoaderId, DocumentStoreStatus.SYNCING)
++
++        // Step 3: process the loaders data in streaming mode
++        const response = await _splitIntoChunks(appDataSource, componentNodes, data)
++
++        // Step 4: update the loaders with the new loaderConfig
++        const totalChunks = response[0].metadata?.totalChunks || 0
++        const totalChars = response[0].metadata?.totalChars || 0
++        await updateDocumentStoreLoaderStatus(entity, newLoaderId, DocumentStoreStatus.SYNC, totalChunks, totalChars)
++
++        return
++    } catch (error) {
++        throw new InternalFlowiseError(
++            StatusCodes.INTERNAL_SERVER_ERROR,
++            `Error: documentStoreServices._streamChunksToStorage - ${getErrorMessage(error)}`
++        )
++    }
++}
++
++const updateDocumentStoreLoaderStatus = async (
++    entity: DocumentStore,
++    loaderId: string,
++    status: DocumentStoreStatus,
++    totalChunks = 0,
++    totalChars = 0
++) => {
++    try {
++        const existingLoaders = JSON.parse(entity.loaders)
++        const loader = existingLoaders.find((ldr: IDocumentStoreLoader) => ldr.id === loaderId)
++        if (!loader) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: documentStoreServices.updateDocumentStoreLoaderStatus - Loader ${loaderId} not found`
++            )
++        }
++        loader.status = status
++        if (totalChunks) {
++            loader.totalChunks = totalChunks
++        }
++        if (totalChars) {
++            loader.totalChars = totalChars
++        }
++        entity.loaders = JSON.stringify(existingLoaders)
++        await getRunningExpressApp().AppDataSource.getRepository(DocumentStore).save(entity)
++    } catch (error) {
++        throw new InternalFlowiseError(
++            StatusCodes.INTERNAL_SERVER_ERROR,
++            `Error: documentStoreServices.updateDocumentStoreLoaderStatus - ${getErrorMessage(error)}`
++        )
++    }
++}
++
+ // remove null bytes from chunk content
+ const sanitizeChunkContent = (content: string) => {
+     // eslint-disable-next-line no-control-regex
+
+From fd99e5027e7ba92c72a22278243ae0c32b9d3014 Mon Sep 17 00:00:00 2001
+From: russelj1 <jonnie@invotra.co>
+Date: Tue, 22 Jul 2025 17:38:20 +0100
+Subject: [PATCH 2/4] Update
+ packages/components/nodes/documentloaders/Github/Github.ts
+
+Co-authored-by: Max Lovric  <mmax@hotmail.co.uk>
+---
+ packages/components/nodes/documentloaders/Github/Github.ts | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Github/Github.ts b/packages/components/nodes/documentloaders/Github/Github.ts
+index 50c3a308917..164b0218cac 100644
+--- a/packages/components/nodes/documentloaders/Github/Github.ts
++++ b/packages/components/nodes/documentloaders/Github/Github.ts
+@@ -203,10 +203,7 @@ class Github_DocumentLoaders implements INode {
+             const storeId = options.storeId as string
+ 
+             // If preview mode is enabled, limit the number of chunks processed
+-            let previewLimit = Infinity
+-            if (options.preview) {
+-                previewLimit = 1
+-            }
++            const previewLimit = options.preview ? 1 : Infinity;
+ 
+             let seq = 0
+             let totalChars = 0
+
+From ed7b6688b5bccf1ed2db69644eee88c9c13f4751 Mon Sep 17 00:00:00 2001
+From: Jonnie Russell <jonnie@invotra.co>
+Date: Tue, 22 Jul 2025 17:47:33 +0100
+Subject: [PATCH 3/4] Updated following code review
+
+---
+ packages/components/nodes/documentloaders/Github/Github.ts | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Github/Github.ts b/packages/components/nodes/documentloaders/Github/Github.ts
+index 164b0218cac..85744e477e6 100644
+--- a/packages/components/nodes/documentloaders/Github/Github.ts
++++ b/packages/components/nodes/documentloaders/Github/Github.ts
+@@ -202,14 +202,10 @@ class Github_DocumentLoaders implements INode {
+             const loaderId = options.loaderId as string
+             const storeId = options.storeId as string
+ 
+-            // If preview mode is enabled, limit the number of chunks processed
+-            const previewLimit = options.preview ? 1 : Infinity;
+-
+             let seq = 0
+             let totalChars = 0
+ 
+-            for await (const fileDoc of (loader as any).loadAsStream()) {
+-                // fileDoc.pageContent = handleEscapeCharacters(fileDoc.pageContent ?? '', false)
++            for await (const fileDoc of (loader as GithubRepoLoader).loadAsStream()) {
+                 const doc = textSplitter ? await (textSplitter as TextSplitter).splitDocuments([fileDoc]) : [fileDoc]
+                 if (options.preview) {
+                     // As we are in preview mode, just return the data don't save
+
+From a48c2f92859627b7007f093f72222184598881a8 Mon Sep 17 00:00:00 2001
+From: Jonnie Russell <jonnie@invotra.co>
+Date: Thu, 24 Jul 2025 16:19:37 +0100
+Subject: [PATCH 4/4] Updatae formatting
+
+---
+ packages/server/src/services/documentstore/index.ts | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index ab5a9b65b3c..8f6b6c5e32b 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -824,7 +824,7 @@ export const processLoader = async ({
+             throw new Error('Unauthorized access')
+         }
+     }
+-    
++
+     // Check for existing loader and if stream is enabled
+     if (entity.loaders && entity.loaders.length > 0) {
+         const existingLoaders = JSON.parse(entity.loaders)
+@@ -833,13 +833,7 @@ export const processLoader = async ({
+         // Check if the loader is configured for streaming
+         if (existingLoader && existingLoader.loaderConfig?.stream) {
+             // Handle streaming
+-            await _streamChunksToStorage(
+-                appDataSource,
+-                componentNodes,
+-                data,
+-                entity,
+-                docLoaderId
+-            )
++            await _streamChunksToStorage(appDataSource, componentNodes, data, entity, docLoaderId)
+         }
+     } else {
+         await _saveChunksToStorage(

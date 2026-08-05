@@ -1,0 +1,34 @@
+From a715ab251b11df38d856dbd58f990c3434dba9f3 Mon Sep 17 00:00:00 2001
+From: Puneet Divedi <sd9501242@gmail.com>
+Date: Fri, 17 Jul 2026 15:49:03 +0530
+Subject: [PATCH] fix: add explicit TypeScript rootDir settings
+
+---
+ packages/components/tsconfig.json | 1 +
+ packages/server/tsconfig.json     | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/packages/components/tsconfig.json b/packages/components/tsconfig.json
+index edac0ceea87..c2d602b2817 100644
+--- a/packages/components/tsconfig.json
++++ b/packages/components/tsconfig.json
+@@ -4,6 +4,7 @@
+         "experimentalDecorators": true /* Enable experimental support for TC39 stage 2 draft decorators. */,
+         "emitDecoratorMetadata": true /* Emit design-type metadata for decorated declarations in source files. */,
+         "target": "ES2020", // or higher
++        "rootDir": "./",
+         "outDir": "./dist/",
+         "resolveJsonModule": true,
+         "esModuleInterop": true /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */,
+diff --git a/packages/server/tsconfig.json b/packages/server/tsconfig.json
+index fa2e8b56fdd..a3c0bc2b862 100644
+--- a/packages/server/tsconfig.json
++++ b/packages/server/tsconfig.json
+@@ -5,6 +5,7 @@
+         "experimentalDecorators": true /* Enable experimental support for TC39 stage 2 draft decorators. */,
+         "emitDecoratorMetadata": true /* Emit design-type metadata for decorated declarations in source files. */,
+         "module": "commonjs" /* Specify what module code is generated. */,
++        "rootDir": "./src",
+         "outDir": "dist",
+         "esModuleInterop": true /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */,
+         "forceConsistentCasingInFileNames": true /* Ensure that casing is correct in imports. */,

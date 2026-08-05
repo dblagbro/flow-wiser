@@ -1,0 +1,284 @@
+From f1af2a4aaa6afd66afc2e658e13f00d4996f5aea Mon Sep 17 00:00:00 2001
+From: TokenMixAi <267831043+TokenMixAi@users.noreply.github.com>
+Date: Mon, 15 Jun 2026 11:03:53 +0000
+Subject: [PATCH] Add TokenMix chat model node
+
+---
+ .../credentials/TokenMixApi.credential.ts     |  25 +++
+ .../chatmodels/ChatTokenMix/ChatTokenMix.ts   | 194 ++++++++++++++++++
+ .../ChatTokenMix/FlowiseChatTokenMix.ts       |  20 ++
+ .../chatmodels/ChatTokenMix/tokenmix.svg      |   5 +
+ 4 files changed, 244 insertions(+)
+ create mode 100644 packages/components/credentials/TokenMixApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatTokenMix/ChatTokenMix.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatTokenMix/FlowiseChatTokenMix.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatTokenMix/tokenmix.svg
+
+diff --git a/packages/components/credentials/TokenMixApi.credential.ts b/packages/components/credentials/TokenMixApi.credential.ts
+new file mode 100644
+index 00000000000..02b07601b43
+--- /dev/null
++++ b/packages/components/credentials/TokenMixApi.credential.ts
+@@ -0,0 +1,25 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class TokenMixApiAuth implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'TokenMix API Key'
++        this.name = 'tokenMixApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'TokenMix API Key',
++                name: 'tokenMixApiKey',
++                type: 'password',
++                description: 'API Key'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: TokenMixApiAuth }
+diff --git a/packages/components/nodes/chatmodels/ChatTokenMix/ChatTokenMix.ts b/packages/components/nodes/chatmodels/ChatTokenMix/ChatTokenMix.ts
+new file mode 100644
+index 00000000000..b27bfc8652b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatTokenMix/ChatTokenMix.ts
+@@ -0,0 +1,194 @@
++import { ChatOpenAI as LangchainChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { BaseCache } from '@langchain/core/caches'
++import { ICommonObject, IMultiModalOption, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { ChatTokenMix } from './FlowiseChatTokenMix'
++
++class ChatTokenMix_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatTokenMix'
++        this.name = 'chatTokenMix'
++        this.version = 1.0
++        this.type = 'ChatTokenMix'
++        this.icon = 'tokenmix.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around TokenMix OpenAI-compatible Inference API'
++        this.baseClasses = [this.type, ...getBaseClasses(LangchainChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['tokenMixApi'],
++            optional: true
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                placeholder: 'deepseek/deepseek-v4-pro'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.9,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Allow Image Uploads',
++                name: 'allowImageUploads',
++                type: 'boolean',
++                description:
++                    'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Path',
++                name: 'basepath',
++                type: 'string',
++                optional: true,
++                default: 'https://api.tokenmix.ai/v1',
++                description: 'Override the default base URL for the API, e.g., "https://api.example.com/v2/',
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                description: 'Default headers to include with every request to the API.',
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const basePath = (nodeData.inputs?.basepath as string) || 'https://api.tokenmix.ai/v1'
++        const baseOptions = nodeData.inputs?.baseOptions
++        const cache = nodeData.inputs?.cache as BaseCache
++        const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const tokenMixApiKey = getCredentialParam('tokenMixApiKey', credentialData, nodeData)
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            modelName,
++            openAIApiKey: tokenMixApiKey,
++            apiKey: tokenMixApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatTokenMix's BaseOptions: " + exception)
++            }
++        }
++
++        if (basePath || parsedBaseOptions) {
++            obj.configuration = {
++                baseURL: basePath,
++                defaultHeaders: parsedBaseOptions
++            }
++        }
++
++        const multiModalOption: IMultiModalOption = {
++            image: {
++                allowImageUploads: allowImageUploads ?? false
++            }
++        }
++
++        const model = new ChatTokenMix(nodeData.id, obj)
++        model.setMultiModalOption(multiModalOption)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatTokenMix_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatTokenMix/FlowiseChatTokenMix.ts b/packages/components/nodes/chatmodels/ChatTokenMix/FlowiseChatTokenMix.ts
+new file mode 100644
+index 00000000000..1d5d8af7c3b
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatTokenMix/FlowiseChatTokenMix.ts
+@@ -0,0 +1,20 @@
++import { ChatOpenAI as LangchainChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { IMultiModalOption, IVisionChatModal } from '../../../src'
++
++export class ChatTokenMix extends LangchainChatOpenAI implements IVisionChatModal {
++    configuredModel: string
++    configuredMaxToken?: number
++    multiModalOption: IMultiModalOption
++    id: string
++
++    constructor(id: string, fields?: ChatOpenAIFields) {
++        super(fields)
++        this.id = id
++        this.configuredModel = fields?.modelName ?? ''
++        this.configuredMaxToken = fields?.maxTokens
++    }
++
++    setMultiModalOption(multiModalOption: IMultiModalOption): void {
++        this.multiModalOption = multiModalOption
++    }
++}
+diff --git a/packages/components/nodes/chatmodels/ChatTokenMix/tokenmix.svg b/packages/components/nodes/chatmodels/ChatTokenMix/tokenmix.svg
+new file mode 100644
+index 00000000000..f5bf6d1045f
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatTokenMix/tokenmix.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
++  <rect width="64" height="64" rx="14" fill="#0B1221"/>
++  <path d="M18 22h28v6H35v22h-6V28H18z" fill="#4F8CFF"/>
++  <circle cx="46" cy="44" r="6" fill="#7CF5C4"/>
++</svg>

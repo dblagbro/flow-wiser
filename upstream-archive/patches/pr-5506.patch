@@ -1,0 +1,245 @@
+From aa4899923e635975781b69e97b31196df9ac7da5 Mon Sep 17 00:00:00 2001
+From: chungyau97 <chungyau97@gmail.com>
+Date: Mon, 24 Nov 2025 15:10:15 +0800
+Subject: [PATCH 1/4] chore(docker\docker-compose.yml): standardize to single
+ non-root Dockerfile
+
+---
+ docker/.env.example       | 8 ++++----
+ docker/docker-compose.yml | 6 +++---
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index 2240edeb8a5..73110b90e94 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -6,7 +6,7 @@ PORT=3000
+ ############################################## DATABASE ####################################################
+ ############################################################################################################
+ 
+-DATABASE_PATH=/root/.flowise
++DATABASE_PATH=/home/node/.flowise
+ # DATABASE_TYPE=postgres
+ # DATABASE_PORT=5432
+ # DATABASE_HOST=""
+@@ -23,7 +23,7 @@ DATABASE_PATH=/root/.flowise
+ ############################################################################################################
+ 
+ # SECRETKEY_STORAGE_TYPE=local #(local | aws)
+-SECRETKEY_PATH=/root/.flowise
++SECRETKEY_PATH=/home/node/.flowise
+ # FLOWISE_SECRETKEY_OVERWRITE=myencryptionkey # (if you want to overwrite the secret key)
+ # SECRETKEY_AWS_ACCESS_KEY=<your-access-key>
+ # SECRETKEY_AWS_SECRET_KEY=<your-secret-key>
+@@ -36,7 +36,7 @@ SECRETKEY_PATH=/root/.flowise
+ ############################################################################################################
+ 
+ # DEBUG=true
+-LOG_PATH=/root/.flowise/logs
++LOG_PATH=/home/node/.flowise/logs
+ # LOG_LEVEL=info #(error | warn | info | verbose | debug)
+ # LOG_SANITIZE_BODY_FIELDS=password,pwd,pass,secret,token,apikey,api_key,accesstoken,access_token,refreshtoken,refresh_token,clientsecret,client_secret,privatekey,private_key,secretkey,secret_key,auth,authorization,credential,credentials
+ # LOG_SANITIZE_HEADER_FIELDS=authorization,x-api-key,x-auth-token,cookie
+@@ -50,7 +50,7 @@ LOG_PATH=/root/.flowise/logs
+ ############################################################################################################
+ 
+ # STORAGE_TYPE=local (local | s3 | gcs)
+-BLOB_STORAGE_PATH=/root/.flowise/storage
++BLOB_STORAGE_PATH=/home/node/.flowise/storage
+ # S3_STORAGE_BUCKET_NAME=flowise
+ # S3_STORAGE_ACCESS_KEY_ID=<your-access-key>
+ # S3_STORAGE_SECRET_ACCESS_KEY=<your-secret-key>
+diff --git a/docker/docker-compose.yml b/docker/docker-compose.yml
+index e43283b15e5..2c61336f337 100644
+--- a/docker/docker-compose.yml
++++ b/docker/docker-compose.yml
+@@ -2,7 +2,7 @@ version: '3.1'
+ 
+ services:
+     flowise:
+-        image: flowiseai/flowise:latest
++        image: flowiseaiyau/test:latest
+         restart: always
+         environment:
+             - PORT=${PORT}
+@@ -142,5 +142,5 @@ services:
+             retries: 5
+             start_period: 30s
+         volumes:
+-            - ~/.flowise:/root/.flowise
+-        entrypoint: /bin/sh -c "sleep 3; flowise start"
++            - ~/.flowise:/home/node/.flowise
++        entrypoint: /bin/sh -c "sleep 3; pnpm start"
+
+From d5bc57a4a07c2b5ea233c3465830a254ad55b84b Mon Sep 17 00:00:00 2001
+From: chungyau97 <chungyau97@gmail.com>
+Date: Mon, 24 Nov 2025 18:35:34 +0800
+Subject: [PATCH 2/4] fix: node user lacks write permissions to ~/.flowise
+
+---
+ Dockerfile                | 4 +++-
+ docker/docker-compose.yml | 7 +++++--
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index 70041f41d47..73166b96dd6 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -35,7 +35,9 @@ RUN pnpm install && \
+     pnpm build
+ 
+ # Give the node user ownership of the application files
+-RUN chown -R node:node .
++RUN chown -R node:node . && \
++    mkdir -p /home/node/.flowise && \
++    chown -R node:node /home/node/.flowise
+ 
+ # Switch to non-root user (node user already exists in node:20-alpine)
+ USER node
+diff --git a/docker/docker-compose.yml b/docker/docker-compose.yml
+index 2c61336f337..a0c0c7d5fa0 100644
+--- a/docker/docker-compose.yml
++++ b/docker/docker-compose.yml
+@@ -2,7 +2,7 @@ version: '3.1'
+ 
+ services:
+     flowise:
+-        image: flowiseaiyau/test:latest
++        image: flowiseaiyau/test:0.0.2
+         restart: always
+         environment:
+             - PORT=${PORT}
+@@ -142,5 +142,8 @@ services:
+             retries: 5
+             start_period: 30s
+         volumes:
+-            - ~/.flowise:/home/node/.flowise
++            - flowise_data:/home/node/.flowise
+         entrypoint: /bin/sh -c "sleep 3; pnpm start"
++
++volumes:
++    flowise_data:
+\ No newline at end of file
+
+From a8338de4e6df8aec6bd28994bbe99c697c1a2a86 Mon Sep 17 00:00:00 2001
+From: chungyau97 <chungyau97@gmail.com>
+Date: Tue, 25 Nov 2025 17:25:20 +0800
+Subject: [PATCH 3/4] chore(docker/Dockerfile): remove as part of Dockerfile
+ standardization
+
+---
+ docker/Dockerfile | 25 -------------------------
+ 1 file changed, 25 deletions(-)
+ delete mode 100644 docker/Dockerfile
+
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+deleted file mode 100644
+index 82a55d6a2b4..00000000000
+--- a/docker/Dockerfile
++++ /dev/null
+@@ -1,25 +0,0 @@
+-# Stage 1: Build stage
+-FROM node:20-alpine AS build
+-
+-USER root
+-
+-# Skip downloading Chrome for Puppeteer (saves build time)
+-ENV PUPPETEER_SKIP_DOWNLOAD=true
+-
+-# Install latest Flowise globally (specific version can be set: flowise@1.0.0)
+-RUN npm install -g flowise
+-
+-# Stage 2: Runtime stage
+-FROM node:20-alpine
+-
+-# Install runtime dependencies
+-RUN apk add --no-cache chromium git python3 py3-pip make g++ build-base cairo-dev pango-dev curl
+-
+-# Set the environment variable for Puppeteer to find Chromium
+-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+-
+-# Copy Flowise from the build stage
+-COPY --from=build /usr/local/lib/node_modules /usr/local/lib/node_modules
+-COPY --from=build /usr/local/bin /usr/local/bin
+-
+-ENTRYPOINT ["flowise", "start"]
+
+From 7aae4080ae3a018911415ad88b2930811304692b Mon Sep 17 00:00:00 2001
+From: chungyau97 <chungyau97@gmail.com>
+Date: Wed, 26 Nov 2025 17:37:19 +0800
+Subject: [PATCH 4/4] chore(docker/docker-compose-queue-prebuilt.yml):
+ standardize queue mode to single non-root Dockerfile
+
+---
+ docker/docker-compose-queue-prebuilt.yml | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/docker/docker-compose-queue-prebuilt.yml b/docker/docker-compose-queue-prebuilt.yml
+index 6d694159001..6ed2005a306 100644
+--- a/docker/docker-compose-queue-prebuilt.yml
++++ b/docker/docker-compose-queue-prebuilt.yml
+@@ -13,17 +13,15 @@ services:
+         restart: always
+ 
+     flowise:
+-        image: flowiseai/flowise:latest
++        image: flowiseaiyau/test:0.0.2
+         container_name: flowise-main
+         restart: always
+         ports:
+             - '${PORT:-3000}:${PORT:-3000}'
+-        volumes:
+-            - ~/.flowise:/root/.flowise
+         environment:
+             # --- Essential Flowise Vars ---
+             - PORT=${PORT:-3000}
+-            - DATABASE_PATH=${DATABASE_PATH:-/root/.flowise}
++            - DATABASE_PATH=${DATABASE_PATH}
+             - DATABASE_TYPE=${DATABASE_TYPE}
+             - DATABASE_PORT=${DATABASE_PORT}
+             - DATABASE_HOST=${DATABASE_HOST}
+@@ -154,22 +152,22 @@ services:
+             timeout: 5s
+             retries: 5
+             start_period: 30s
+-        entrypoint: /bin/sh -c "sleep 3; flowise start"
++        volumes:
++            - flowise_data:/home/node/.flowise
++        entrypoint: /bin/sh -c "sleep 3; pnpm start"
+         depends_on:
+             - redis
+         networks:
+             - flowise-net
+ 
+     flowise-worker:
+-        image: flowiseai/flowise-worker:latest
++        image: flowiseaiyau/test:0.0.2
+         container_name: flowise-worker
+         restart: always
+-        volumes:
+-            - ~/.flowise:/root/.flowise
+         environment:
+             # --- Essential Flowise Vars ---
+             - WORKER_PORT=${WORKER_PORT:-5566}
+-            - DATABASE_PATH=${DATABASE_PATH:-/root/.flowise}
++            - DATABASE_PATH=${DATABASE_PATH}
+             - DATABASE_TYPE=${DATABASE_TYPE}
+             - DATABASE_PORT=${DATABASE_PORT}
+             - DATABASE_HOST=${DATABASE_HOST}
+@@ -300,6 +298,8 @@ services:
+             timeout: 5s
+             retries: 5
+             start_period: 30s
++        volumes:
++            - flowise_data:/home/node/.flowise
+         entrypoint: /bin/sh -c "node /app/healthcheck/healthcheck.js & sleep 5 && pnpm run start-worker"
+         depends_on:
+             - redis
+@@ -310,6 +310,7 @@ services:
+ volumes:
+     redis_data:
+         driver: local
++    flowise_data:
+ 
+ networks:
+     flowise-net:

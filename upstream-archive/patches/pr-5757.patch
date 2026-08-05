@@ -1,0 +1,221 @@
+From dff961adead0e8b235977f998d455d1d8277d107 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 14 Feb 2026 23:00:15 +0530
+Subject: [PATCH 1/4] feat: #5639 Add Check/Uncheck All buttons to credential
+ sharing
+
+---
+ .../dialog/ShareWithWorkspaceDialog.jsx       | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+index f9ba47e73fd..9502b5e57b1 100644
+--- a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+@@ -47,6 +47,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+     const [outputSchema, setOutputSchema] = useState([])
+ 
+     const [name, setName] = useState('')
++    const [selectAll, setSelectAll] = useState(false)
+ 
+     const onRowUpdate = (newRow) => {
+         setTimeout(() => {
+@@ -116,6 +117,17 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+         return () => dispatch({ type: HIDE_CANVAS_DIALOG })
+     }, [show, dispatch])
+ 
++    const handleSelectAll = () => {
++        const allIds = outputSchema.map((row) => row.id)
++        setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: true })))
++        setSelectAll(true)
++    }
++
++    const handleDeselectAll = () => {
++        setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: false })))
++        setSelectAll(false)
++    }
++
+     const shareItemRequest = async () => {
+         try {
+             const obj = {
+@@ -186,6 +198,14 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+                     </Stack>
+                     <OutlinedInput id='name' type='string' disabled={true} fullWidth placeholder={name} value={name} name='name' />
+                 </Box>
++                <Stack direction='row' justifyContent='space-between' sx={{ p: 2, pb: 1 }}>
++                    <Button size='small' variant={selectAll ? 'outlined' : 'contained'} onClick={handleSelectAll}>
++                        Check All ({outputSchema.length})
++                    </Button>
++                    <Button size='small' variant='outlined' onClick={handleDeselectAll}>
++                        Uncheck All
++                    </Button>
++                </Stack>
+                 <Box sx={{ p: 2 }}>
+                     <Grid columns={columns} rows={outputSchema} onRowUpdate={onRowUpdate} />
+                 </Box>
+
+From 4b94558ea14997ffe80fa6caee28dcab9d334262 Mon Sep 17 00:00:00 2001
+From: KUNDAN SOLANKI <116949800+KUNDAN1334@users.noreply.github.com>
+Date: Sat, 14 Feb 2026 23:10:04 +0530
+Subject: [PATCH 2/4] Update
+ packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ .../ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+index 9502b5e57b1..dbaae90fea9 100644
+--- a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+@@ -202,7 +202,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+                     <Button size='small' variant={selectAll ? 'outlined' : 'contained'} onClick={handleSelectAll}>
+                         Check All ({outputSchema.length})
+                     </Button>
+-                    <Button size='small' variant='outlined' onClick={handleDeselectAll}>
++                    <Button size='small' variant={selectAll ? 'contained' : 'outlined'} onClick={handleDeselectAll}>
+                         Uncheck All
+                     </Button>
+                 </Stack>
+
+From c7ec48dfe24d6457493dd784aeb8a41ae43891c3 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sun, 15 Feb 2026 00:11:27 +0530
+Subject: [PATCH 3/4] Fixes Applied
+
+---
+ .../src/ui-component/dialog/ShareWithWorkspaceDialog.jsx | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+index 9502b5e57b1..ea2b8a91257 100644
+--- a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+@@ -117,8 +117,15 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+         return () => dispatch({ type: HIDE_CANVAS_DIALOG })
+     }, [show, dispatch])
+ 
++    useEffect(() => {
++        if (outputSchema.length > 0) {
++            setSelectAll(outputSchema.every((row) => row.shared))
++        } else {
++            setSelectAll(false)
++        }
++    }, [outputSchema])
++
+     const handleSelectAll = () => {
+-        const allIds = outputSchema.map((row) => row.id)
+         setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: true })))
+         setSelectAll(true)
+     }
+
+From 05cef97e6ddb7fcd92fe4edd96b31abf26e341da Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 18 Apr 2026 11:56:46 +0530
+Subject: [PATCH 4/4] feat: replace check/uncheck buttons with native DataGrid
+ checkbox selection
+
+---
+ .../dialog/ShareWithWorkspaceDialog.jsx       | 34 ++++---------------
+ packages/ui/src/ui-component/grid/Grid.jsx    |  9 +++--
+ 2 files changed, 14 insertions(+), 29 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+index ea8b9d58503..a7b3a0ec94f 100644
+--- a/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ShareWithWorkspaceDialog.jsx
+@@ -47,7 +47,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+     const [outputSchema, setOutputSchema] = useState([])
+ 
+     const [name, setName] = useState('')
+-    const [selectAll, setSelectAll] = useState(false)
++    const [selectedRowIds, setSelectedRowIds] = useState([])
+ 
+     const onRowUpdate = (newRow) => {
+         setTimeout(() => {
+@@ -62,6 +62,12 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+         })
+     }
+ 
++    const handleRowSelectionModelChange = (newSelectionModel) => {
++        const selectedIds = Array.isArray(newSelectionModel) ? newSelectionModel : []
++        setSelectedRowIds(selectedIds)
++        setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: selectedIds.includes(row.id) })))
++    }
++
+     const columns = useMemo(
+         () => [
+             { field: 'workspaceName', headerName: 'Workspace', editable: false, flex: 1 },
+@@ -117,24 +123,6 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+         return () => dispatch({ type: HIDE_CANVAS_DIALOG })
+     }, [show, dispatch])
+ 
+-    useEffect(() => {
+-        if (outputSchema.length > 0) {
+-            setSelectAll(outputSchema.every((row) => row.shared))
+-        } else {
+-            setSelectAll(false)
+-        }
+-    }, [outputSchema])
+-
+-    const handleSelectAll = () => {
+-        setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: true })))
+-        setSelectAll(true)
+-    }
+-
+-    const handleDeselectAll = () => {
+-        setOutputSchema((prev) => prev.map((row) => ({ ...row, shared: false })))
+-        setSelectAll(false)
+-    }
+-
+     const shareItemRequest = async () => {
+         try {
+             const obj = {
+@@ -205,14 +193,6 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) =>
+                     </Stack>
+                     <OutlinedInput id='name' type='string' disabled={true} fullWidth placeholder={name} value={name} name='name' />
+                 </Box>
+-                <Stack direction='row' justifyContent='space-between' sx={{ p: 2, pb: 1 }}>
+-                    <Button size='small' variant={selectAll ? 'outlined' : 'contained'} onClick={handleSelectAll}>
+-                        Check All ({outputSchema.length})
+-                    </Button>
+-                    <Button size='small' variant={selectAll ? 'contained' : 'outlined'} onClick={handleDeselectAll}>
+-                        Uncheck All
+-                    </Button>
+-                </Stack>
+                 <Box sx={{ p: 2 }}>
+                     <Grid columns={columns} rows={outputSchema} onRowUpdate={onRowUpdate} />
+                 </Box>
+diff --git a/packages/ui/src/ui-component/grid/Grid.jsx b/packages/ui/src/ui-component/grid/Grid.jsx
+index 66251597e92..06792f86c0a 100644
+--- a/packages/ui/src/ui-component/grid/Grid.jsx
++++ b/packages/ui/src/ui-component/grid/Grid.jsx
+@@ -1,7 +1,7 @@
+ import PropTypes from 'prop-types'
+ import { DataGrid } from '@mui/x-data-grid'
+ 
+-export const Grid = ({ columns, rows, style, disabled = false, onRowUpdate }) => {
++export const Grid = ({ columns, rows, style, disabled = false, onRowUpdate, rowSelectionModel, onRowSelectionModelChange }) => {
+     const handleProcessRowUpdate = (newRow) => {
+         onRowUpdate(newRow)
+         return newRow
+@@ -19,6 +19,9 @@ export const Grid = ({ columns, rows, style, disabled = false, onRowUpdate }) =>
+                         onProcessRowUpdateError={(error) => console.error(error)}
+                         rows={rows}
+                         columns={columns}
++                        checkboxSelection
++                        rowSelectionModel={rowSelectionModel}
++                        onRowSelectionModelChange={onRowSelectionModelChange}
+                     />
+                 </div>
+             )}
+@@ -31,5 +34,7 @@ Grid.propTypes = {
+     columns: PropTypes.array,
+     style: PropTypes.any,
+     disabled: PropTypes.bool,
+-    onRowUpdate: PropTypes.func
++    onRowUpdate: PropTypes.func,
++    rowSelectionModel: PropTypes.array,
++    onRowSelectionModelChange: PropTypes.func
+ }

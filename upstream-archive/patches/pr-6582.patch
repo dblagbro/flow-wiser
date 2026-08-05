@@ -1,0 +1,623 @@
+From 62470cf24ebd57f80460735ee377623152e42c26 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Mon, 29 Jun 2026 17:39:26 -0700
+Subject: [PATCH 1/5] feat(canvas): auto-switch workspace when opening a flow
+ URL from another member workspace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In multi-user mode, chatflows/agentflows are scoped to the user's *active*
+workspace, and the canvas load is scoped to that active workspace. So when a
+user opens a flow URL (`/canvas/:id`, `/agentcanvas/:id`, `/v2/agentcanvas/:id`)
+whose flow lives in a workspace they are a *member of* but which isn't their
+active workspace, the canvas dead-ends on:
+
+    Failed to retrieve Chatflow ... Chatflow <id> not found in the database!
+
+and the user has to manually figure out which workspace owns it and switch.
+Since `chat_flow.id` is a globally-unique UUID, it maps to exactly one owning
+workspace, so the UI can resolve it and switch automatically.
+
+Backend: add a membership-gated `GET /chatflows/resolve-workspace/:id` resolver
+that returns `{ workspaceId }` only when the requesting user is a member of the
+flow's workspace. Every other branch (missing flow, non-member, API-key caller
+with no user) returns the *identical* 404 as `getChatflowById`, so this
+preserves the existing "Protect Against Cross-Workspace Chatflow Disclosure"
+hardening and never reveals that a flow exists in a workspace the caller cannot
+access.
+
+Frontend: on the canvas load 404, a shared `useFlowWorkspaceAutoSwitch` hook
+resolves the owning workspace and — only if it's in the user's
+`assignedWorkspaces` and isn't already active — switches to it and re-fetches
+the flow, staying on the same canvas URL. Falls back to the normal error for a
+genuine 404 / non-member. Guarded to attempt at most once per flow id.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ .../server/src/controllers/chatflows/index.ts | 20 ++++++++
+ packages/server/src/routes/chatflows/index.ts |  8 +++
+ .../server/src/services/chatflows/index.ts    | 46 +++++++++++++++++
+ packages/ui/src/api/chatflows.js              |  5 ++
+ .../src/hooks/useFlowWorkspaceAutoSwitch.jsx  | 49 +++++++++++++++++++
+ packages/ui/src/views/agentflowsv2/Canvas.jsx |  9 +++-
+ packages/ui/src/views/canvas/index.jsx        |  9 +++-
+ 7 files changed, 144 insertions(+), 2 deletions(-)
+ create mode 100644 packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+
+diff --git a/packages/server/src/controllers/chatflows/index.ts b/packages/server/src/controllers/chatflows/index.ts
+index af3f76d84f3..4d9e5bc9aa9 100644
+--- a/packages/server/src/controllers/chatflows/index.ts
++++ b/packages/server/src/controllers/chatflows/index.ts
+@@ -143,6 +143,25 @@ const getChatflowById = async (req: Request, res: Response, next: NextFunction)
+     }
+ }
+ 
++// Resolve the owning workspace of a flow for the requesting user IFF they are a member of it (else an
++// identical 404 — no cross-workspace disclosure). Used by the UI to auto-switch the active workspace when a
++// user opens a flow URL that lives in a workspace they belong to but isn't active. UI-only: API-key callers
++// have no req.user.id, so the service treats them as non-members (404).
++const getChatflowWorkspace = async (req: Request, res: Response, next: NextFunction) => {
++    try {
++        if (typeof req.params === 'undefined' || !req.params.id) {
++            throw new InternalFlowiseError(
++                StatusCodes.PRECONDITION_FAILED,
++                `Error: chatflowsController.getChatflowWorkspace - id not provided!`
++            )
++        }
++        const apiResponse = await chatflowsService.resolveChatflowWorkspace(req.params.id, req.user?.id)
++        return res.json(apiResponse)
++    } catch (error) {
++        next(error)
++    }
++}
++
+ const saveChatflow = async (req: Request, res: Response, next: NextFunction) => {
+     try {
+         if (!req.body) {
+@@ -444,6 +463,7 @@ export default {
+     getAllChatflows,
+     getChatflowByApiKey,
+     getChatflowById,
++    getChatflowWorkspace,
+     saveChatflow,
+     updateChatflow,
+     getSinglePublicChatflow,
+diff --git a/packages/server/src/routes/chatflows/index.ts b/packages/server/src/routes/chatflows/index.ts
+index 2dfdfaab64f..0ceef7741c9 100644
+--- a/packages/server/src/routes/chatflows/index.ts
++++ b/packages/server/src/routes/chatflows/index.ts
+@@ -21,6 +21,14 @@ router.get(
+     checkAnyPermission('chatflows:view,chatflows:update,chatflows:delete,agentflows:view,agentflows:update,agentflows:delete'),
+     chatflowsController.getChatflowById
+ )
++// Resolve the owning workspace of a flow for the current user (membership-gated; identical 404 otherwise).
++// Lets the UI auto-switch the active workspace when opening a flow URL from another (member) workspace.
++// Two-segment path so it never collides with the single-segment '/:id' matcher above.
++router.get(
++    '/resolve-workspace/:id',
++    checkAnyPermission('chatflows:view,chatflows:update,chatflows:delete,agentflows:view,agentflows:update,agentflows:delete'),
++    chatflowsController.getChatflowWorkspace
++)
+ router.get(['/apikey/', '/apikey/:apikey'], chatflowsController.getChatflowByApiKey)
+ 
+ // UPDATE
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 140cc9d31a6..2ab21f22126 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -12,6 +12,7 @@ import { ChatMessageFeedback } from '../../database/entities/ChatMessageFeedback
+ import { ScheduleTriggerType } from '../../database/entities/ScheduleRecord'
+ import { UpsertHistory } from '../../database/entities/UpsertHistory'
+ import { Workspace } from '../../enterprise/database/entities/workspace.entity'
++import { WorkspaceUser } from '../../enterprise/database/entities/workspace-user.entity'
+ import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+@@ -304,6 +305,50 @@ const getChatflowById = async (chatflowId: string, workspaceId?: string): Promis
+     }
+ }
+ 
++// Resolve which workspace owns a flow, but ONLY for a caller who is a member of that workspace. A chatflow
++// id is a globally-unique UUID, so it maps to exactly one owning workspace; the UI uses this to auto-switch
++// the active workspace when a user opens a flow URL that lives in a workspace they belong to but isn't
++// currently active. SECURITY: every failure mode returns the IDENTICAL 404 as getChatflowById, so this never
++// discloses that a flow exists in a workspace the caller cannot access. API-key callers (no userId) -> 404.
++const resolveChatflowWorkspace = async (chatflowId: string, userId?: string): Promise<{ workspaceId: string }> => {
++    const notFound = () => new InternalFlowiseError(StatusCodes.NOT_FOUND, `Chatflow ${chatflowId} not found in the database!`)
++    try {
++        if (!isValidUUID(chatflowId)) {
++            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, ChatflowErrorMessage.INVALID_CHATFLOW_ID)
++        }
++        if (!userId) {
++            throw notFound()
++        }
++        const appServer = getRunningExpressApp()
++        // Look up the flow across ALL workspaces (no workspace filter), then gate strictly on membership.
++        const chatflow = await appServer.AppDataSource.getRepository(ChatFlow).findOne({
++            where: { id: chatflowId },
++            select: ['id', 'workspaceId']
++        })
++        if (!chatflow) {
++            throw notFound()
++        }
++        // Direct membership check so the no-leak guarantee holds: identical response whether the flow is
++        // missing or the user simply isn't a member of its workspace.
++        const membership = await appServer.AppDataSource.getRepository(WorkspaceUser).findOneBy({
++            workspaceId: chatflow.workspaceId,
++            userId
++        })
++        if (!membership) {
++            throw notFound()
++        }
++        return { workspaceId: chatflow.workspaceId }
++    } catch (error) {
++        if (error instanceof InternalFlowiseError) {
++            throw error
++        }
++        throw new InternalFlowiseError(
++            StatusCodes.INTERNAL_SERVER_ERROR,
++            `Error: chatflowsService.resolveChatflowWorkspace - ${getErrorMessage(error)}`
++        )
++    }
++}
++
+ /** Resolves a chatflow only if it belongs to the given workspace; rejects when workspaceId is missing (prevents unscoped lookup). */
+ const getChatflowByIdForWorkspace = async (chatflowId: string, workspaceId: string | undefined): Promise<any> => {
+     if (!workspaceId) {
+@@ -702,6 +747,7 @@ export default {
+     getChatflowByApiKey,
+     getChatflowById,
+     getChatflowByIdForWorkspace,
++    resolveChatflowWorkspace,
+     saveChatflow,
+     updateChatflow,
+     getSinglePublicChatbotConfig,
+diff --git a/packages/ui/src/api/chatflows.js b/packages/ui/src/api/chatflows.js
+index ba56a5ff0e0..78e7d7c314b 100644
+--- a/packages/ui/src/api/chatflows.js
++++ b/packages/ui/src/api/chatflows.js
+@@ -8,6 +8,10 @@ const getSpecificChatflow = (id) => client.get(`/chatflows/${id}`)
+ 
+ const getSpecificChatflowFromPublicEndpoint = (id) => client.get(`/public-chatflows/${id}`)
+ 
++// Resolve which workspace owns a flow, but only if the current user is a member (404 otherwise). Used to
++// auto-switch the active workspace when opening a flow URL that lives in another (member) workspace.
++const getChatflowWorkspace = (id) => client.get(`/chatflows/resolve-workspace/${id}`)
++
+ const createNewChatflow = (body) => client.post(`/chatflows`, body)
+ 
+ const updateChatflow = (id, body) => client.put(`/chatflows/${id}`, body)
+@@ -39,6 +43,7 @@ export default {
+     getAllAgentflows,
+     getSpecificChatflow,
+     getSpecificChatflowFromPublicEndpoint,
++    getChatflowWorkspace,
+     createNewChatflow,
+     updateChatflow,
+     deleteChatflow,
+diff --git a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+new file mode 100644
+index 00000000000..ad5f222a6dc
+--- /dev/null
++++ b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+@@ -0,0 +1,49 @@
++import { useRef } from 'react'
++import { useDispatch, useSelector } from 'react-redux'
++
++import chatflowsApi from '@/api/chatflows'
++import workspaceApi from '@/api/workspace'
++import { workspaceSwitchSuccess } from '@/store/reducers/authSlice'
++
++// When a flow canvas fails to load with a 404 because the flow lives in a workspace the user belongs to but
++// isn't their ACTIVE workspace, resolve the flow's owning workspace (membership-gated server-side) and switch
++// to it, then let the caller re-fetch — instead of dead-ending on "Chatflow <id> not found in the database!".
++//
++// Returns an async `tryAutoSwitch(chatflowId, error, onSwitched)`:
++//   - returns true  => it switched workspaces and invoked onSwitched() (caller should suppress its error)
++//   - returns false => not applicable / not a member; caller should fall back to its normal error handling
++//
++// Security: the resolver only returns a workspaceId when the user is a member, and we additionally verify the
++// id is in the user's assignedWorkspaces before switching — so we never switch into an unauthorized workspace.
++export const useFlowWorkspaceAutoSwitch = () => {
++    const dispatch = useDispatch()
++    const currentUser = useSelector((state) => state.auth.user)
++    const attemptedRef = useRef(new Set())
++
++    const tryAutoSwitch = async (chatflowId, error, onSwitched) => {
++        const status = error?.response?.status
++        if (status !== 404 || !chatflowId) return false
++        // Only attempt once per flow id to avoid any retry loop if something goes sideways.
++        if (attemptedRef.current.has(chatflowId)) return false
++        attemptedRef.current.add(chatflowId)
++
++        try {
++            const res = await chatflowsApi.getChatflowWorkspace(chatflowId)
++            const workspaceId = res?.data?.workspaceId
++            if (!workspaceId) return false
++            if (workspaceId === currentUser?.activeWorkspaceId) return false
++            const assigned = currentUser?.assignedWorkspaces || []
++            if (!assigned.some((w) => w.id === workspaceId)) return false
++
++            const switchRes = await workspaceApi.switchWorkspace(workspaceId)
++            dispatch(workspaceSwitchSuccess(switchRes.data))
++            if (typeof onSwitched === 'function') onSwitched()
++            return true
++        } catch (e) {
++            // Resolver 404 (not a member / missing flow) or any failure → fall back to the normal error.
++            return false
++        }
++    }
++
++    return tryAutoSwitch
++}
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 962562c28c2..ba8b73df8bd 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -41,6 +41,7 @@ import chatflowsApi from '@/api/chatflows'
+ 
+ // Hooks
+ import useApi from '@/hooks/useApi'
++import { useFlowWorkspaceAutoSwitch } from '@/hooks/useFlowWorkspaceAutoSwitch'
+ import useConfirm from '@/hooks/useConfirm'
+ 
+ // icons
+@@ -125,6 +126,7 @@ const AgentflowCanvas = () => {
+     const createNewChatflowApi = useApi(chatflowsApi.createNewChatflow)
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+     const getSpecificChatflowApi = useApi(chatflowsApi.getSpecificChatflow)
++    const tryWorkspaceAutoSwitch = useFlowWorkspaceAutoSwitch()
+ 
+     // ==============================|| Events & Actions ||============================== //
+ 
+@@ -546,7 +548,12 @@ const AgentflowCanvas = () => {
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+-            errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
++            const error = getSpecificChatflowApi.error
++            // If the flow lives in another workspace the user is a member of, auto-switch + re-fetch instead
++            // of dead-ending on "not found". Falls back to the normal error if it's a genuine 404 / non-member.
++            tryWorkspaceAutoSwitch(chatflowId, error, () => getSpecificChatflowApi.request(chatflowId)).then((handled) => {
++                if (!handled) errorFailed(`Failed to retrieve ${canvasTitle}: ${error.response.data.message}`)
++            })
+         }
+ 
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 8835706ecf3..87c6b332f78 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -34,6 +34,7 @@ import chatflowsApi from '@/api/chatflows'
+ 
+ // Hooks
+ import useApi from '@/hooks/useApi'
++import { useFlowWorkspaceAutoSwitch } from '@/hooks/useFlowWorkspaceAutoSwitch'
+ import useConfirm from '@/hooks/useConfirm'
+ import { useAuth } from '@/hooks/useAuth'
+ 
+@@ -112,6 +113,7 @@ const Canvas = () => {
+     const createNewChatflowApi = useApi(chatflowsApi.createNewChatflow)
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+     const getSpecificChatflowApi = useApi(chatflowsApi.getSpecificChatflow)
++    const tryWorkspaceAutoSwitch = useFlowWorkspaceAutoSwitch()
+     const getHasChatflowChangedApi = useApi(chatflowsApi.getHasChatflowChanged)
+ 
+     // ==============================|| Events & Actions ||============================== //
+@@ -420,7 +422,12 @@ const Canvas = () => {
+             setEdges(initialFlow.edges || [])
+             dispatch({ type: SET_CHATFLOW, chatflow })
+         } else if (getSpecificChatflowApi.error) {
+-            errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
++            const error = getSpecificChatflowApi.error
++            // If the flow lives in another workspace the user is a member of, auto-switch + re-fetch instead
++            // of dead-ending on "not found". Falls back to the normal error if it's a genuine 404 / non-member.
++            tryWorkspaceAutoSwitch(chatflowId, error, () => getSpecificChatflowApi.request(chatflowId)).then((handled) => {
++                if (!handled) errorFailed(`Failed to retrieve ${canvasTitle}: ${error.response.data.message}`)
++            })
+         }
+ 
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+
+From a5565978f48ddde722ac7989ed6b7e377e8efa75 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Mon, 29 Jun 2026 19:57:19 -0700
+Subject: [PATCH 2/5] refactor(canvas): address review feedback on workspace
+ auto-switch
+
+- service: also treat a chatflow with a missing workspaceId as not-found
+  before the membership lookup (fail-fast, avoids querying WorkspaceUser
+  with a null workspaceId).
+- useFlowWorkspaceAutoSwitch: memoize tryAutoSwitch with useCallback so it
+  isn't recreated each render; defensively optional-chain w?.id and
+  switchRes?.data.
+- canvas/index.jsx, agentflowsv2/Canvas.jsx: optional-chain the fallback
+  error message so a transport-level failure (no error.response) can't throw
+  a TypeError; fall back to error.message / 'Unknown error'.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ .../server/src/services/chatflows/index.ts    |  2 +-
+ .../src/hooks/useFlowWorkspaceAutoSwitch.jsx  | 49 ++++++++++---------
+ packages/ui/src/views/agentflowsv2/Canvas.jsx |  5 +-
+ packages/ui/src/views/canvas/index.jsx        |  5 +-
+ 4 files changed, 35 insertions(+), 26 deletions(-)
+
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 2ab21f22126..2ed1d117de4 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -325,7 +325,7 @@ const resolveChatflowWorkspace = async (chatflowId: string, userId?: string): Pr
+             where: { id: chatflowId },
+             select: ['id', 'workspaceId']
+         })
+-        if (!chatflow) {
++        if (!chatflow || !chatflow.workspaceId) {
+             throw notFound()
+         }
+         // Direct membership check so the no-leak guarantee holds: identical response whether the flow is
+diff --git a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+index ad5f222a6dc..1df958606c3 100644
+--- a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
++++ b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+@@ -1,4 +1,4 @@
+-import { useRef } from 'react'
++import { useCallback, useRef } from 'react'
+ import { useDispatch, useSelector } from 'react-redux'
+ 
+ import chatflowsApi from '@/api/chatflows'
+@@ -20,30 +20,33 @@ export const useFlowWorkspaceAutoSwitch = () => {
+     const currentUser = useSelector((state) => state.auth.user)
+     const attemptedRef = useRef(new Set())
+ 
+-    const tryAutoSwitch = async (chatflowId, error, onSwitched) => {
+-        const status = error?.response?.status
+-        if (status !== 404 || !chatflowId) return false
+-        // Only attempt once per flow id to avoid any retry loop if something goes sideways.
+-        if (attemptedRef.current.has(chatflowId)) return false
+-        attemptedRef.current.add(chatflowId)
++    const tryAutoSwitch = useCallback(
++        async (chatflowId, error, onSwitched) => {
++            const status = error?.response?.status
++            if (status !== 404 || !chatflowId) return false
++            // Only attempt once per flow id to avoid any retry loop if something goes sideways.
++            if (attemptedRef.current.has(chatflowId)) return false
++            attemptedRef.current.add(chatflowId)
+ 
+-        try {
+-            const res = await chatflowsApi.getChatflowWorkspace(chatflowId)
+-            const workspaceId = res?.data?.workspaceId
+-            if (!workspaceId) return false
+-            if (workspaceId === currentUser?.activeWorkspaceId) return false
+-            const assigned = currentUser?.assignedWorkspaces || []
+-            if (!assigned.some((w) => w.id === workspaceId)) return false
++            try {
++                const res = await chatflowsApi.getChatflowWorkspace(chatflowId)
++                const workspaceId = res?.data?.workspaceId
++                if (!workspaceId) return false
++                if (workspaceId === currentUser?.activeWorkspaceId) return false
++                const assigned = currentUser?.assignedWorkspaces || []
++                if (!assigned.some((w) => w?.id === workspaceId)) return false
+ 
+-            const switchRes = await workspaceApi.switchWorkspace(workspaceId)
+-            dispatch(workspaceSwitchSuccess(switchRes.data))
+-            if (typeof onSwitched === 'function') onSwitched()
+-            return true
+-        } catch (e) {
+-            // Resolver 404 (not a member / missing flow) or any failure → fall back to the normal error.
+-            return false
+-        }
+-    }
++                const switchRes = await workspaceApi.switchWorkspace(workspaceId)
++                dispatch(workspaceSwitchSuccess(switchRes?.data))
++                if (typeof onSwitched === 'function') onSwitched()
++                return true
++            } catch (e) {
++                // Resolver 404 (not a member / missing flow) or any failure → fall back to the normal error.
++                return false
++            }
++        },
++        [currentUser, dispatch]
++    )
+ 
+     return tryAutoSwitch
+ }
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index ba8b73df8bd..ab60006a541 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -552,7 +552,10 @@ const AgentflowCanvas = () => {
+             // If the flow lives in another workspace the user is a member of, auto-switch + re-fetch instead
+             // of dead-ending on "not found". Falls back to the normal error if it's a genuine 404 / non-member.
+             tryWorkspaceAutoSwitch(chatflowId, error, () => getSpecificChatflowApi.request(chatflowId)).then((handled) => {
+-                if (!handled) errorFailed(`Failed to retrieve ${canvasTitle}: ${error.response.data.message}`)
++                if (!handled) {
++                    const errorMsg = error?.response?.data?.message || error?.message || 'Unknown error'
++                    errorFailed(`Failed to retrieve ${canvasTitle}: ${errorMsg}`)
++                }
+             })
+         }
+ 
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 87c6b332f78..d9c2f807106 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -426,7 +426,10 @@ const Canvas = () => {
+             // If the flow lives in another workspace the user is a member of, auto-switch + re-fetch instead
+             // of dead-ending on "not found". Falls back to the normal error if it's a genuine 404 / non-member.
+             tryWorkspaceAutoSwitch(chatflowId, error, () => getSpecificChatflowApi.request(chatflowId)).then((handled) => {
+-                if (!handled) errorFailed(`Failed to retrieve ${canvasTitle}: ${error.response.data.message}`)
++                if (!handled) {
++                    const errorMsg = error?.response?.data?.message || error?.message || 'Unknown error'
++                    errorFailed(`Failed to retrieve ${canvasTitle}: ${errorMsg}`)
++                }
+             })
+         }
+ 
+
+From f68fb5988beb8f2048172834e25257dd6c7d9c34 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Mon, 29 Jun 2026 20:09:44 -0700
+Subject: [PATCH 3/5] fix(security): require ACTIVE membership to resolve a
+ flow's workspace
+
+Gate the membership lookup in resolveChatflowWorkspace on
+WorkspaceUserStatus.ACTIVE so a user who is only INVITED (invited but not
+yet accepted) or DISABLEd cannot resolve a flow's workspace or auto-switch
+into it. Without this, the default membership row (status INVITED) would
+satisfy the check and leak/grant cross-workspace access via a direct API
+call. Non-active members now get the same 404 as non-members.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/services/chatflows/index.ts | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 2ed1d117de4..58d9f99c5f6 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -12,7 +12,7 @@ import { ChatMessageFeedback } from '../../database/entities/ChatMessageFeedback
+ import { ScheduleTriggerType } from '../../database/entities/ScheduleRecord'
+ import { UpsertHistory } from '../../database/entities/UpsertHistory'
+ import { Workspace } from '../../enterprise/database/entities/workspace.entity'
+-import { WorkspaceUser } from '../../enterprise/database/entities/workspace-user.entity'
++import { WorkspaceUser, WorkspaceUserStatus } from '../../enterprise/database/entities/workspace-user.entity'
+ import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+@@ -329,10 +329,12 @@ const resolveChatflowWorkspace = async (chatflowId: string, userId?: string): Pr
+             throw notFound()
+         }
+         // Direct membership check so the no-leak guarantee holds: identical response whether the flow is
+-        // missing or the user simply isn't a member of its workspace.
++        // missing or the user simply isn't an active member of its workspace. Require ACTIVE status so a
++        // user who is only INVITED (not yet accepted) or DISABLEd cannot resolve or switch into it.
+         const membership = await appServer.AppDataSource.getRepository(WorkspaceUser).findOneBy({
+             workspaceId: chatflow.workspaceId,
+-            userId
++            userId,
++            status: WorkspaceUserStatus.ACTIVE
+         })
+         if (!membership) {
+             throw notFound()
+
+From 2deac0a99717a2185c5f2fbec9d68ce35c5e3595 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Mon, 29 Jun 2026 20:16:07 -0700
+Subject: [PATCH 4/5] fix(canvas): make auto-switch hook stale-closure-safe;
+ don't block retry before user loads
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adopt the latest-ref pattern in useFlowWorkspaceAutoSwitch:
+
+- Store currentUser in a ref kept current via useEffect, and read it inside
+  tryAutoSwitch from the ref. tryAutoSwitch now only depends on [dispatch], so
+  its identity is stable — callers that omit it from their useEffect deps no
+  longer capture a stale callback that closes over an old/null user.
+- Check that the user is loaded BEFORE adding the flow id to attemptedRef, so a
+  call made before currentUser is hydrated doesn't permanently prevent a later,
+  valid auto-switch attempt for that flow.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ .../src/hooks/useFlowWorkspaceAutoSwitch.jsx  | 21 +++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+index 1df958606c3..74919e837ae 100644
+--- a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
++++ b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+@@ -1,4 +1,4 @@
+-import { useCallback, useRef } from 'react'
++import { useCallback, useEffect, useRef } from 'react'
+ import { useDispatch, useSelector } from 'react-redux'
+ 
+ import chatflowsApi from '@/api/chatflows'
+@@ -18,12 +18,25 @@ import { workspaceSwitchSuccess } from '@/store/reducers/authSlice'
+ export const useFlowWorkspaceAutoSwitch = () => {
+     const dispatch = useDispatch()
+     const currentUser = useSelector((state) => state.auth.user)
++    // Keep the latest user in a ref so tryAutoSwitch can read it without being listed as a useCallback dep.
++    // This keeps the callback identity stable (callers omit it from their useEffect deps) while still reading
++    // the freshest user — avoiding a stale closure if the user loads/changes after the callback was created.
++    const currentUserRef = useRef(currentUser)
++    useEffect(() => {
++        currentUserRef.current = currentUser
++    }, [currentUser])
++
+     const attemptedRef = useRef(new Set())
+ 
+     const tryAutoSwitch = useCallback(
+         async (chatflowId, error, onSwitched) => {
+             const status = error?.response?.status
+             if (status !== 404 || !chatflowId) return false
++
++            // Bail before marking attempted if the user isn't loaded yet, so a later (loaded) call can retry.
++            const user = currentUserRef.current
++            if (!user) return false
++
+             // Only attempt once per flow id to avoid any retry loop if something goes sideways.
+             if (attemptedRef.current.has(chatflowId)) return false
+             attemptedRef.current.add(chatflowId)
+@@ -32,8 +45,8 @@ export const useFlowWorkspaceAutoSwitch = () => {
+                 const res = await chatflowsApi.getChatflowWorkspace(chatflowId)
+                 const workspaceId = res?.data?.workspaceId
+                 if (!workspaceId) return false
+-                if (workspaceId === currentUser?.activeWorkspaceId) return false
+-                const assigned = currentUser?.assignedWorkspaces || []
++                if (workspaceId === user.activeWorkspaceId) return false
++                const assigned = user.assignedWorkspaces || []
+                 if (!assigned.some((w) => w?.id === workspaceId)) return false
+ 
+                 const switchRes = await workspaceApi.switchWorkspace(workspaceId)
+@@ -45,7 +58,7 @@ export const useFlowWorkspaceAutoSwitch = () => {
+                 return false
+             }
+         },
+-        [currentUser, dispatch]
++        [dispatch]
+     )
+ 
+     return tryAutoSwitch
+
+From dc7c86e6d6ed0e95d8494dacb4144ba6be043d88 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <darien@kindlund.com>
+Date: Mon, 29 Jun 2026 20:23:51 -0700
+Subject: [PATCH 5/5] fix(canvas): retry auto-switch after transient failures
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In useFlowWorkspaceAutoSwitch, only a 404 from the resolver/switch is
+definitive (not a member / missing flow) — keep it marked in attemptedRef so
+we don't retry. For transient failures (network error, 5xx, etc.) delete the
+flow id from attemptedRef so a later re-fetch can attempt the auto-switch
+again instead of being permanently blocked until a full page reload.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+index 74919e837ae..f23bdb1eafc 100644
+--- a/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
++++ b/packages/ui/src/hooks/useFlowWorkspaceAutoSwitch.jsx
+@@ -54,7 +54,12 @@ export const useFlowWorkspaceAutoSwitch = () => {
+                 if (typeof onSwitched === 'function') onSwitched()
+                 return true
+             } catch (e) {
+-                // Resolver 404 (not a member / missing flow) or any failure → fall back to the normal error.
++                // A 404 is definitive (not a member / missing flow) — leave it marked so we don't retry.
++                // For transient failures (network error, 5xx, etc.) clear the mark so a later re-fetch can retry.
++                if (e?.response?.status !== 404) {
++                    attemptedRef.current.delete(chatflowId)
++                }
++                // Fall back to the caller's normal error handling.
+                 return false
+             }
+         },

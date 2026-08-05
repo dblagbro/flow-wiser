@@ -1,0 +1,687 @@
+From 32258a35d902eb0377d09e2de510f5ff85d54c9b Mon Sep 17 00:00:00 2001
+From: "zhenjun.chen" <zhenjun.chen@myflashcloud.com>
+Date: Fri, 29 May 2026 18:41:26 +0800
+Subject: [PATCH 1/2] feat: add ChatOrcaRouter chat model node
+
+Add an OrcaRouter chat model node (an OpenAI-compatible LLM router) following
+the ChatOpenRouter / ChatCometAPI pattern: a credential, the node plus a vision
+subclass, an icon, and co-located tests. The Model Name dropdown is loaded from
+the OrcaRouter catalog and is freeSolo. Also register chatOrcaRouter in the
+server streaming list.
+---
+ .../credentials/OrcaRouterApi.credential.ts   |  27 ++
+ .../ChatOrcaRouter/ChatOrcaRouter.test.ts     | 225 +++++++++++++++
+ .../ChatOrcaRouter/ChatOrcaRouter.ts          | 267 ++++++++++++++++++
+ .../ChatOrcaRouter/FlowiseChatOrcaRouter.ts   |  20 ++
+ .../chatmodels/ChatOrcaRouter/orcaRouter.svg  |   2 +
+ packages/server/src/utils/index.ts            |   3 +-
+ 6 files changed, 543 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/credentials/OrcaRouterApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatOrcaRouter/FlowiseChatOrcaRouter.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatOrcaRouter/orcaRouter.svg
+
+diff --git a/packages/components/credentials/OrcaRouterApi.credential.ts b/packages/components/credentials/OrcaRouterApi.credential.ts
+new file mode 100644
+index 00000000000..a33489e47d1
+--- /dev/null
++++ b/packages/components/credentials/OrcaRouterApi.credential.ts
+@@ -0,0 +1,27 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class OrcaRouterAPIAuth implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'OrcaRouter API Key'
++        this.name = 'orcaRouterApi'
++        this.version = 1.0
++        this.description =
++            'Sign up at <a target="_blank" href="https://www.orcarouter.ai">https://www.orcarouter.ai</a> and create an API key at the <a target="_blank" href="https://www.orcarouter.ai/console">console</a>. Keys begin with <code>sk-orca-</code>.'
++        this.inputs = [
++            {
++                label: 'OrcaRouter API Key',
++                name: 'orcaRouterApiKey',
++                type: 'password',
++                description: 'API key issued by OrcaRouter (starts with sk-orca-).'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: OrcaRouterAPIAuth }
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
+new file mode 100644
+index 00000000000..38a138720fe
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
+@@ -0,0 +1,225 @@
++jest.mock('@langchain/openai', () => {
++    class FakeChatOpenAI {
++        fields: any
++        constructor(fields: any) {
++            this.fields = fields
++        }
++    }
++    return { ChatOpenAI: FakeChatOpenAI }
++})
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++jest.mock('axios', () => ({ get: jest.fn() }))
++
++import axios from 'axios'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ChatOrcaRouter } = require('./ChatOrcaRouter')
++
++describe('ChatOrcaRouter', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('live-fetches the catalog, filters to chat models, and puts the auto router first', async () => {
++        ;(axios.get as jest.Mock).mockResolvedValue({
++            data: {
++                data: [
++                    { model_name: 'openai/gpt-5.5', supported_endpoint_types: ['openai'] },
++                    { model_name: 'anthropic/claude-opus-4.8', supported_endpoint_types: ['anthropic'] },
++                    // non-chat entries that must be filtered out:
++                    { model_name: 'openai/dall-e-3', supported_endpoint_types: ['image-generation'] },
++                    { model_name: 'openai/text-embedding-3-small', supported_endpoint_types: ['openai'] },
++                    { model_name: 'kling/kling-video', supported_endpoint_types: ['openai-video'] },
++                    { model_name: 'openai/gpt-5-codex', supported_endpoint_types: ['openai'] },
++                    { model_name: 'openai/gpt-5-pro', supported_endpoint_types: ['openai-response'] }
++                ]
++            }
++        })
++
++        const node = new ChatOrcaRouter()
++        const models = await node.loadMethods.listModels()
++
++        expect(axios.get).toHaveBeenCalledWith('https://www.orcarouter.ai/api/pricing', expect.any(Object))
++        expect(models[0]).toEqual({ label: 'Auto router (orcarouter/auto)', name: 'orcarouter/auto' })
++        const names = models.map((m: any) => m.name)
++        expect(names).toEqual(expect.arrayContaining(['orcarouter/auto', 'openai/gpt-5.5', 'anthropic/claude-opus-4.8']))
++        // filtered out: image / embedding / video / codex / responses-only
++        expect(names).not.toContain('openai/dall-e-3')
++        expect(names).not.toContain('openai/text-embedding-3-small')
++        expect(names).not.toContain('kling/kling-video')
++        expect(names).not.toContain('openai/gpt-5-codex')
++        expect(names).not.toContain('openai/gpt-5-pro')
++    })
++
++    it('falls back to flagship presets when the catalog fetch fails', async () => {
++        ;(axios.get as jest.Mock).mockRejectedValue(new Error('network down'))
++
++        const node = new ChatOrcaRouter()
++        const models = await node.loadMethods.listModels()
++
++        expect(models[0]).toEqual({ label: 'Auto router (orcarouter/auto)', name: 'orcarouter/auto' })
++        expect(models.map((m: any) => m.name)).toEqual(
++            expect.arrayContaining(['orcarouter/auto', 'openai/gpt-5.5', 'anthropic/claude-opus-4.8', 'qwen/qwen3.7-max'])
++        )
++    })
++
++    it('declares orcaRouterApi as its credential', () => {
++        const node = new ChatOrcaRouter()
++        expect(node.credential.credentialNames).toEqual(['orcaRouterApi'])
++    })
++
++    it('does not default Temperature, so reasoning models and the auto router are not sent a rejected field', () => {
++        const node = new ChatOrcaRouter()
++        const temp = node.inputs.find((i: any) => i.name === 'temperature')
++        expect(temp).toBeDefined()
++        expect(temp.default).toBeUndefined()
++        expect(temp.optional).toBe(true)
++    })
++
++    it('wires the OrcaRouter base URL, API key, and attribution headers onto the ChatOpenAI client', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-test-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        const model = await node.init(
++            {
++                id: 'node-1',
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'orcarouter/auto',
++                    temperature: '0.5',
++                    streaming: true,
++                    allowImageUploads: false
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            modelName: 'orcarouter/auto',
++            openAIApiKey: 'sk-orca-test-key',
++            apiKey: 'sk-orca-test-key',
++            temperature: 0.5,
++            streaming: true
++        })
++        expect(model.fields.configuration.baseURL).toBe('https://api.orcarouter.ai/v1')
++        expect(model.fields.configuration.defaultHeaders).toMatchObject({
++            'HTTP-Referer': 'https://www.orcarouter.ai/',
++            'X-Title': 'Flowise'
++        })
++    })
++
++    it('forwards advanced numeric params and honours a custom basepath', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        const model = await node.init(
++            {
++                id: 'node-1',
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'openai/gpt-5.5',
++                    temperature: '0.2',
++                    maxTokens: '1024',
++                    topP: '0.8',
++                    frequencyPenalty: '0.1',
++                    presencePenalty: '0.2',
++                    timeout: '30',
++                    basepath: 'https://router.internal/v1',
++                    streaming: false
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            modelName: 'openai/gpt-5.5',
++            temperature: 0.2,
++            maxTokens: 1024,
++            topP: 0.8,
++            frequencyPenalty: 0.1,
++            presencePenalty: 0.2,
++            timeout: 30,
++            streaming: false
++        })
++        expect(model.fields.configuration.baseURL).toBe('https://router.internal/v1')
++    })
++
++    it('omits temperature when the user leaves it blank so reasoning models do not 400', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        const model = await node.init(
++            {
++                id: 'node-1',
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'anthropic/claude-opus-4.8',
++                    temperature: '',
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.temperature).toBeUndefined()
++    })
++
++    it('merges user-provided Base Options on top of the default attribution headers', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        const model = await node.init(
++            {
++                id: 'node-1',
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'orcarouter/auto',
++                    streaming: true,
++                    baseOptions: { 'X-Title': 'My-App', 'X-Custom': 'yes' }
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.configuration.defaultHeaders).toMatchObject({
++            'HTTP-Referer': 'https://www.orcarouter.ai/',
++            'X-Title': 'My-App',
++            'X-Custom': 'yes'
++        })
++    })
++
++    it('throws a clear error when Base Options JSON is malformed', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        await expect(
++            node.init(
++                {
++                    id: 'node-1',
++                    credential: 'cred-1',
++                    inputs: {
++                        modelName: 'orcarouter/auto',
++                        baseOptions: '{not json'
++                    }
++                },
++                '',
++                {}
++            )
++        ).rejects.toThrow(/Invalid JSON in the ChatOrcaRouter's BaseOptions/)
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
+new file mode 100644
+index 00000000000..88347356136
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
+@@ -0,0 +1,267 @@
++import axios from 'axios'
++import { ChatOpenAI as LangchainChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { BaseCache } from '@langchain/core/caches'
++import { ICommonObject, IMultiModalOption, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { ChatOrcaRouter } from './FlowiseChatOrcaRouter'
++
++const ORCAROUTER_DEFAULT_BASE_URL = 'https://api.orcarouter.ai/v1'
++const ORCAROUTER_PRICING_URL = 'https://www.orcarouter.ai/api/pricing'
++const ORCAROUTER_REFERER = 'https://www.orcarouter.ai/'
++const ORCAROUTER_TITLE = 'Flowise'
++
++const ORCAROUTER_AUTO: INodeOptionsValue = { label: 'Auto router (orcarouter/auto)', name: 'orcarouter/auto' }
++
++// Offline fallback used when the live model list cannot be fetched.
++const ORCAROUTER_FALLBACK_MODELS: INodeOptionsValue[] = [
++    ORCAROUTER_AUTO,
++    { label: 'OpenAI GPT-5.5', name: 'openai/gpt-5.5' },
++    { label: 'Anthropic Claude Opus 4.8', name: 'anthropic/claude-opus-4.8' },
++    { label: 'Google Gemini 3.5 Flash', name: 'google/gemini-3.5-flash' },
++    { label: 'xAI Grok 4.3', name: 'grok/grok-4.3' },
++    { label: 'DeepSeek V4 Pro', name: 'deepseek/deepseek-v4-pro' },
++    { label: 'MiniMax M2.7', name: 'minimax/minimax-m2.7' },
++    { label: 'Qwen 3.7 Max', name: 'qwen/qwen3.7-max' }
++]
++
++// Keep only chat-completions models; drop image/video/embedding/tts/stt/rerank and
++// models served on non chat-completions endpoints (responses/completions only).
++const isChatModel = (name: string, entry: any): boolean => {
++    const endpoints = new Set<string>(entry?.supported_endpoint_types || [])
++    const outputs = new Set<string>(entry?.output_modalities || [])
++    const n = (name || '').toLowerCase()
++    if (endpoints.has('image-generation') || endpoints.has('openai-video')) return false
++    if (outputs.has('image')) return false
++    if (['imagen', 'dall-e', 'gpt-image', 'grok-imagine'].some((k) => n.includes(k))) return false
++    if (n.includes('embedding') || n.includes('tts') || n.endsWith('-speech')) return false
++    if (n.includes('whisper') || n.includes('transcrib') || n.includes('rerank')) return false
++    if (endpoints.has('openai-response') && !endpoints.has('openai')) return false
++    if (n.includes('codex')) return false
++    if (/^openai\/gpt-5(\.\d+)?-pro/.test(n)) return false
++    return true
++}
++
++class ChatOrcaRouter_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatOrcaRouter'
++        this.name = 'chatOrcaRouter'
++        this.version = 1.0
++        this.type = 'ChatOrcaRouter'
++        this.icon = 'orcaRouter.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around OrcaRouter, an OpenAI-compatible LLM router that exposes 150+ models behind a single endpoint.'
++        this.baseClasses = [this.type, ...getBaseClasses(LangchainChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['orcaRouterApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                freeSolo: true,
++                default: 'orcarouter/auto',
++                description:
++                    'The list is fetched live from the OrcaRouter catalog; you can also type any model id from <a target="_blank" href="https://www.orcarouter.ai/models">https://www.orcarouter.ai/models</a>. <code>orcarouter/auto</code> routes each request through the workspace-configured router.'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                description:
++                    'Leave blank to use the upstream default. Reasoning models (e.g. Claude Opus 4.8, GPT-5 family, DeepSeek Reasoner) and the auto router reject this field, so it is not set by default.'
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Allow Image Uploads',
++                name: 'allowImageUploads',
++                type: 'boolean',
++                description:
++                    'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Path',
++                name: 'basepath',
++                type: 'string',
++                optional: true,
++                default: ORCAROUTER_DEFAULT_BASE_URL,
++                description: 'Override the OrcaRouter API base URL (e.g. for a self-hosted OrcaRouter-O2 deployment).',
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional headers to send with every request. Useful for overriding the default <code>HTTP-Referer</code> / <code>X-Title</code> attribution headers.',
++                additionalParams: true
++            }
++        ]
++    }
++
++    //@ts-ignore
++    loadMethods = {
++        async listModels(): Promise<INodeOptionsValue[]> {
++            // Live-fetch the public OrcaRouter catalog (no auth) so new models appear automatically.
++            // The Model Name field is freeSolo, so users can still type any model id; if the fetch
++            // fails (offline / endpoint down) we fall back to the flagship presets.
++            try {
++                const resp = await axios.get(ORCAROUTER_PRICING_URL, { timeout: 10000 })
++                const data = resp?.data?.data
++                if (!Array.isArray(data)) return ORCAROUTER_FALLBACK_MODELS
++                const seen = new Set<string>()
++                const models: INodeOptionsValue[] = []
++                for (const entry of data) {
++                    const name = entry?.model_name
++                    if (!name || name === ORCAROUTER_AUTO.name || seen.has(name) || !isChatModel(name, entry)) continue
++                    seen.add(name)
++                    models.push({ label: name, name })
++                }
++                if (!models.length) return ORCAROUTER_FALLBACK_MODELS
++                models.sort((a, b) => a.name.localeCompare(b.name))
++                // Surface the auto router at the top of the list.
++                return [ORCAROUTER_AUTO, ...models]
++            } catch (error) {
++                return ORCAROUTER_FALLBACK_MODELS
++            }
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const basePath = (nodeData.inputs?.basepath as string) || ORCAROUTER_DEFAULT_BASE_URL
++        const baseOptions = nodeData.inputs?.baseOptions
++        const cache = nodeData.inputs?.cache as BaseCache
++        const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const orcaRouterApiKey = getCredentialParam('orcaRouterApiKey', credentialData, nodeData)
++
++        const obj: ChatOpenAIFields = {
++            modelName,
++            openAIApiKey: orcaRouterApiKey,
++            apiKey: orcaRouterApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (temperature) obj.temperature = parseFloat(temperature)
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: Record<string, any> | undefined = undefined
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOrcaRouter's BaseOptions: " + exception)
++            }
++        }
++
++        const defaultHeaders: Record<string, string> = {
++            'HTTP-Referer': ORCAROUTER_REFERER,
++            'X-Title': ORCAROUTER_TITLE,
++            ...(parsedBaseOptions ?? {})
++        }
++
++        obj.configuration = {
++            baseURL: basePath,
++            defaultHeaders
++        }
++
++        const multiModalOption: IMultiModalOption = {
++            image: {
++                allowImageUploads: allowImageUploads ?? false
++            }
++        }
++
++        const model = new ChatOrcaRouter(nodeData.id, obj)
++        model.setMultiModalOption(multiModalOption)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatOrcaRouter_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/FlowiseChatOrcaRouter.ts b/packages/components/nodes/chatmodels/ChatOrcaRouter/FlowiseChatOrcaRouter.ts
+new file mode 100644
+index 00000000000..3b33a98e020
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/FlowiseChatOrcaRouter.ts
+@@ -0,0 +1,20 @@
++import { ChatOpenAI as LangchainChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { IMultiModalOption, IVisionChatModal } from '../../../src'
++
++export class ChatOrcaRouter extends LangchainChatOpenAI implements IVisionChatModal {
++    configuredModel: string
++    configuredMaxToken?: number
++    multiModalOption: IMultiModalOption
++    id: string
++
++    constructor(id: string, fields?: ChatOpenAIFields) {
++        super(fields)
++        this.id = id
++        this.configuredModel = fields?.modelName ?? ''
++        this.configuredMaxToken = fields?.maxTokens
++    }
++
++    setMultiModalOption(multiModalOption: IMultiModalOption): void {
++        this.multiModalOption = multiModalOption
++    }
++}
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/orcaRouter.svg b/packages/components/nodes/chatmodels/ChatOrcaRouter/orcaRouter.svg
+new file mode 100644
+index 00000000000..90683a36b61
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/orcaRouter.svg
+@@ -0,0 +1,2 @@
++<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" id="Layer_1" x="0px" y="0px" width="42px" height="22px" viewBox="0 0 42 22" enable-background="new 0 0 42 22" xml:space="preserve">  <image id="image0" width="42" height="22" x="0" y="0" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACoAAAAWCAMAAACBpf6/AAAAIGNIUk0AAHomAACAhAAA+gAAAIDo AAB1MAAA6mAAADqYAAAXcJy6UTwAAAKjUExURf////7+//L3/f3+//z9/93r/nmr+fz7/f7///// /nKr+2GC4P///e/1/rLP/ZW5+q/L/UyT8dTS4Pz8/vv8/qS99XOS4Wl+zmh+zkGE6brU//X3/O/0 /////K2v1gBc7V6k/9/m/Ofr+Xed8Wyg95q+/sLY/Ovz/ff391101QCM/2ed+vDy/PDy9vj4+MvS 8wBg7gBz/DOW/pvD/Ojx/efp9iNNxwCC+cvb+7bD9/Dy9eru9d3e7gBH2V6H9ESO+wCP/bXS/Pb5 /f3+/vf6/7C56WaZ+XmX8/Dy+/n5+tnf6fT2+7a7342X2LLD+wCC/X63/W6l+4+m7e7w/WWb/qjH /NTe/gBL6+Hj89zh6t3j7fn6/aiv26au4ZSt+gCB/02j/1Kk/Vqe+YGv/E2a/Eyj/VKh/wBw+QA1 1Nze7f39/vj5+sfQ4Obq8vn7/Wd2ygA3xEdo1gAv5gBp9j6Q/kue/zqb/0ST/wBg9ABI2gZAuuvs 8/7+/unr8b7J3eTp8ff5+5Oay6Oo09vd8IKR4ABI5QBm8SF59xV09gBB5pGe5H2Hxmp1uv/+/+bq 8MPO4uHm8fT2+ZugycjM6Pr7/s/R419xzwBQ1wAtzqmv3oKLutDS5NXX6VdkmbK909Pc7Ozw98nM 3gAAnURv42yS5T5arAAAmmdzu/L2+bS91K+z0ODn/QAsvAAAdB4scH6Lr7zI3rG/2hI7lgAjrQBU 4xJ78wBXt6awx7rF28bK23OY8gAtvgApmwAAg8HB0fv7/N7j7a61zwAAjBk9sCte3gB3+oiq6vf2 8+Ts/QBg8gA41FxwydbZ7MPF2QAAlgAAsANP1gBv9qvF/vr7/fr8/tff+9zh+d/h7YGKxARIxABE 3QBM9cLU/O3u99zg9eTo+vv7/twzkfUAAAABYktHRACIBR1IAAAACXBIWXMAAA7DAAAOwwHHb6hk AAAAB3RJTUUH6gUPBicWwRR25AAAASB6VFh0UmF3IHByb2ZpbGUgdHlwZSB4bXAAACiRdVJLcsUg DNtzih6ByMYmx0kfsOtMlz1+ZZK+pHktnvxsI0si6evjM73FEkiSh1fZvFrzbM2Kqy3I8W0P6y5R kwbYYmrDYEW2Pf/sHgByOmGYfI8tpWorGVnFhnMjshi65HlBet6QI0gBBDfZClST2m3+XgwO1ZWR ZePM4XOhO5vQ5wjHkEXWCIwkWcAEeG87CJ/iK2FJ2ytaDIjyyeXOSNVKcjFhYp3SVrrQyfBooC/g bDoRDGnEL6BreE0XUQFkf8manPppN9/pnzUKPvaEtGWaOF6pPwX8DNg0nFmtHLIPBdLp1COdqP83 3r3BuLqzm5Ou7lyP9myOw1WL2sy+/HVRSd9JLZsWv+sGrgAAAAFvck5UAc+id5oAAAGGSURBVCjP Y2DABRgZiAdMzMSoYmRmYWBlYydCJQcQc3Jx83DgMQxG8fLxCwgKMQjjtxmkXERUTFxCUkqaAadr OWQ4OIGqGRkYeXhkGeTkFRRxqGVkUFJWUVVT52Rg5gCazqChqaWtgz3IGBl09fQNDI2MTYCKGTgZ TM3MLSxxKbWyZrCxtbN3cHRicHZhZnB143T3wBETnl7eDD6+DH7+AY6BQZzBIaFh4REMztiNjYyK ZoiJ5YyLT0hMSk5JTUvPyGTIwh7w2Tm5eQz5BYVFxSWlZaXlFZVV1Qw1WB1Qw1BbV99Q09jU3NLa 1t7R2dXdw9CLI2BrGPr6J0xkmDR5ytRp02fMZJg1G7v9QJDFMGfuvPkLFi5avGTpsuUrVq7CYT0D MDRXr1m7bv2GjZs2b9m6bfuOnXhSAMeu3Xv27tt/4OChw0eOHjuOO3UzMpw4eer0GRDz7LnzFy5e uozH1CtXr7EwZHHUZDFcv3Hz1u07DPjzQRaUuHvv/gN86phhxmRh8ToA+NJqAer1CmAAAACEZVhJ Zk1NACoAAAAIAAUBEgADAAAAAQABAAABGgAFAAAAAQAAAEoBGwAFAAAAAQAAAFIBKAADAAAAAQAC AACHaQAEAAAAAQAAAFoAAAAAAAAAYAAAAAEAAABgAAAAAQADoAEAAwAAAAEAAQAAoAIABAAAAAEA AAAqoAMABAAAAAEAAAAWAAAAAKyscUgAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDUtMTVUMDY6 Mzk6MjIrMDA6MDCtsCPfAAAAJXRFWHRkYXRlOm1vZGlmeQAyMDI2LTA1LTE1VDA2OjM5OjIyKzAw OjAw3O2bYwAAACh0RVh0ZGF0ZTp0aW1lc3RhbXAAMjAyNi0wNS0xNVQwNjozOToyMiswMDowMIv4 urwAAAARdEVYdGV4aWY6Q29sb3JTcGFjZQAxD5sCSQAAABJ0RVh0ZXhpZjpFeGlmT2Zmc2V0ADkw WYzemwAAABd0RVh0ZXhpZjpQaXhlbFhEaW1lbnNpb24ANDLH7fHQAAAAF3RFWHRleGlmOlBpeGVs WURpbWVuc2lvbgAyMkwhj9MAAAASdEVYdHRpZmY6T3JpZW50YXRpb24AMber/DsAAAAASUVORK5C YII="/>
++</svg>
+\ No newline at end of file
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 2eeeb5b0eb6..d2081b64f31 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -1492,7 +1492,8 @@ export const isFlowValidForStream = (reactFlowNodes: IReactFlowNode[], endingNod
+             'chatFireworks',
+             'ChatSambanova',
+             'chatBaiduWenxin',
+-            'chatCometAPI'
++            'chatCometAPI',
++            'chatOrcaRouter'
+         ],
+         LLMs: ['azureOpenAI', 'openAI', 'ollama']
+     }
+
+From 6ecd82b2f701c8336244f564b291b080a004b117 Mon Sep 17 00:00:00 2001
+From: "zhenjun.chen" <zhenjun.chen@myflashcloud.com>
+Date: Fri, 29 May 2026 19:16:39 +0800
+Subject: [PATCH 2/2] fix: honour explicit 0 for numeric params in
+ ChatOrcaRouter
+
+Use nullish + empty-string checks instead of truthy checks so a valid 0
+for temperature, topP, or the penalties is not dropped. Addresses review
+feedback.
+---
+ .../ChatOrcaRouter/ChatOrcaRouter.test.ts     | 28 +++++++++++++++++++
+ .../ChatOrcaRouter/ChatOrcaRouter.ts          | 12 ++++----
+ 2 files changed, 34 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
+index 38a138720fe..acdf1cbbea8 100644
+--- a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.test.ts
+@@ -176,6 +176,34 @@ describe('ChatOrcaRouter', () => {
+         expect(model.fields.temperature).toBeUndefined()
+     })
+ 
++    it('honours an explicit 0 for numeric params instead of dropping the falsy-but-valid value', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
++
++        const node = new ChatOrcaRouter()
++        const model = await node.init(
++            {
++                id: 'node-1',
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'openai/gpt-5.5',
++                    temperature: 0,
++                    topP: 0,
++                    frequencyPenalty: 0,
++                    presencePenalty: 0,
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields.temperature).toBe(0)
++        expect(model.fields.topP).toBe(0)
++        expect(model.fields.frequencyPenalty).toBe(0)
++        expect(model.fields.presencePenalty).toBe(0)
++    })
++
+     it('merges user-provided Base Options on top of the default attribution headers', async () => {
+         ;(getCredentialData as jest.Mock).mockResolvedValue({ orcaRouterApiKey: 'sk-orca-x' })
+         ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData) => credentialData[key])
+diff --git a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
+index 88347356136..ebc1333482b 100644
+--- a/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
++++ b/packages/components/nodes/chatmodels/ChatOrcaRouter/ChatOrcaRouter.ts
+@@ -224,12 +224,12 @@ class ChatOrcaRouter_ChatModels implements INode {
+             streaming: streaming ?? true
+         }
+ 
+-        if (temperature) obj.temperature = parseFloat(temperature)
+-        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
+-        if (topP) obj.topP = parseFloat(topP)
+-        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
+-        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
+-        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (temperature != null && temperature !== '') obj.temperature = parseFloat(temperature)
++        if (maxTokens != null && maxTokens !== '') obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP != null && topP !== '') obj.topP = parseFloat(topP)
++        if (frequencyPenalty != null && frequencyPenalty !== '') obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty != null && presencePenalty !== '') obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout != null && timeout !== '') obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
+ 
+         let parsedBaseOptions: Record<string, any> | undefined = undefined

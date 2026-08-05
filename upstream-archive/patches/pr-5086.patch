@@ -1,0 +1,489 @@
+From 8e285335bc4a53c3e26431a79c853617eb5d0723 Mon Sep 17 00:00:00 2001
+From: Frey <gfreyburger@gmail.com>
+Date: Fri, 15 Aug 2025 18:46:44 -0400
+Subject: [PATCH] Add RecallIO.AI Memory Node
+
+---
+ .../RecallIOMemoryApi.credential.ts           |  27 ++
+ .../nodes/memory/RecallIOMemory/RecallIO.ts   | 399 ++++++++++++++++++
+ .../nodes/memory/RecallIOMemory/recallio.svg  |  18 +
+ packages/components/package.json              |   1 +
+ 4 files changed, 445 insertions(+)
+ create mode 100644 packages/components/credentials/RecallIOMemoryApi.credential.ts
+ create mode 100644 packages/components/nodes/memory/RecallIOMemory/RecallIO.ts
+ create mode 100644 packages/components/nodes/memory/RecallIOMemory/recallio.svg
+
+diff --git a/packages/components/credentials/RecallIOMemoryApi.credential.ts b/packages/components/credentials/RecallIOMemoryApi.credential.ts
+new file mode 100644
+index 00000000000..de42cf0aa7b
+--- /dev/null
++++ b/packages/components/credentials/RecallIOMemoryApi.credential.ts
+@@ -0,0 +1,27 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class RecallIOMemoryApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'RecallIO Memory API'
++        this.name = 'recallIOMemoryApi'
++        this.version = 1.0
++        this.description =
++            'Visit <a target="_blank" href="https://app.recallio.ai/">RecallIO Platform</a> to get your API credentials'
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'apiKey',
++                type: 'password',
++                description: 'API Key from RecallIO dashboard'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: RecallIOMemoryApi }
+diff --git a/packages/components/nodes/memory/RecallIOMemory/RecallIO.ts b/packages/components/nodes/memory/RecallIOMemory/RecallIO.ts
+new file mode 100644
+index 00000000000..576beb4f86a
+--- /dev/null
++++ b/packages/components/nodes/memory/RecallIOMemory/RecallIO.ts
+@@ -0,0 +1,399 @@
++import { RecallioMemory as BaseRecallioMemory, RecallioMemoryInput } from 'recallio-community'
++import { BaseMessage } from '@langchain/core/messages'
++import { InputValues, MemoryVariables, OutputValues } from '@langchain/core/memory'
++import { ICommonObject, IDatabaseEntity } from '../../../src'
++import { IMessage, INode, INodeData, INodeParams, MemoryMethods, MessageType } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam, mapChatMessageToBaseMessage } from '../../../src/utils'
++import { DataSource } from 'typeorm'
++import { v4 as uuidv4 } from 'uuid'
++
++interface BufferMemoryExtendedInput {
++    sessionId: string
++    appDataSource: DataSource
++    databaseEntities: IDatabaseEntity
++    chatflowid: string
++}
++
++interface NodeFields extends RecallioMemoryInput, RecallioMemoryExtendedInput, BufferMemoryExtendedInput {
++    searchOnly: boolean
++    useFlowiseChatId: boolean
++    input: string
++}
++
++class RecallIO_Memory implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'RecallIO'
++        this.name = 'recallio'
++        this.version = 1.0
++        this.type = 'RecallIO'
++        this.icon = 'recallio.svg'
++        this.category = 'Memory'
++        this.description = 'Stores and manages chat memory using RecallIO service'
++        this.baseClasses = [this.type, ...getBaseClasses(BaseRecallioMemory)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            optional: false,
++            description: 'Configure API Key for RecallIO service',
++            credentialNames: ['recallIOMemoryApi']
++        }
++        this.inputs = [
++            {
++                label: 'User ID',
++                name: 'user_id',
++                type: 'string',
++                description: 'Unique identifier for the user. Required only if "Use Flowise Chat ID" is OFF.',
++                default: 'flowise-default-user',
++                optional: true
++            },
++            // Added toggle to use Flowise chat ID
++            {
++                label: 'Use Flowise Chat ID',
++                name: 'useFlowiseChatId',
++                type: 'boolean',
++                description: 'Use the Flowise internal Chat ID as the RecallIO User ID, overriding the "User ID" field above.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Project ID',
++                name: 'projectId',
++                type: 'string',
++                description: 'RecallIO Project ID',
++                default: '',
++                optional: false
++            },
++            {
++                label: 'Search Only',
++                name: 'searchOnly',
++                type: 'boolean',
++                description: 'Search only mode',
++                default: false,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Scope',
++                name: 'scope',
++                type: 'string',
++                description: 'Recall scope (e.g., user, app)',
++                default: 'user',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Tags (comma-separated)',
++                name: 'tags',
++                type: 'string',
++                description: 'Optional tags to associate with memories, e.g. tag1, tag2',
++                default: '',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Consent Flag',
++                name: 'consentFlag',
++                type: 'boolean',
++                description: 'User consent to store memory',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Separate Messages',
++                name: 'separateMessages',
++                type: 'boolean',
++                description: 'Return memory context as separate messages instead of a single system string',
++                default: false,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'AI Prefix',
++                name: 'aiPrefix',
++                type: 'string',
++                default: 'ai',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Human Prefix',
++                name: 'humanPrefix',
++                type: 'string',
++                default: 'human',
++                optional: true,
++                additionalParams: true
++            },
++            // The following are kept for parity with similar nodes; not used directly by RecallIO
++            { label: 'App ID', name: 'app_id', type: 'string', default: '', optional: true, additionalParams: true },
++            { label: 'Organization ID', name: 'org_id', type: 'string', default: '', optional: true, additionalParams: true },
++            {
++                label: 'Memory Key',
++                name: 'memoryKey',
++                type: 'string',
++                default: 'chat_history',
++                additionalParams: true
++            },
++            {
++                label: 'Input Key',
++                name: 'inputKey',
++                type: 'string',
++                default: 'input',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Output Key',
++                name: 'outputKey',
++                type: 'string',
++                default: 'text',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
++        return await initializeRecallIO(nodeData, input, options)
++    }
++}
++
++const parseTags = (raw?: string): string[] | undefined => {
++    if (!raw) return undefined
++    try {
++        // allow JSON array input
++        const maybeArr = JSON.parse(raw)
++        if (Array.isArray(maybeArr)) return maybeArr.map((t) => String(t))
++    } catch (_) {
++        // fall through to comma-separated parsing
++    }
++    const parts = String(raw)
++        .split(',')
++        .map((s) => s.trim())
++        .filter((s) => s.length > 0)
++    return parts.length ? parts : undefined
++}
++
++const initializeRecallIO = async (
++    nodeData: INodeData,
++    input: string,
++    options: ICommonObject
++): Promise<BaseRecallioMemory> => {
++    const initialUserId = nodeData.inputs?.user_id as string
++    const useFlowiseChatId = nodeData.inputs?.useFlowiseChatId as boolean
++    const orgId = options.orgId as string
++
++    if (!useFlowiseChatId && !initialUserId) {
++        throw new Error('User ID field cannot be empty when "Use Flowise Chat ID" is OFF.')
++    }
++
++    const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++    const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
++
++    const constructorSessionId = initialUserId || (useFlowiseChatId ? 'flowise-chat-id-placeholder' : '')
++
++    const obj: NodeFields = {
++        apiKey: apiKey,
++        projectId: (nodeData.inputs?.projectId as string) || '',
++        humanPrefix: (nodeData.inputs?.humanPrefix as string) || 'human',
++        aiPrefix: (nodeData.inputs?.aiPrefix as string) || 'ai',
++        inputKey: (nodeData.inputs?.inputKey as string) || 'input',
++        outputKey: (nodeData.inputs?.outputKey as string) || 'text',
++        memoryKey: (nodeData.inputs?.memoryKey as string) || 'chat_history',
++        sessionId: constructorSessionId,
++        scope: ((nodeData.inputs?.scope as string) || 'user') as string,
++        tags: parseTags(nodeData.inputs?.tags as string),
++        consentFlag: (nodeData.inputs?.consentFlag as boolean) ?? true,
++        separateMessages: (nodeData.inputs?.separateMessages as boolean) ?? false,
++        returnMessages: true,
++        appDataSource: options.appDataSource as DataSource,
++        databaseEntities: options.databaseEntities as IDatabaseEntity,
++        chatflowid: options.chatflowid as string,
++        searchOnly: (nodeData.inputs?.searchOnly as boolean) || false,
++        useFlowiseChatId: useFlowiseChatId,
++        input: input,
++        orgId: orgId
++    }
++
++    if (!obj.projectId) throw new Error('Project ID cannot be empty')
++
++    return new RecallioMemoryExtended(obj)
++}
++
++interface RecallioMemoryExtendedInput extends RecallioMemoryInput {
++    useFlowiseChatId: boolean
++    orgId: string
++}
++
++class RecallioMemoryExtended extends BaseRecallioMemory implements MemoryMethods {
++    initialSessionId: string
++    orgId: string
++    memoryKey: string
++    inputKey: string
++    appDataSource: DataSource
++    databaseEntities: IDatabaseEntity
++    chatflowid: string
++    searchOnly: boolean
++    useFlowiseChatId: boolean
++    input: string
++
++    constructor(fields: NodeFields) {
++        super(fields)
++        this.initialSessionId = fields.sessionId ?? ''
++        this.memoryKey = fields.memoryKey ?? 'chat_history'
++        this.inputKey = fields.inputKey ?? 'input'
++        this.appDataSource = fields.appDataSource
++        this.databaseEntities = fields.databaseEntities
++        this.chatflowid = fields.chatflowid
++        this.searchOnly = fields.searchOnly
++        this.useFlowiseChatId = fields.useFlowiseChatId
++        this.input = fields.input
++        this.orgId = fields.orgId
++    }
++
++    // Select sessionId based on toggle state (Flowise chat ID or input field)
++    private getEffectiveSessionId(overrideSessionId?: string): string {
++        let effectiveId: string | undefined
++
++        if (this.useFlowiseChatId) {
++            if (overrideSessionId) {
++                effectiveId = overrideSessionId
++            } else {
++                throw new Error('RecallIO: "Use Flowise Chat ID" is ON, but no runtime chat ID (overrideUserId) was provided.')
++            }
++        } else {
++            effectiveId = this.initialSessionId
++        }
++
++        if (!effectiveId) {
++            throw new Error('RecallIO: Could not determine a valid Session/User ID for the operation. Check User ID input field.')
++        }
++        return effectiveId
++    }
++
++    async loadMemoryVariables(values: InputValues, overrideSessionId = ''): Promise<MemoryVariables> {
++        const effectiveId = this.getEffectiveSessionId(overrideSessionId)
++        this.sessionId = effectiveId
++        const forwardedValues: InputValues = {
++            ...values,
++            input: (values as any)?.[this.inputKey] ?? (values as any)?.input ?? '*'
++        }
++        const result = await super.loadMemoryVariables(forwardedValues)
++        if (!(this.memoryKey in result)) {
++            // Guarantee presence of the expected memory key to satisfy downstream prompts
++            ;(result as any)[this.memoryKey] = this.returnMessages ? [] : ''
++        }
++        return result
++    }
++
++    async saveContext(inputValues: InputValues, outputValues: OutputValues, overrideSessionId = ''): Promise<void> {
++        if (this.searchOnly) return
++        const effectiveId = this.getEffectiveSessionId(overrideSessionId)
++        this.sessionId = effectiveId
++        return super.saveContext(inputValues, outputValues)
++    }
++
++    async clear(overrideSessionId = ''): Promise<void> {
++        const effectiveId = this.getEffectiveSessionId(overrideSessionId)
++        this.sessionId = effectiveId
++        return super.clear()
++    }
++
++    async getChatMessages(
++        overrideUserId = '',
++        returnBaseMessages = false,
++        prependMessages?: IMessage[]
++    ): Promise<IMessage[] | BaseMessage[]> {
++        const flowiseSessionId = overrideUserId
++        if (!flowiseSessionId) {
++            console.warn('RecallIO: getChatMessages called without overrideUserId (Flowise Session ID). Cannot fetch DB messages.')
++            return []
++        }
++
++        let chatMessage = await this.appDataSource.getRepository(this.databaseEntities['ChatMessage']).find({
++            where: {
++                sessionId: flowiseSessionId,
++                chatflowid: this.chatflowid
++            },
++            order: {
++                createdDate: 'DESC'
++            },
++            take: 10
++        })
++        chatMessage = chatMessage.reverse()
++
++        let returnIMessages: IMessage[] = chatMessage.map((m) => ({
++            message: m.content as string,
++            type: m.role as MessageType
++        }))
++
++        if (prependMessages?.length) {
++            returnIMessages.unshift(...prependMessages)
++            // Reverted to original simpler unshift
++            chatMessage.unshift(...(prependMessages as any))
++        }
++
++        if (returnBaseMessages) {
++            const memoryVariables = await this.loadMemoryVariables({ input: this.input ?? '' }, overrideUserId)
++            const recallHistory = memoryVariables[this.memoryKey]
++
++            if (recallHistory && typeof recallHistory === 'string') {
++                const systemMessage = {
++                    role: 'apiMessage' as MessageType,
++                    content: recallHistory,
++                    id: uuidv4()
++                }
++                // Ensure RecallIO history message also conforms structurally if mapChatMessageToBaseMessage is strict
++                chatMessage.unshift(systemMessage as any) // Cast needed if mixing structures
++            } else if (recallHistory) {
++                console.warn('RecallIO history is not a string, cannot prepend directly.')
++            }
++
++            return await mapChatMessageToBaseMessage(chatMessage, this.orgId)
++        }
++
++        return returnIMessages
++    }
++
++    async addChatMessages(msgArray: { text: string; type: MessageType }[], overrideUserId = ''): Promise<void> {
++        const effectiveUserId = this.getEffectiveSessionId(overrideUserId)
++        const input = msgArray.find((msg) => msg.type === 'userMessage')
++        const output = msgArray.find((msg) => msg.type === 'apiMessage')
++
++        if (input && output) {
++            const inputValues = { [this.inputKey ?? 'input']: input.text }
++            const outputValues = { [this.outputKey ?? 'text']: output.text }
++            await this.saveContext(inputValues, outputValues, effectiveUserId)
++        } else {
++            console.warn('RecallIO: Could not find both input and output messages to save context.')
++        }
++    }
++
++    async clearChatMessages(overrideUserId = ''): Promise<void> {
++        const effectiveUserId = this.getEffectiveSessionId(overrideUserId)
++        await this.clear(effectiveUserId)
++
++        const flowiseSessionId = overrideUserId
++        if (flowiseSessionId) {
++            await this.appDataSource
++                .getRepository(this.databaseEntities['ChatMessage'])
++                .delete({ sessionId: flowiseSessionId, chatflowid: this.chatflowid })
++        } else {
++            console.warn('RecallIO: clearChatMessages called without overrideUserId (Flowise Session ID). Cannot clear DB messages.')
++        }
++    }
++}
++
++module.exports = { nodeClass: RecallIO_Memory }
+diff --git a/packages/components/nodes/memory/RecallIOMemory/recallio.svg b/packages/components/nodes/memory/RecallIOMemory/recallio.svg
+new file mode 100644
+index 00000000000..20170f017b5
+--- /dev/null
++++ b/packages/components/nodes/memory/RecallIOMemory/recallio.svg
+@@ -0,0 +1,18 @@
++<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
++<g clip-path="url(#clip0_90_103)">
++<rect width="200" height="200" fill="#009E5C"/>
++<rect x="-5" y="52.085" width="91.4266" height="1.71855" fill="white"/>
++<rect x="-5" y="66.1768" width="91.4266" height="3.43709" fill="white"/>
++<rect x="-5" y="79.9238" width="91.4266" height="6.87418" fill="white"/>
++<rect x="-5" y="94.0186" width="91.4266" height="10.3113" fill="white"/>
++<rect x="-5" y="107.767" width="91.4266" height="14.0921" fill="white"/>
++<rect x="-5" y="121.857" width="91.4266" height="10.3113" fill="white"/>
++<rect x="-5" y="135.605" width="91.4266" height="10.3113" fill="white"/>
++<path d="M84.5195 146V52H125.821C132.726 52 138.703 53.1474 143.749 55.4423C148.884 57.7371 152.824 61.0028 155.568 65.2394C158.313 69.3878 159.685 74.3305 159.685 80.0676C159.685 84.3925 158.756 88.2319 156.896 91.5859C155.126 94.9399 152.647 97.6761 149.459 99.7944C146.361 101.913 142.775 103.237 138.703 103.766L138.304 102.575C144.59 102.575 149.371 103.943 152.647 106.679C155.922 109.327 157.782 113.431 158.224 118.992L160.615 146H140.031L138.304 122.169C138.039 118.55 136.888 115.902 134.851 114.225C132.904 112.46 129.539 111.577 124.758 111.577H104.705V146H84.5195ZM104.705 94.7634H123.563C128.433 94.7634 132.195 93.6601 134.851 91.4535C137.596 89.1587 138.968 85.9371 138.968 81.7887C138.968 77.5521 137.596 74.3746 134.851 72.2563C132.107 70.0498 128.123 68.9465 122.899 68.9465H104.705V94.7634Z" fill="white"/>
++</g>
++<defs>
++<clipPath id="clip0_90_103">
++<rect width="200" height="200" fill="white"/>
++</clipPath>
++</defs>
++</svg>
+diff --git a/packages/components/package.json b/packages/components/package.json
+index 85516b222d3..aa13b3b4cd4 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -132,6 +132,7 @@
+         "playwright": "^1.35.0",
+         "puppeteer": "^20.7.1",
+         "pyodide": ">=0.21.0-alpha.2",
++		"recallio-community": "^1.0.1",
+         "redis": "^4.6.7",
+         "remove-markdown": "^0.6.2",
+         "replicate": "^0.31.1",

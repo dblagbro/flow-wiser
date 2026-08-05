@@ -1,0 +1,835 @@
+From 92cfdfd7410e0220898448ba55e86e1ea859aad0 Mon Sep 17 00:00:00 2001
+From: Siddharth Chauhan <officialsiddharthchauhan@gmail.com>
+Date: Sat, 8 Nov 2025 00:31:53 +0530
+Subject: [PATCH 1/2] feat: Add Image Loader with OCR support for multiple
+ providers (#5195)
+
+- Add Image Loader node with support for Unstructured, AWS Textract, and Google Vision OCR providers
+- Implement OCR provider abstraction interface for extensibility
+- Add Google Vision API credential configuration
+- Update AWS credential to include region field
+- Add image file type mappings (.jpg, .jpeg, .png, .gif, .bmp, .webp, .tiff, .tif)
+- Update dropdown components to render HTML links in descriptions
+- Support theme-aware link styling in dropdown options
+
+This implementation addresses issue #5195 by enabling image uploads in Document Store
+with OCR text extraction, chunk preview, and support for multiple OCR service providers.
+---
+ .../credentials/AWSCredential.credential.ts   |   8 +
+ .../credentials/GoogleVisionApi.credential.ts |  28 ++
+ .../nodes/documentloaders/Image/Image.ts      | 241 ++++++++++++++++++
+ .../nodes/documentloaders/Image/image.svg     |  30 +++
+ .../Image/providers/AWSTextractOCRProvider.ts |  67 +++++
+ .../providers/GoogleVisionOCRProvider.ts      |  66 +++++
+ .../Image/providers/IOCRProvider.ts           |  11 +
+ .../providers/UnstructuredOCRProvider.ts      |  36 +++
+ packages/components/src/utils.ts              |  17 ++
+ .../ui-component/dropdown/AsyncDropdown.jsx   |  17 +-
+ .../ui/src/ui-component/dropdown/Dropdown.jsx |  17 +-
+ 11 files changed, 536 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/credentials/GoogleVisionApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/Image/Image.ts
+ create mode 100644 packages/components/nodes/documentloaders/Image/image.svg
+ create mode 100644 packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
+ create mode 100644 packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
+ create mode 100644 packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
+ create mode 100644 packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
+
+diff --git a/packages/components/credentials/AWSCredential.credential.ts b/packages/components/credentials/AWSCredential.credential.ts
+index 3c9dd3a6164..afeee6f866a 100644
+--- a/packages/components/credentials/AWSCredential.credential.ts
++++ b/packages/components/credentials/AWSCredential.credential.ts
+@@ -39,6 +39,14 @@ class AWSApi implements INodeCredential {
+                 placeholder: '<AWS_SESSION_TOKEN>',
+                 description: 'The session key for your AWS account. This is only needed when you are using temporary credentials.',
+                 optional: true
++            },
++            {
++                label: 'AWS Region',
++                name: 'region',
++                type: 'string',
++                placeholder: 'us-east-1',
++                description: 'The AWS region where your services are located (e.g., us-east-1, eu-west-1). Required for AWS Textract.',
++                optional: true
+             }
+         ]
+     }
+diff --git a/packages/components/credentials/GoogleVisionApi.credential.ts b/packages/components/credentials/GoogleVisionApi.credential.ts
+new file mode 100644
+index 00000000000..d3daa86cdc2
+--- /dev/null
++++ b/packages/components/credentials/GoogleVisionApi.credential.ts
+@@ -0,0 +1,28 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class GoogleVisionApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Google Cloud Vision API'
++        this.name = 'googleVisionApi'
++        this.version = 1.0
++        this.description =
++            'Refer to the <a target="_blank" href="https://cloud.google.com/vision/docs/setup">official guide</a> on how to get your Google Cloud Vision API key. You can create credentials in the <a target="_blank" href="https://console.cloud.google.com/apis/credentials">Google Cloud Console</a>.'
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'googleApiKey',
++                type: 'password',
++                description: 'Your Google Cloud Vision API key. Get it from <a target="_blank" href="https://console.cloud.google.com/apis/credentials">Google Cloud Console</a>'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: GoogleVisionApi }
++
+diff --git a/packages/components/nodes/documentloaders/Image/Image.ts b/packages/components/nodes/documentloaders/Image/Image.ts
+new file mode 100644
+index 00000000000..5b3f5a930bb
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/Image.ts
+@@ -0,0 +1,241 @@
++import { omit } from 'lodash'
++import { IDocument, ICommonObject, INode, INodeData, INodeParams, INodeOutputsValue } from '../../../src/Interface'
++import { TextSplitter } from 'langchain/text_splitter'
++import { Document } from '@langchain/core/documents'
++import { getFileFromStorage, handleEscapeCharacters, handleDocumentLoaderDocuments, handleDocumentLoaderMetadata, handleDocumentLoaderOutput, getCredentialData, getCredentialParam } from '../../../src'
++import { UnstructuredOCRProvider } from './providers/UnstructuredOCRProvider'
++import { AWSTextractOCRProvider } from './providers/AWSTextractOCRProvider'
++import { GoogleVisionOCRProvider } from './providers/GoogleVisionOCRProvider'
++import { IOCRProvider } from './providers/IOCRProvider'
++
++class Image_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'Image Loader'
++        this.name = 'imageLoader'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'image.svg'
++        this.category = 'Document Loaders'
++        this.description = 'Extract text from images using OCR. Supports multiple OCR providers including Unstructured, AWS Textract, and Google Vision.'
++        this.baseClasses = [this.type]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['unstructuredApi', 'awsApi', 'googleVisionApi'],
++            optional: false
++        }
++        this.inputs = [
++            {
++                label: 'Image File',
++                name: 'imageFile',
++                type: 'file',
++                description: 'Image file to extract text from using OCR',
++                fileType: '.jpg, .jpeg, .png, .gif, .bmp, .webp, .tiff, .tif'
++            },
++            {
++                label: 'OCR Provider',
++                name: 'ocrProvider',
++                type: 'options',
++                description: 'Select the OCR service provider to use for text extraction',
++                options: [
++                    {
++                        label: 'Unstructured',
++                        name: 'unstructured',
++                        description: 'Unstructured.io OCR service. <a target="_blank" href="https://unstructured.io/#get-api-key">Get API Key</a>'
++                    },
++                    {
++                        label: 'AWS Textract',
++                        name: 'aws-textract',
++                        description: 'Amazon Textract OCR service. <a target="_blank" href="https://docs.aws.amazon.com/textract/latest/dg/getting-started.html">Get Started</a>'
++                    },
++                    {
++                        label: 'Google Vision',
++                        name: 'google-vision',
++                        description: 'Google Cloud Vision API. <a target="_blank" href="https://cloud.google.com/vision/docs/setup">Get Started</a>'
++                    }
++                ],
++                default: 'unstructured'
++            },
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Additional Metadata',
++                name: 'metadata',
++                type: 'json',
++                description: 'Additional metadata to be added to the extracted documents',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Omit Metadata Keys',
++                name: 'omitMetadataKeys',
++                type: 'string',
++                rows: 4,
++                description:
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
++                placeholder: 'key1, key2, key3.nestedKey1',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const imageFileBase64 = nodeData.inputs?.imageFile as string
++        const ocrProvider = (nodeData.inputs?.ocrProvider as string) || 'unstructured'
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const metadata = nodeData.inputs?.metadata
++        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
++        const output = nodeData.outputs?.output as string
++
++        let omitMetadataKeys: string[] = []
++        if (_omitMetadataKeys) {
++            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
++        }
++
++        let docs: IDocument[] = []
++        let files: string[] = []
++
++        if (!imageFileBase64) {
++            throw new Error('Image file is required')
++        }
++
++        let ocrProviderInstance: IOCRProvider
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++
++        switch (ocrProvider) {
++            case 'unstructured':
++                ocrProviderInstance = new UnstructuredOCRProvider(credentialData, nodeData)
++                break
++            case 'aws-textract':
++                ocrProviderInstance = new AWSTextractOCRProvider(credentialData, nodeData)
++                break
++            case 'google-vision':
++                ocrProviderInstance = new GoogleVisionOCRProvider(credentialData, nodeData)
++                break
++            default:
++                throw new Error(`Unsupported OCR provider: ${ocrProvider}`)
++        }
++
++        if (imageFileBase64.startsWith('FILE-STORAGE::')) {
++            const fileName = imageFileBase64.replace('FILE-STORAGE::', '')
++            if (fileName.startsWith('[') && fileName.endsWith(']')) {
++                files = JSON.parse(fileName)
++            } else {
++                files = [fileName]
++            }
++            const orgId = options.orgId
++            const chatflowid = options.chatflowid
++
++            for (const file of files) {
++                if (!file) continue
++                const fileData = await getFileFromStorage(file, orgId, chatflowid)
++                const extractedText = await ocrProviderInstance.extractText(fileData, file)
++                
++                if (extractedText) {
++                    docs.push(
++                        new Document({
++                            pageContent: extractedText,
++                            metadata: {
++                                source: file,
++                                provider: ocrProvider,
++                                type: 'image'
++                            }
++                        })
++                    )
++                }
++            }
++        } else {
++            if (imageFileBase64.startsWith('[') && imageFileBase64.endsWith(']')) {
++                files = JSON.parse(imageFileBase64)
++            } else {
++                files = [imageFileBase64]
++            }
++
++            for (const file of files) {
++                if (!file) continue
++                
++                const splitDataURI = file.split(',')
++                const base64Data = splitDataURI.pop() || ''
++                const mimePrefix = splitDataURI.pop()
++                const filenameMatch = file.match(/filename:([^,]+)/)
++                const filename = filenameMatch ? filenameMatch[1] : 'image.jpg'
++                
++                const buffer = Buffer.from(base64Data, 'base64')
++                const extractedText = await ocrProviderInstance.extractText(buffer, filename)
++                
++                if (extractedText) {
++                    docs.push(
++                        new Document({
++                            pageContent: extractedText,
++                            metadata: {
++                                source: filename,
++                                provider: ocrProvider,
++                                type: 'image'
++                            }
++                        })
++                    )
++                }
++            }
++        }
++
++        if (textSplitter) {
++            docs = await textSplitter.splitDocuments(docs)
++        }
++
++        if (metadata) {
++            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            docs = docs.map((doc) => {
++                const newMetadata = { ...doc.metadata, ...parsedMetadata }
++                return {
++                    ...doc,
++                    metadata: newMetadata
++                }
++            })
++        }
++
++        if (omitMetadataKeys.length) {
++            docs = docs.map((doc) => {
++                omit(doc.metadata, omitMetadataKeys)
++                return doc
++            })
++        }
++
++        return handleDocumentLoaderOutput(docs, output)
++    }
++}
++
++module.exports = { nodeClass: Image_DocumentLoaders }
++
+diff --git a/packages/components/nodes/documentloaders/Image/image.svg b/packages/components/nodes/documentloaders/Image/image.svg
+new file mode 100644
+index 00000000000..2ba6834eb7f
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/image.svg
+@@ -0,0 +1,30 @@
++<?xml version="1.0" ?>
++<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
++<svg width="24" height="24" viewBox="0 0 74.665566 74.665566" id="svg2" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">
++<defs id="defs6">
++<clipPath clipPathUnits="userSpaceOnUse" id="clipPath42">
++<path d="M 0,64 H 64 V 0 H 0 Z" id="path40"/>
++</clipPath>
++</defs>
++<g id="g34" transform="matrix(1.3333333,0,0,-1.3333333,-5.3342789,79.999031)">
++<g id="g36">
++<g clip-path="url(#clipPath42)" id="g38">
++<g id="g44" transform="translate(55.3975,14.9321)">
++<path d="m 0,0 -17.697,-4.301 -3.174,-0.771 -0.003,-0.001 -15.48,-3.762 c -1.826,-0.442 -3.668,0.68 -4.111,2.505 l -4.302,17.698 -0.77,3.174 -0.002,0.002 -3.762,15.481 c -0.441,1.824 0.68,3.667 2.506,4.111 l 17.697,4.301 3.174,0.771 0.003,0.001 15.481,3.762 c 0.268,0.065 0.537,0.096 0.801,0.096 1.535,0 2.931,-1.045 3.309,-2.602 l 4.302,-17.697 0.77,-3.174 c 0.001,-0.001 0.001,-0.002 0.002,-0.003 L 2.506,4.111 C 2.947,2.287 1.826,0.444 0,0 m -4.688,-5.043 h -7.586 l 10.308,2.504 0.596,0.144 c -0.343,-1.514 -1.701,-2.648 -3.318,-2.648 m -40.821,3.401 v 7.586 l 2.505,-10.308 0.144,-0.595 c -1.515,0.343 -2.649,1.7 -2.649,3.317 m 3.402,40.821 h 7.586 l -10.308,-2.504 -0.596,-0.145 c 0.343,1.515 1.701,2.649 3.318,2.649 M -1.286,35.777 V 28.191 L -3.791,38.5 -3.935,39.095 c 1.515,-0.343 2.649,-1.7 2.649,-3.318 M 4.45,4.581 c 0,0 0,10e-4 0,10e-4 L 0.714,19.959 v 15.818 c 0,2.9 -2.298,5.266 -5.168,5.39 -0.797,2.756 -3.64,4.43 -6.458,3.748 l -15.377,-3.736 h -15.818 c -2.9,0 -5.266,-2.298 -5.39,-5.168 -2.755,-0.797 -4.429,-3.638 -3.748,-6.457 l 3.736,-15.378 V -1.642 c 0,-2.902 2.303,-5.271 5.177,-5.39 0.678,-2.337 2.818,-3.9 5.176,-3.9 0.42,0 0.847,0.05 1.273,0.153 l 15.377,3.736 h 15.818 c 2.899,0 5.266,2.298 5.39,5.168 2.756,0.796 4.429,3.638 3.748,6.456" id="path46" style="fill:#231f20;fill-opacity:1;fill-rule:nonzero;stroke:none"/>
++</g>
++<g id="g48" transform="translate(17.8979,18.9194)">
++<path d="M 0,0 7.895,19.981 24.079,5.851 c 0.416,-0.365 1.047,-0.321 1.411,0.095 0.363,0.416 0.32,1.048 -0.096,1.411 l -6.279,5.482 2.797,5.061 11.814,-9.729 c 0.186,-0.153 0.411,-0.228 0.635,-0.228 0.288,0 0.575,0.124 0.772,0.364 0.351,0.426 0.29,1.057 -0.136,1.408 L 22.254,20.209 c -0.23,0.188 -0.531,0.265 -0.823,0.21 -0.292,-0.055 -0.544,-0.238 -0.688,-0.498 l -3.169,-5.735 -9.43,8.233 C 7.899,22.633 7.567,22.715 7.25,22.638 6.934,22.561 6.675,22.336 6.556,22.034 L -1.86,0.735 c -0.203,-0.513 0.048,-1.094 0.562,-1.297 0.121,-0.048 0.245,-0.071 0.367,-0.071 0.399,0 0.776,0.24 0.931,0.633" id="path50" style="fill:#231f20;fill-opacity:1;fill-rule:nonzero;stroke:none"/>
++</g>
++<g id="g52" transform="translate(43.1772,23.2866)">
++<path d="m 0,0 -25.666,-6.236 c -0.537,-0.131 -0.866,-0.671 -0.735,-1.208 0.111,-0.457 0.52,-0.764 0.97,-0.764 0.078,0 0.158,0.009 0.238,0.028 l 25.666,6.237 c 0.536,0.13 0.865,0.671 0.735,1.208 C 1.077,-0.199 0.538,0.134 0,0" id="path54" style="fill:#231f20;fill-opacity:1;fill-rule:nonzero;stroke:none"/>
++</g>
++<g id="g56" transform="translate(52.8022,25.6255)">
++<path d="m 0,0 -6.417,-1.559 c -0.536,-0.13 -0.865,-0.671 -0.735,-1.208 0.111,-0.457 0.52,-0.764 0.971,-0.764 0.078,0 0.158,0.009 0.237,0.029 l 6.417,1.559 c 0.536,0.13 0.865,0.671 0.735,1.208 C 1.077,-0.199 0.538,0.132 0,0" id="path58" style="fill:#231f20;fill-opacity:1;fill-rule:nonzero;stroke:none"/>
++</g>
++<g id="g60" transform="translate(33.3896,44.9058)">
++<path d="m 0,0 c 0.094,0.022 0.189,0.033 0.284,0.034 0.128,0 0.253,-0.025 0.371,-0.063 0.028,-0.009 0.053,-0.024 0.079,-0.035 0.081,-0.033 0.159,-0.075 0.23,-0.125 0.077,-0.053 0.14,-0.118 0.201,-0.185 0.036,-0.04 0.078,-0.073 0.109,-0.118 0.082,-0.121 0.148,-0.254 0.184,-0.401 0.038,-0.16 0.043,-0.32 0.018,-0.474 C 1.468,-1.411 1.441,-1.448 1.43,-1.491 1.399,-1.596 1.373,-1.703 1.316,-1.796 1.3,-1.823 1.271,-1.84 1.253,-1.865 1.182,-1.964 1.106,-2.062 1.006,-2.135 1.001,-2.139 0.995,-2.14 0.99,-2.143 0.868,-2.23 0.73,-2.299 0.576,-2.337 0.498,-2.356 0.422,-2.342 0.345,-2.346 0.262,-2.349 0.178,-2.368 0.098,-2.355 -0.365,-2.279 -0.763,-1.937 -0.88,-1.455 -1.036,-0.815 -0.636,-0.161 0,0 m 0.293,-4.371 c 0.249,0 0.5,0.029 0.752,0.09 0.001,0 0.002,0 0.003,0 1.713,0.417 2.769,2.148 2.353,3.858 -0.414,1.72 -2.153,2.782 -3.88,2.365 -1.707,-0.431 -2.758,-2.167 -2.345,-3.87 0.355,-1.46 1.671,-2.443 3.117,-2.443" id="path62" style="fill:#231f20;fill-opacity:1;fill-rule:nonzero;stroke:none"/>
++</g>
++</g>
++</g>
++</g>
++</svg>
+diff --git a/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
+new file mode 100644
+index 00000000000..4e83eb2476b
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
+@@ -0,0 +1,67 @@
++import { IOCRProvider, OCRProviderOptions } from './IOCRProvider'
++import { getCredentialParam } from '../../../../src'
++
++export class AWSTextractOCRProvider implements IOCRProvider {
++    private client: any
++    private region: string
++    private accessKeyId: string
++    private secretAccessKey: string
++
++    constructor(credentialData: any, nodeData: any) {
++        this.accessKeyId = getCredentialParam('awsKey', credentialData, nodeData)
++        this.secretAccessKey = getCredentialParam('awsSecret', credentialData, nodeData)
++        this.region = getCredentialParam('region', credentialData, nodeData) || getCredentialParam('awsRegion', credentialData, nodeData) || 'us-east-1'
++
++        if (!this.accessKeyId || !this.secretAccessKey) {
++            throw new Error('AWS credentials (accessKeyId and secretAccessKey) are required for AWS Textract')
++        }
++    }
++
++    private async initializeClient() {
++        if (this.client) {
++            return
++        }
++
++        try {
++            const textractModule = require('@aws-sdk/client-textract')
++            const TextractClientClass = textractModule.TextractClient
++
++            this.client = new TextractClientClass({
++                region: this.region,
++                credentials: {
++                    accessKeyId: this.accessKeyId,
++                    secretAccessKey: this.secretAccessKey
++                }
++            })
++        } catch (error) {
++            throw new Error('AWS SDK for Textract is not installed. Please install @aws-sdk/client-textract package.')
++        }
++    }
++
++    async extractText(buffer: Buffer, filename: string): Promise<string> {
++        try {
++            await this.initializeClient()
++
++            const textractModule = require('@aws-sdk/client-textract')
++            const DetectDocumentTextCommandClass = textractModule.DetectDocumentTextCommand
++
++            const command = new DetectDocumentTextCommandClass({
++                Document: {
++                    Bytes: buffer
++                }
++            })
++
++            const response = await this.client.send(command)
++
++            if (!response.Blocks) {
++                return ''
++            }
++
++            const textBlocks = response.Blocks.filter((block: any) => block.BlockType === 'LINE' && block.Text)
++            return textBlocks.map((block: any) => block.Text).join('\n')
++        } catch (error) {
++            throw new Error(`AWS Textract OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
++        }
++    }
++}
++
+diff --git a/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
+new file mode 100644
+index 00000000000..0590140f85d
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
+@@ -0,0 +1,66 @@
++import { IOCRProvider, OCRProviderOptions } from './IOCRProvider'
++import { getCredentialParam } from '../../../../src'
++
++export class GoogleVisionOCRProvider implements IOCRProvider {
++    private apiKey: string
++    private apiUrl: string
++
++    constructor(credentialData: any, nodeData: any) {
++        this.apiKey = getCredentialParam('googleApiKey', credentialData, nodeData)
++        
++        if (!this.apiKey) {
++            throw new Error('Google API Key is required for Google Vision OCR')
++        }
++
++        this.apiUrl = 'https://vision.googleapis.com/v1/images:annotate'
++    }
++
++    async extractText(buffer: Buffer, filename: string): Promise<string> {
++        try {
++            const base64Image = buffer.toString('base64')
++
++            const requestBody = {
++                requests: [
++                    {
++                        image: {
++                            content: base64Image
++                        },
++                        features: [
++                            {
++                                type: 'TEXT_DETECTION',
++                                maxResults: 1
++                            }
++                        ]
++                    }
++                ]
++            }
++
++            const response = await fetch(`${this.apiUrl}?key=${this.apiKey}`, {
++                method: 'POST',
++                headers: {
++                    'Content-Type': 'application/json'
++                },
++                body: JSON.stringify(requestBody)
++            })
++
++            if (!response.ok) {
++                const errorText = await response.text()
++                throw new Error(`Google Vision API error: ${response.status} - ${errorText}`)
++            }
++
++            const data = await response.json()
++
++            if (data.responses && data.responses[0] && data.responses[0].textAnnotations) {
++                const textAnnotations = data.responses[0].textAnnotations
++                if (textAnnotations.length > 0) {
++                    return textAnnotations[0].description || ''
++                }
++            }
++
++            return ''
++        } catch (error) {
++            throw new Error(`Google Vision OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
++        }
++    }
++}
++
+diff --git a/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
+new file mode 100644
+index 00000000000..070fbed5d4d
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
+@@ -0,0 +1,11 @@
++import { INodeData, ICommonObject } from '../../../../src/Interface'
++
++export interface IOCRProvider {
++    extractText(buffer: Buffer, filename: string): Promise<string>
++}
++
++export interface OCRProviderOptions {
++    credentialData: ICommonObject
++    nodeData: INodeData
++}
++
+diff --git a/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
+new file mode 100644
+index 00000000000..452a150fc01
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
+@@ -0,0 +1,36 @@
++import { IOCRProvider, OCRProviderOptions } from './IOCRProvider'
++import { UnstructuredLoader } from '../../Unstructured/Unstructured'
++import { UnstructuredLoaderOptions, UnstructuredLoaderStrategy } from '@langchain/community/document_loaders/fs/unstructured'
++import { getCredentialParam } from '../../../../src'
++
++export class UnstructuredOCRProvider implements IOCRProvider {
++    private apiUrl: string
++    private apiKey?: string
++    private strategy: UnstructuredLoaderStrategy
++    private ocrLanguages: string[]
++
++    constructor(credentialData: any, nodeData: any) {
++        this.apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general'
++        this.apiKey = getCredentialParam('unstructuredAPIKey', credentialData, nodeData)
++        this.strategy = 'ocr_only'
++        this.ocrLanguages = []
++    }
++
++    async extractText(buffer: Buffer, filename: string): Promise<string> {
++        const options: UnstructuredLoaderOptions = {
++            apiUrl: this.apiUrl,
++            strategy: this.strategy,
++            ocrLanguages: this.ocrLanguages
++        }
++
++        if (this.apiKey) {
++            options.apiKey = this.apiKey
++        }
++
++        const loader = new UnstructuredLoader(options)
++        const documents = await loader.loadAndSplitBuffer(buffer, filename)
++
++        return documents.map((doc) => doc.pageContent).join('\n\n')
++    }
++}
++
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 7c526681f5e..a862373b6b2 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -1050,6 +1050,15 @@ export const mapExtToInputField = (ext: string) => {
+             return 'docxFile'
+         case '.yaml':
+             return 'yamlFile'
++        case '.jpg':
++        case '.jpeg':
++        case '.png':
++        case '.gif':
++        case '.bmp':
++        case '.webp':
++        case '.tiff':
++        case '.tif':
++            return 'imageFile'
+         default:
+             return 'txtFile'
+     }
+@@ -1092,6 +1101,14 @@ export const mapMimeTypeToInputField = (mimeType: string) => {
+         case 'text/x-yaml':
+         case 'text/yaml':
+             return 'yamlFile'
++        case 'image/jpeg':
++        case 'image/jpg':
++        case 'image/png':
++        case 'image/gif':
++        case 'image/bmp':
++        case 'image/webp':
++        case 'image/tiff':
++            return 'imageFile'
+         default:
+             return 'txtFile'
+     }
+diff --git a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+index 5534d6526fb..f70e309f0f4 100644
+--- a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+@@ -2,6 +2,7 @@ import { useState, useEffect, useContext, Fragment } from 'react'
+ import { useSelector } from 'react-redux'
+ import PropTypes from 'prop-types'
+ import axios from 'axios'
++import parser from 'html-react-parser'
+ 
+ // Material
+ import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+@@ -298,7 +299,21 @@ export const AsyncDropdown = ({
+                         <div style={{ display: 'flex', flexDirection: 'column' }}>
+                             <Typography variant='h5'>{option.label}</Typography>
+                             {option.description && (
+-                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>{option.description}</Typography>
++                                <Typography 
++                                    sx={{ 
++                                        color: customization.isDarkMode ? '#9e9e9e' : '',
++                                        '& a': {
++                                            color: theme.palette.primary.main,
++                                            textDecoration: 'none',
++                                            '&:hover': {
++                                                textDecoration: 'underline'
++                                            }
++                                        }
++                                    }}
++                                    component='div'
++                                >
++                                    {parser(option.description)}
++                                </Typography>
+                             )}
+                         </div>
+                     </Box>
+diff --git a/packages/ui/src/ui-component/dropdown/Dropdown.jsx b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+index c18f52c944e..04e060d3c3e 100644
+--- a/packages/ui/src/ui-component/dropdown/Dropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+@@ -5,6 +5,7 @@ import { Popper, FormControl, TextField, Box, Typography } from '@mui/material'
+ import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+ import { useTheme, styled } from '@mui/material/styles'
+ import PropTypes from 'prop-types'
++import parser from 'html-react-parser'
+ 
+ const StyledPopper = styled(Popper)({
+     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
+@@ -92,7 +93,21 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
+                         <div style={{ display: 'flex', flexDirection: 'column' }}>
+                             <Typography variant='h5'>{option.label}</Typography>
+                             {option.description && (
+-                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>{option.description}</Typography>
++                                <Typography 
++                                    sx={{ 
++                                        color: customization.isDarkMode ? '#9e9e9e' : '',
++                                        '& a': {
++                                            color: theme.palette.primary.main,
++                                            textDecoration: 'none',
++                                            '&:hover': {
++                                                textDecoration: 'underline'
++                                            }
++                                        }
++                                    }}
++                                    component='div'
++                                >
++                                    {parser(option.description)}
++                                </Typography>
+                             )}
+                         </div>
+                     </Box>
+
+From 74d44c4228bb333b4879aeb6cfc371e4f3439201 Mon Sep 17 00:00:00 2001
+From: Siddharth Chauhan <officialsiddharthchauhan@gmail.com>
+Date: Sat, 8 Nov 2025 12:42:21 +0530
+Subject: [PATCH 2/2] fix: Use OCRProviderOptions interface and remove unused
+ imports
+
+- Update all OCR provider constructors to use OCRProviderOptions interface for better type safety
+- Remove unused imports: handleEscapeCharacters, handleDocumentLoaderDocuments, getCredentialParam
+- Refactor metadata handling to use handleDocumentLoaderMetadata utility function
+- Remove unused omitMetadataKeys variable
+---
+ .../nodes/documentloaders/Image/Image.ts      | 36 ++++++-------------
+ .../Image/providers/AWSTextractOCRProvider.ts |  8 ++---
+ .../providers/GoogleVisionOCRProvider.ts      |  4 +--
+ .../Image/providers/IOCRProvider.ts           |  2 ++
+ .../providers/UnstructuredOCRProvider.ts      |  4 +--
+ 5 files changed, 20 insertions(+), 34 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Image/Image.ts b/packages/components/nodes/documentloaders/Image/Image.ts
+index 5b3f5a930bb..c9a62cb6777 100644
+--- a/packages/components/nodes/documentloaders/Image/Image.ts
++++ b/packages/components/nodes/documentloaders/Image/Image.ts
+@@ -2,7 +2,7 @@ import { omit } from 'lodash'
+ import { IDocument, ICommonObject, INode, INodeData, INodeParams, INodeOutputsValue } from '../../../src/Interface'
+ import { TextSplitter } from 'langchain/text_splitter'
+ import { Document } from '@langchain/core/documents'
+-import { getFileFromStorage, handleEscapeCharacters, handleDocumentLoaderDocuments, handleDocumentLoaderMetadata, handleDocumentLoaderOutput, getCredentialData, getCredentialParam } from '../../../src'
++import { getFileFromStorage, handleDocumentLoaderMetadata, handleDocumentLoaderOutput, getCredentialData } from '../../../src'
+ import { UnstructuredOCRProvider } from './providers/UnstructuredOCRProvider'
+ import { AWSTextractOCRProvider } from './providers/AWSTextractOCRProvider'
+ import { GoogleVisionOCRProvider } from './providers/GoogleVisionOCRProvider'
+@@ -119,11 +119,6 @@ class Image_DocumentLoaders implements INode {
+         const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
+         const output = nodeData.outputs?.output as string
+ 
+-        let omitMetadataKeys: string[] = []
+-        if (_omitMetadataKeys) {
+-            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
+-        }
+-
+         let docs: IDocument[] = []
+         let files: string[] = []
+ 
+@@ -135,15 +130,20 @@ class Image_DocumentLoaders implements INode {
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+ 
++        const ocrProviderOptions = {
++            credentialData,
++            nodeData
++        }
++
+         switch (ocrProvider) {
+             case 'unstructured':
+-                ocrProviderInstance = new UnstructuredOCRProvider(credentialData, nodeData)
++                ocrProviderInstance = new UnstructuredOCRProvider(ocrProviderOptions)
+                 break
+             case 'aws-textract':
+-                ocrProviderInstance = new AWSTextractOCRProvider(credentialData, nodeData)
++                ocrProviderInstance = new AWSTextractOCRProvider(ocrProviderOptions)
+                 break
+             case 'google-vision':
+-                ocrProviderInstance = new GoogleVisionOCRProvider(credentialData, nodeData)
++                ocrProviderInstance = new GoogleVisionOCRProvider(ocrProviderOptions)
+                 break
+             default:
+                 throw new Error(`Unsupported OCR provider: ${ocrProvider}`)
+@@ -215,23 +215,7 @@ class Image_DocumentLoaders implements INode {
+             docs = await textSplitter.splitDocuments(docs)
+         }
+ 
+-        if (metadata) {
+-            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
+-            docs = docs.map((doc) => {
+-                const newMetadata = { ...doc.metadata, ...parsedMetadata }
+-                return {
+-                    ...doc,
+-                    metadata: newMetadata
+-                }
+-            })
+-        }
+-
+-        if (omitMetadataKeys.length) {
+-            docs = docs.map((doc) => {
+-                omit(doc.metadata, omitMetadataKeys)
+-                return doc
+-            })
+-        }
++        docs = handleDocumentLoaderMetadata(docs, _omitMetadataKeys, metadata)
+ 
+         return handleDocumentLoaderOutput(docs, output)
+     }
+diff --git a/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
+index 4e83eb2476b..e5bd2112e75 100644
+--- a/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
++++ b/packages/components/nodes/documentloaders/Image/providers/AWSTextractOCRProvider.ts
+@@ -7,10 +7,10 @@ export class AWSTextractOCRProvider implements IOCRProvider {
+     private accessKeyId: string
+     private secretAccessKey: string
+ 
+-    constructor(credentialData: any, nodeData: any) {
+-        this.accessKeyId = getCredentialParam('awsKey', credentialData, nodeData)
+-        this.secretAccessKey = getCredentialParam('awsSecret', credentialData, nodeData)
+-        this.region = getCredentialParam('region', credentialData, nodeData) || getCredentialParam('awsRegion', credentialData, nodeData) || 'us-east-1'
++    constructor(options: OCRProviderOptions) {
++        this.accessKeyId = getCredentialParam('awsKey', options.credentialData, options.nodeData)
++        this.secretAccessKey = getCredentialParam('awsSecret', options.credentialData, options.nodeData)
++        this.region = getCredentialParam('region', options.credentialData, options.nodeData) || getCredentialParam('awsRegion', options.credentialData, options.nodeData) || 'us-east-1'
+ 
+         if (!this.accessKeyId || !this.secretAccessKey) {
+             throw new Error('AWS credentials (accessKeyId and secretAccessKey) are required for AWS Textract')
+diff --git a/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
+index 0590140f85d..665ace28d2a 100644
+--- a/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
++++ b/packages/components/nodes/documentloaders/Image/providers/GoogleVisionOCRProvider.ts
+@@ -5,8 +5,8 @@ export class GoogleVisionOCRProvider implements IOCRProvider {
+     private apiKey: string
+     private apiUrl: string
+ 
+-    constructor(credentialData: any, nodeData: any) {
+-        this.apiKey = getCredentialParam('googleApiKey', credentialData, nodeData)
++    constructor(options: OCRProviderOptions) {
++        this.apiKey = getCredentialParam('googleApiKey', options.credentialData, options.nodeData)
+         
+         if (!this.apiKey) {
+             throw new Error('Google API Key is required for Google Vision OCR')
+diff --git a/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
+index 070fbed5d4d..e4e0a355075 100644
+--- a/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
++++ b/packages/components/nodes/documentloaders/Image/providers/IOCRProvider.ts
+@@ -9,3 +9,5 @@ export interface OCRProviderOptions {
+     nodeData: INodeData
+ }
+ 
++export type OCRProviderConstructor = new (options: OCRProviderOptions) => IOCRProvider
++
+diff --git a/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts b/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
+index 452a150fc01..fdc573ea299 100644
+--- a/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
++++ b/packages/components/nodes/documentloaders/Image/providers/UnstructuredOCRProvider.ts
+@@ -9,9 +9,9 @@ export class UnstructuredOCRProvider implements IOCRProvider {
+     private strategy: UnstructuredLoaderStrategy
+     private ocrLanguages: string[]
+ 
+-    constructor(credentialData: any, nodeData: any) {
++    constructor(options: OCRProviderOptions) {
+         this.apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general'
+-        this.apiKey = getCredentialParam('unstructuredAPIKey', credentialData, nodeData)
++        this.apiKey = getCredentialParam('unstructuredAPIKey', options.credentialData, options.nodeData)
+         this.strategy = 'ocr_only'
+         this.ocrLanguages = []
+     }

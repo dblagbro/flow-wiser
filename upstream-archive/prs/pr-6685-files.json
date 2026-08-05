@@ -1,0 +1,1 @@
+[{"additions":30,"deletions":0,"filename":"packages/components/credentials/AWSBedrockApiKey.credential.ts","status":"added"},{"additions":8,"deletions":0,"filename":"packages/components/models.json","status":"modified"},{"additions":36,"deletions":2,"filename":"packages/components/nodes/chatmodels/AWSBedrock/AWSChatBedrock.ts","status":"modified"}]

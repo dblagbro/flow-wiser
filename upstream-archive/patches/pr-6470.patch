@@ -1,0 +1,755 @@
+From d91d8782c787fe9ae67241a8d7b37c82917a3f73 Mon Sep 17 00:00:00 2001
+From: umerkay <umerkk164@gmail.com>
+Date: Wed, 3 Jun 2026 14:56:27 +0500
+Subject: [PATCH 1/5] Adds two new tool nodes under LangChain > Tools:
+
+---
+ .../credentials/OlostepApi.credential.ts      |  24 ++++
+ .../tools/OlostepScraper/OlostepScraper.ts    | 126 ++++++++++++++++++
+ .../nodes/tools/OlostepScraper/olostep.svg    |   4 +
+ .../tools/OlostepSearch/OlostepSearch.ts      | 121 +++++++++++++++++
+ .../nodes/tools/OlostepSearch/olostep.svg     |   4 +
+ packages/components/package.json              |   1 +
+ pnpm-lock.yaml                                |  53 ++------
+ 7 files changed, 291 insertions(+), 42 deletions(-)
+ create mode 100644 packages/components/credentials/OlostepApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+ create mode 100644 packages/components/nodes/tools/OlostepScraper/olostep.svg
+ create mode 100644 packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+ create mode 100644 packages/components/nodes/tools/OlostepSearch/olostep.svg
+
+diff --git a/packages/components/credentials/OlostepApi.credential.ts b/packages/components/credentials/OlostepApi.credential.ts
+new file mode 100644
+index 00000000000..5725702f587
+--- /dev/null
++++ b/packages/components/credentials/OlostepApi.credential.ts
+@@ -0,0 +1,24 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class OlostepApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Olostep API'
++        this.name = 'olostepApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'apiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: OlostepApi }
+diff --git a/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts b/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+new file mode 100644
+index 00000000000..3cc8f7f58bc
+--- /dev/null
++++ b/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+@@ -0,0 +1,126 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class OlostepScraper extends Tool {
++    static lc_name() {
++        return 'OlostepScraper'
++    }
++
++    name = 'olostep_scrape'
++
++    description = 'Fetch and read the content of a web page from a URL.'
++
++    private readonly apiKey: string
++    private readonly Olostep: any
++    private readonly Format: any
++
++    constructor(apiKey: string, Olostep: any, Format: any, description?: string) {
++        super()
++        this.apiKey = apiKey
++        this.Olostep = Olostep
++        this.Format = Format
++        if (description) this.description = description
++    }
++
++    protected async _call(url: string): Promise<string> {
++        if (!url) return 'No URL provided'
++
++        try {
++            const client = new this.Olostep({ apiKey: this.apiKey })
++
++            const result = await client.scrapes.create({
++                url,
++                formats: [this.Format.MARKDOWN]
++            })
++
++            return result?.markdown_content || 'No content found'
++        } catch (error: any) {
++            return `Olostep scrape error: ${error?.message ?? String(error)}`
++        }
++    }
++}
++
++class OlostepScraperMissingSDK extends Tool {
++    static lc_name() {
++        return 'OlostepScraperMissingSDK'
++    }
++
++    name = 'olostep_scrape'
++
++    description = 'Fetch and read the content of a web page from a URL.'
++
++    private readonly message: string
++
++    constructor(message: string, description?: string) {
++        super()
++        this.message = message
++        if (description) this.description = description
++    }
++
++    protected async _call(_url: string): Promise<string> {
++        return this.message
++    }
++}
++
++class OlostepScraper_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Olostep Scraper'
++        this.name = 'olostepScraper'
++        this.version = 1.0
++        this.type = 'OlostepScraper'
++        this.icon = 'olostep.svg'
++        this.category = 'Tools'
++        this.description = 'Fetch and extract clean Markdown content from any URL using Olostep'
++        this.inputs = [
++            {
++                name: 'description',
++                label: 'Tool Description',
++                type: 'string',
++                rows: 4,
++                optional: true,
++                additionalParams: true,
++                default: 'Fetch and read the content of a web page from a URL.'
++            }
++        ]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['olostepApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(OlostepScraper)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
++
++        const description = nodeData.inputs?.description as string
++
++        try {
++            const olostepMod: any = await import('olostep')
++            const Olostep = olostepMod?.default
++            const Format = olostepMod?.Format
++            if (!Olostep || !Format) {
++                return new OlostepScraperMissingSDK('Olostep SDK is unavailable', description)
++            }
++            return new OlostepScraper(String(apiKey), Olostep, Format, description)
++        } catch (error: any) {
++            return new OlostepScraperMissingSDK(`Olostep SDK is not installed: ${error?.message ?? String(error)}`, description)
++        }
++    }
++}
++
++module.exports = { nodeClass: OlostepScraper_Tools }
+diff --git a/packages/components/nodes/tools/OlostepScraper/olostep.svg b/packages/components/nodes/tools/OlostepScraper/olostep.svg
+new file mode 100644
+index 00000000000..dbd67320af8
+--- /dev/null
++++ b/packages/components/nodes/tools/OlostepScraper/olostep.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
++  <circle cx="50" cy="50" r="45" fill="#4F46E5"/>
++  <text x="50" y="65" font-size="40" text-anchor="middle" fill="white" font-family="Arial, sans-serif">O</text>
++</svg>
+diff --git a/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts b/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+new file mode 100644
+index 00000000000..eb9f5d8ec4f
+--- /dev/null
++++ b/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+@@ -0,0 +1,121 @@
++import { Tool } from '@langchain/core/tools'
++import axios from 'axios'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++type OlostepLink = {
++    url: string
++    title: string
++    description: string
++}
++
++class OlostepSearch extends Tool {
++    static lc_name() {
++        return 'OlostepSearch'
++    }
++
++    name = 'olostep_search'
++
++    description = 'Search the web for current information, news, and facts.'
++
++    private readonly apiKey: string
++    private readonly numResults: number
++
++    constructor(apiKey: string, numResults = 5, description?: string) {
++        super()
++        this.apiKey = apiKey
++        this.numResults = numResults
++        if (description) this.description = description
++    }
++
++    protected async _call(query: string): Promise<string> {
++        if (!query) return 'No query provided'
++
++        try {
++            const response = await axios.post(
++                'https://api.olostep.com/v1/searches',
++                { query },
++                {
++                    headers: {
++                        Authorization: `Bearer ${this.apiKey}`,
++                        'Content-Type': 'application/json'
++                    }
++                }
++            )
++
++            const links = response?.data?.result?.links as OlostepLink[] | undefined
++            if (!Array.isArray(links) || links.length === 0) return 'No results found'
++
++            const results = links.slice(0, this.numResults)
++            return results.map((r, i) => `${i + 1}. ${r.title}\n${r.description}\nURL: ${r.url}`).join('\n\n')
++        } catch (error: any) {
++            return `Olostep search error: ${error?.message ?? String(error)}`
++        }
++    }
++}
++
++class OlostepSearch_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Olostep Search'
++        this.name = 'olostepSearch'
++        this.version = 1.0
++        this.type = 'OlostepSearch'
++        this.icon = 'olostep.svg'
++        this.category = 'Tools'
++        this.description = 'Search the web using Olostep and return relevant results with titles, URLs, and descriptions'
++        this.inputs = [
++            {
++                name: 'numResults',
++                label: 'Number of Results',
++                type: 'number',
++                default: 5,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                name: 'description',
++                label: 'Tool Description',
++                type: 'string',
++                rows: 4,
++                optional: true,
++                additionalParams: true,
++                default: 'Search the web for current information, news, and facts.'
++            }
++        ]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['olostepApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(OlostepSearch)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
++
++        const numResultsRaw = nodeData.inputs?.numResults as number | string | undefined
++        let numResults = 5
++        if (numResultsRaw !== undefined && numResultsRaw !== '') {
++            const parsed = parseInt(String(numResultsRaw), 10)
++            if (!isNaN(parsed) && parsed > 0) numResults = parsed
++        }
++        const description = nodeData.inputs?.description as string
++
++        return new OlostepSearch(String(apiKey), numResults, description)
++    }
++}
++
++module.exports = { nodeClass: OlostepSearch_Tools }
+diff --git a/packages/components/nodes/tools/OlostepSearch/olostep.svg b/packages/components/nodes/tools/OlostepSearch/olostep.svg
+new file mode 100644
+index 00000000000..dbd67320af8
+--- /dev/null
++++ b/packages/components/nodes/tools/OlostepSearch/olostep.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
++  <circle cx="50" cy="50" r="45" fill="#4F46E5"/>
++  <text x="50" y="65" font-size="40" text-anchor="middle" fill="white" font-family="Arial, sans-serif">O</text>
++</svg>
+diff --git a/packages/components/package.json b/packages/components/package.json
+index bebf3c06f3e..b75102f9aa9 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -165,6 +165,7 @@
+         "object-hash": "^3.0.0",
+         "officeparser": "5.1.1",
+         "ollama": "^0.5.11",
++        "olostep": ">=0.1.0",
+         "openai": "6.19.0",
+         "papaparse": "^5.4.1",
+         "pdf-parse": "^1.1.1",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5b282e65c28..0e8af5a82d3 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -687,6 +687,9 @@ importers:
+       ollama:
+         specifier: ^0.5.11
+         version: 0.5.11
++      olostep:
++        specifier: '>=0.1.0'
++        version: 1.1.0
+       openai:
+         specifier: 6.19.0
+         version: 6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)
+@@ -4620,79 +4623,67 @@ packages:
+     resolution: {integrity: sha512-9B+taZ8DlyyqzZQnoeIvDVR/2F4EbMepXMc/NdVbkzsJbzkUjhXv/70GQJ7tdLA4YJgNP25zukcxpX2/SueNrA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-arm@1.0.5':
+     resolution: {integrity: sha512-gvcC4ACAOPRNATg/ov8/MnbxFDJqf/pDePbBnuBDcjsI8PssmjoKMAz4LtLaVi+OnSb5FK/yIOamqDwGmXW32g==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-s390x@1.0.4':
+     resolution: {integrity: sha512-u7Wz6ntiSSgGSGcjZ55im6uvTrOxSIS8/dgoVMoiGE9I6JAfU50yH5BoDlYA1tcuGS7g/QNtetJnxA6QEsCVTA==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linux-x64@1.0.4':
+     resolution: {integrity: sha512-MmWmQ3iPFZr0Iev+BAgVMb3ZyC4KeFc3jFxnNbEPas60e1cIfevbtuyf9nDGIzOaW9PdnDciJm+wFFaTlj5xYw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-libvips-linuxmusl-arm64@1.0.4':
+     resolution: {integrity: sha512-9Ti+BbTYDcsbp4wfYib8Ctm1ilkugkA/uscUn6UXK1ldpC1JjiXbLfFZtRlBhjPZ5o1NCLiDbg8fhUPKStHoTA==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-libvips-linuxmusl-x64@1.0.4':
+     resolution: {integrity: sha512-viYN1KX9m+/hGkJtvYYp+CCLgnJXwiQB39damAO7WMdKWlIhmYTfHjwSbQeUK/20vY154mwezd9HflVFM1wVSw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linux-arm64@0.33.5':
+     resolution: {integrity: sha512-JMVv+AMRyGOHtO1RFBiJy/MBsgz0x4AWrT6QoEVVTyh1E39TrCUpTRI7mx9VksGX4awWASxqCYLCV4wBZHAYxA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-arm@0.33.5':
+     resolution: {integrity: sha512-JTS1eldqZbJxjvKaAkxhZmBqPRGmxgu+qFKSInv8moZ2AmT5Yib3EQ1c6gp493HvrvV8QgdOXdyaIBrhvFhBMQ==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-s390x@0.33.5':
+     resolution: {integrity: sha512-y/5PCd+mP4CA/sPDKl2961b+C9d+vPAveS33s6Z3zfASk2j5upL6fXVPZi7ztePZ5CuH+1kW8JtvxgbuXHRa4Q==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linux-x64@0.33.5':
+     resolution: {integrity: sha512-opC+Ok5pRNAzuvq1AG0ar+1owsu842/Ab+4qvU879ippJBHvyY5n2mxF1izXqkPYlGuP/M556uh53jRLJmzTWA==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@img/sharp-linuxmusl-arm64@0.33.5':
+     resolution: {integrity: sha512-XrHMZwGQGvJg2V/oRSUfSAfjfPxO+4DkiRh6p2AFjLQztWUuY/o8Mq0eMQVIY7HJ1CDQUJlxGGZRw1a5bqmd1g==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-linuxmusl-x64@0.33.5':
+     resolution: {integrity: sha512-WT+d/cgqKkkKySYmqoZ8y3pxx7lx9vVejxW/W4DOFMYVSkErR+w7mf2u8m/y4+xHe7yY9DAXQMWQhpnMuFfScw==}
+     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@img/sharp-wasm32@0.33.5':
+     resolution: {integrity: sha512-ykUW4LVGaMcU9lu9thv85CbRMAwfeadCJHRsg2GmeRa/cJxsVY9Rbd57JcMxBkKHag5U/x7TSBpScF4U8ElVzg==}
+@@ -6516,35 +6507,30 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-arm64-musl@0.1.73':
+     resolution: {integrity: sha512-lX0z2bNmnk1PGZ+0a9OZwI2lPPvWjRYzPqvEitXX7lspyLFrOzh2kcQiLL7bhyODN23QvfriqwYqp5GreSzVvA==}
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-linux-riscv64-gnu@0.1.73':
+     resolution: {integrity: sha512-QDQgMElwxAoADsSR3UYvdTTQk5XOyD9J5kq15Z8XpGwpZOZsSE0zZ/X1JaOtS2x+HEZL6z1S6MF/1uhZFZb5ig==}
+     engines: {node: '>= 10'}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-gnu@0.1.73':
+     resolution: {integrity: sha512-wbzLJrTalQrpyrU1YRrO6w6pdr5vcebbJa+Aut5QfTaW9eEmMb1WFG6l1V+cCa5LdHmRr8bsvl0nJDU/IYDsmw==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@napi-rs/canvas-linux-x64-musl@0.1.73':
+     resolution: {integrity: sha512-xbfhYrUufoTAKvsEx2ZUN4jvACabIF0h1F5Ik1Rk4e/kQq6c+Dwa5QF0bGrfLhceLpzHT0pCMGMDeQKQrcUIyA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@napi-rs/canvas-win32-x64-msvc@0.1.73':
+     resolution: {integrity: sha512-YQmHXBufFBdWqhx+ympeTPkMfs3RNxaOgWm59vyjpsub7Us07BwCcmu1N5kildhO8Fm0syoI2kHnzGkJBLSvsg==}
+@@ -7409,67 +7395,56 @@ packages:
+     resolution: {integrity: sha512-hLrmRl53prCcD+YXTfNvXd776HTxNh8wPAMllusQ+amcQmtgo3V5i/nkhPN6FakW+QVLoUUr2AsbtIRPFU3xIA==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm-musleabihf@4.45.0':
+     resolution: {integrity: sha512-XBKGSYcrkdiRRjl+8XvrUR3AosXU0NvF7VuqMsm7s5nRy+nt58ZMB19Jdp1RdqewLcaYnpk8zeVs/4MlLZEJxw==}
+     cpu: [arm]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-arm64-gnu@4.45.0':
+     resolution: {integrity: sha512-fRvZZPUiBz7NztBE/2QnCS5AtqLVhXmUOPj9IHlfGEXkapgImf4W9+FSkL8cWqoAjozyUzqFmSc4zh2ooaeF6g==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-arm64-musl@4.45.0':
+     resolution: {integrity: sha512-Btv2WRZOcUGi8XU80XwIvzTg4U6+l6D0V6sZTrZx214nrwxw5nAi8hysaXj/mctyClWgesyuxbeLylCBNauimg==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-loongarch64-gnu@4.45.0':
+     resolution: {integrity: sha512-Li0emNnwtUZdLwHjQPBxn4VWztcrw/h7mgLyHiEI5Z0MhpeFGlzaiBHpSNVOMB/xucjXTTcO+dhv469Djr16KA==}
+     cpu: [loong64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-powerpc64le-gnu@4.45.0':
+     resolution: {integrity: sha512-sB8+pfkYx2kvpDCfd63d5ScYT0Fz1LO6jIb2zLZvmK9ob2D8DeVqrmBDE0iDK8KlBVmsTNzrjr3G1xV4eUZhSw==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-gnu@4.45.0':
+     resolution: {integrity: sha512-5GQ6PFhh7E6jQm70p1aW05G2cap5zMOvO0se5JMecHeAdj5ZhWEHbJ4hiKpfi1nnnEdTauDXxPgXae/mqjow9w==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-riscv64-musl@4.45.0':
+     resolution: {integrity: sha512-N/euLsBd1rekWcuduakTo/dJw6U6sBP3eUq+RXM9RNfPuWTvG2w/WObDkIvJ2KChy6oxZmOSC08Ak2OJA0UiAA==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-linux-s390x-gnu@4.45.0':
+     resolution: {integrity: sha512-2l9sA7d7QdikL0xQwNMO3xURBUNEWyHVHfAsHsUdq+E/pgLTUcCE+gih5PCdmyHmfTDeXUWVhqL0WZzg0nua3g==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-gnu@4.45.0':
+     resolution: {integrity: sha512-XZdD3fEEQcwG2KrJDdEQu7NrHonPxxaV0/w2HpvINBdcqebz1aL+0vM2WFJq4DeiAVT6F5SUQas65HY5JDqoPw==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@rollup/rollup-linux-x64-musl@4.45.0':
+     resolution: {integrity: sha512-7ayfgvtmmWgKWBkCGg5+xTQ0r5V1owVm67zTrsEY1008L5ro7mCyGYORomARt/OquB9KY7LpxVBZes+oSniAAQ==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@rollup/rollup-win32-arm64-msvc@4.45.0':
+     resolution: {integrity: sha512-B+IJgcBnE2bm93jEW5kHisqvPITs4ddLOROAcOc/diBgrEiQJJ6Qcjby75rFSmH5eMGrqJryUgJDhrfj942apQ==}
+@@ -8449,28 +8424,24 @@ packages:
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-arm64-musl@1.4.6':
+     resolution: {integrity: sha512-LGQsKJ8MA9zZ8xHCkbGkcPSmpkZL2O7drvwsGKynyCttHhpwVjj9lguhD4DWU3+FWIsjvho5Vu0Ggei8OYi/Lw==}
+     engines: {node: '>=10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-linux-x64-gnu@1.4.6':
+     resolution: {integrity: sha512-10JL2nLIreMQDKvq2TECnQe5fCuoqBHu1yW8aChqgHUyg9d7gfZX/kppUsuimqcgRBnS0AjTDAA+JF6UsG/2Yg==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@swc/core-linux-x64-musl@1.4.6':
+     resolution: {integrity: sha512-EGyjFVzVY6Do89x8sfah7I3cuP4MwtwzmA6OlfD/KASqfCFf5eIaEBMbajgR41bVfMV7lK72lwAIea5xEyq1AQ==}
+     engines: {node: '>=10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@swc/core-win32-arm64-msvc@1.4.6':
+     resolution: {integrity: sha512-gfW9AuXvwSyK07Vb8Y8E9m2oJZk21WqcD+X4BZhkbKB0TCZK0zk1j/HpS2UFlr1JB2zPKPpSWLU3ll0GEHRG2A==}
+@@ -9570,49 +9541,41 @@ packages:
+     resolution: {integrity: sha512-34gw7PjDGB9JgePJEmhEqBhWvCiiWCuXsL9hYphDF7crW7UgI05gyBAi6MF58uGcMOiOqSJ2ybEeCvHcq0BCmQ==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-arm64-musl@1.11.1':
+     resolution: {integrity: sha512-RyMIx6Uf53hhOtJDIamSbTskA99sPHS96wxVE/bJtePJJtpdKGXO1wY90oRdXuYOGOTuqjT8ACccMc4K6QmT3w==}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-ppc64-gnu@1.11.1':
+     resolution: {integrity: sha512-D8Vae74A4/a+mZH0FbOkFJL9DSK2R6TFPC9M+jCWYia/q2einCubX10pecpDiTmkJVUH+y8K3BZClycD8nCShA==}
+     cpu: [ppc64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-gnu@1.11.1':
+     resolution: {integrity: sha512-frxL4OrzOWVVsOc96+V3aqTIQl1O2TjgExV4EKgRY09AJ9leZpEg8Ak9phadbuX0BA4k8U5qtvMSQQGGmaJqcQ==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-riscv64-musl@1.11.1':
+     resolution: {integrity: sha512-mJ5vuDaIZ+l/acv01sHoXfpnyrNKOk/3aDoEdLO/Xtn9HuZlDD6jKxHlkN8ZhWyLJsRBxfv9GYM2utQ1SChKew==}
+     cpu: [riscv64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-linux-s390x-gnu@1.11.1':
+     resolution: {integrity: sha512-kELo8ebBVtb9sA7rMe1Cph4QHreByhaZ2QEADd9NzIQsYNQpt9UkM9iqr2lhGr5afh885d/cB5QeTXSbZHTYPg==}
+     cpu: [s390x]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-gnu@1.11.1':
+     resolution: {integrity: sha512-C3ZAHugKgovV5YvAMsxhq0gtXuwESUKc5MhEtjBpLoHPLYM+iuwSj3lflFwK3DPm68660rZ7G8BMcwSro7hD5w==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   '@unrs/resolver-binding-linux-x64-musl@1.11.1':
+     resolution: {integrity: sha512-rV0YSoyhK2nZ4vEswT/QwqzqQXw5I6CjoaYMOX0TqBlWhojUf8P94mvI7nuJTeaCkkds3QE4+zS8Ko+GdXuZtA==}
+     cpu: [x64]
+     os: [linux]
+-    libc: [musl]
+ 
+   '@unrs/resolver-binding-wasm32-wasi@1.11.1':
+     resolution: {integrity: sha512-5u4RkfxJm+Ng7IWgkzi3qrFOvLvQYnPBmjmZQ8+szTK/b31fQCnleNl1GgEt7nIsZRIf5PLhPwT0WM+q45x/UQ==}
+@@ -10824,14 +10787,12 @@ packages:
+     engines: {node: '>= 10'}
+     cpu: [arm64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-linux-x64-gnu@1.1.1:
+     resolution: {integrity: sha512-RcvBcECbUcFXlFM2httdGc+3wmkI76tD9iGS0H9npEhz4LyLvdXKBK8CZtw67hsHCH09KklKw4ITkSS85pHVbA==}
+     engines: {node: '>= 10'}
+     cpu: [x64]
+     os: [linux]
+-    libc: [glibc]
+ 
+   chromadb-js-bindings-win32-x64-msvc@1.1.1:
+     resolution: {integrity: sha512-296SxWNwsmvP+1Ggkl72norTFLOivoXhGu0t5mXNIbd7yd2UodntvAvG2cheTHDCL/ILbox4u+6KHNvRxHgm6A==}
+@@ -16497,6 +16458,10 @@ packages:
+   ollama@0.6.3:
+     resolution: {integrity: sha512-KEWEhIqE5wtfzEIZbDCLH51VFZ6Z3ZSa6sIOg/E/tBV8S51flyqBOXi+bRxlOYKDf8i327zG9eSTb8IJxvm3Zg==}
+ 
++  olostep@1.1.0:
++    resolution: {integrity: sha512-mLMzLCIjq2rMm4DWEtzq7dSTkxXK0fXHAf1gQ+ltWTe10bDq4DQ9R5kHcsfNT5S7PdGLeZefSegUdvFCAlg4sg==}
++    engines: {node: '>=18'}
++
+   on-finished@2.4.1:
+     resolution: {integrity: sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==}
+     engines: {node: '>= 0.8'}
+@@ -41908,6 +41873,10 @@ snapshots:
+     dependencies:
+       whatwg-fetch: 3.6.20
+ 
++  olostep@1.1.0:
++    dependencies:
++      node-fetch: 3.3.2
++
+   on-finished@2.4.1:
+     dependencies:
+       ee-first: 1.1.1
+
+From 66e7caa0ae59765dfb8f7d3528b9d5fefe22866d Mon Sep 17 00:00:00 2001
+From: "Umer K." <umerkk164@gmail.com>
+Date: Wed, 3 Jun 2026 15:07:27 +0500
+Subject: [PATCH 2/5] Update packages/components/package.json
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/package.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/package.json b/packages/components/package.json
+index b75102f9aa9..668e47900f4 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -165,7 +165,7 @@
+         "object-hash": "^3.0.0",
+         "officeparser": "5.1.1",
+         "ollama": "^0.5.11",
+-        "olostep": ">=0.1.0",
++        "olostep": "^0.1.0",
+         "openai": "6.19.0",
+         "papaparse": "^5.4.1",
+         "pdf-parse": "^1.1.1",
+
+From 9071b964dfb992fda0c67b910cb26cef5f16035a Mon Sep 17 00:00:00 2001
+From: "Umer K." <umerkk164@gmail.com>
+Date: Wed, 3 Jun 2026 15:07:38 +0500
+Subject: [PATCH 3/5] Update
+ packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts b/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+index eb9f5d8ec4f..a721fe545f1 100644
+--- a/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
++++ b/packages/components/nodes/tools/OlostepSearch/OlostepSearch.ts
+@@ -105,6 +105,9 @@ class OlostepSearch_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
++        if (!apiKey) {
++            throw new Error('API Key is required for Olostep Search')
++        }
+ 
+         const numResultsRaw = nodeData.inputs?.numResults as number | string | undefined
+         let numResults = 5
+
+From 0068c8a540f4f7773aa9bf74aee807f2e1dd977c Mon Sep 17 00:00:00 2001
+From: "Umer K." <umerkk164@gmail.com>
+Date: Wed, 3 Jun 2026 15:07:47 +0500
+Subject: [PATCH 4/5] Update
+ packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ .../components/nodes/tools/OlostepScraper/OlostepScraper.ts    | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts b/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+index 3cc8f7f58bc..38b8afc1371 100644
+--- a/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
++++ b/packages/components/nodes/tools/OlostepScraper/OlostepScraper.ts
+@@ -106,6 +106,9 @@ class OlostepScraper_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
++        if (!apiKey) {
++            throw new Error('API Key is required for Olostep Scraper')
++        }
+ 
+         const description = nodeData.inputs?.description as string
+ 
+
+From 9f780f5abbd187eb323208c4423aec7f8cb9d8a3 Mon Sep 17 00:00:00 2001
+From: "Umer K." <umerkk164@gmail.com>
+Date: Wed, 3 Jun 2026 15:07:57 +0500
+Subject: [PATCH 5/5] Update
+ packages/components/credentials/OlostepApi.credential.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/components/credentials/OlostepApi.credential.ts | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/packages/components/credentials/OlostepApi.credential.ts b/packages/components/credentials/OlostepApi.credential.ts
+index 5725702f587..c679b2c2d50 100644
+--- a/packages/components/credentials/OlostepApi.credential.ts
++++ b/packages/components/credentials/OlostepApi.credential.ts
+@@ -4,7 +4,6 @@ class OlostepApi implements INodeCredential {
+     label: string
+     name: string
+     version: number
+-    description: string
+     inputs: INodeParams[]
+ 
+     constructor() {

@@ -1,0 +1,360 @@
+From 1ab8f4d3668c64e75df635e8a36fb25972c34d68 Mon Sep 17 00:00:00 2001
+From: LauraGPT <zhifu.gzf@alibaba-inc.com>
+Date: Thu, 23 Jul 2026 12:37:43 +0000
+Subject: [PATCH] feat: add FunASR speech-to-text provider
+
+---
+ .../credentials/FunASRApi.credential.ts       |  24 ++++
+ packages/components/src/speechToText.test.ts  | 104 ++++++++++++++++++
+ packages/components/src/speechToText.ts       |  22 +++-
+ packages/ui/src/assets/images/funasr.png      | Bin 0 -> 3544 bytes
+ .../ui-component/extended/SpeechToText.jsx    |  49 ++++++++-
+ 5 files changed, 195 insertions(+), 4 deletions(-)
+ create mode 100644 packages/components/credentials/FunASRApi.credential.ts
+ create mode 100644 packages/components/src/speechToText.test.ts
+ create mode 100644 packages/ui/src/assets/images/funasr.png
+
+diff --git a/packages/components/credentials/FunASRApi.credential.ts b/packages/components/credentials/FunASRApi.credential.ts
+new file mode 100644
+index 00000000000..ebc22387dae
+--- /dev/null
++++ b/packages/components/credentials/FunASRApi.credential.ts
+@@ -0,0 +1,24 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class FunASRApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'FunASR API'
++        this.name = 'funASRApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'API Key',
++                name: 'funASRApiKey',
++                type: 'password',
++                description: 'Optional bearer token for a FunASR server behind an authenticated gateway'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: FunASRApi }
+diff --git a/packages/components/src/speechToText.test.ts b/packages/components/src/speechToText.test.ts
+new file mode 100644
+index 00000000000..65e95f51175
+--- /dev/null
++++ b/packages/components/src/speechToText.test.ts
+@@ -0,0 +1,104 @@
++jest.mock('@langchain/openai', () => ({
++    OpenAIClient: jest.fn(),
++    toFile: jest.fn()
++}))
++jest.mock('./storageUtils', () => ({
++    getFileFromStorage: jest.fn()
++}))
++jest.mock('./utils', () => ({
++    getCredentialData: jest.fn()
++}))
++jest.mock('assemblyai', () => ({
++    AssemblyAI: jest.fn()
++}))
++jest.mock('axios', () => ({
++    __esModule: true,
++    default: { post: jest.fn() }
++}))
++jest.mock('groq-sdk', () => ({
++    __esModule: true,
++    default: jest.fn()
++}))
++
++import { OpenAIClient, toFile } from '@langchain/openai'
++
++import { IFileUpload } from './Interface'
++import { convertSpeechToText } from './speechToText'
++import { getFileFromStorage } from './storageUtils'
++import { getCredentialData } from './utils'
++
++describe('convertSpeechToText FunASR provider', () => {
++    const audio = Buffer.from('test audio')
++    const upload = { name: 'meeting.wav', type: 'audio/wav' } as IFileUpload
++    const options = { orgId: 'org', chatflowid: 'flow', chatId: 'chat' }
++    const convertedFile = { name: 'meeting.wav' }
++    const createTranscription = jest.fn()
++    const clientOptions: unknown[] = []
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++        clientOptions.length = 0
++        ;(getFileFromStorage as jest.Mock).mockResolvedValue(audio)
++        ;(toFile as jest.Mock).mockResolvedValue(convertedFile)
++        ;(OpenAIClient as unknown as jest.Mock).mockImplementation((config) => {
++            clientOptions.push(config)
++            return {
++                audio: {
++                    transcriptions: {
++                        create: createTranscription
++                    }
++                }
++            }
++        })
++        createTranscription.mockResolvedValue({ text: 'Flowise can now hear FunASR.' })
++    })
++
++    it('uses local defaults without requiring a credential', async () => {
++        const result = await convertSpeechToText(upload, { name: 'funASRSTT' }, options)
++
++        expect(getCredentialData).not.toHaveBeenCalled()
++        expect(clientOptions).toEqual([
++            {
++                apiKey: 'not-required',
++                baseURL: 'http://127.0.0.1:8000/v1'
++            }
++        ])
++        expect(toFile).toHaveBeenCalledWith(audio, 'meeting.wav')
++        expect(createTranscription).toHaveBeenCalledWith({
++            file: convertedFile,
++            model: 'sensevoice',
++            language: undefined
++        })
++        expect(result).toBe('Flowise can now hear FunASR.')
++    })
++
++    it('forwards optional gateway credentials and configured model fields', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ funASRApiKey: 'gateway-token' })
++
++        const result = await convertSpeechToText(
++            upload,
++            {
++                name: 'funASRSTT',
++                credentialId: 'funasr-credential',
++                baseUrl: 'https://speech.example.com/v1',
++                model: 'paraformer',
++                language: 'zh'
++            },
++            options
++        )
++
++        expect(getCredentialData).toHaveBeenCalledWith('funasr-credential', options)
++        expect(clientOptions).toEqual([
++            {
++                apiKey: 'gateway-token',
++                baseURL: 'https://speech.example.com/v1'
++            }
++        ])
++        expect(createTranscription).toHaveBeenCalledWith({
++            file: convertedFile,
++            model: 'paraformer',
++            language: 'zh'
++        })
++        expect(result).toBe('Flowise can now hear FunASR.')
++    })
++})
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index e59368a5eae..16ffe93f557 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -11,13 +11,14 @@ const SpeechToTextType = {
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    FUNASR_STT: 'funASRSTT'
+ }
+ 
+ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfig: ICommonObject, options: ICommonObject) => {
+     if (speechToTextConfig) {
+         const credentialId = speechToTextConfig.credentialId as string
+-        const credentialData = await getCredentialData(credentialId ?? '', options)
++        const credentialData = credentialId ? await getCredentialData(credentialId, options) : {}
+         const audio_file = await getFileFromStorage(upload.name, options.orgId, options.chatflowid, options.chatId)
+ 
+         switch (speechToTextConfig.name) {
+@@ -74,6 +75,23 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                 }
+                 break
+             }
++            case SpeechToTextType.FUNASR_STT: {
++                const funASRClientOptions: ClientOptions = {
++                    apiKey: credentialData.funASRApiKey || 'not-required',
++                    baseURL: speechToTextConfig?.baseUrl || 'http://127.0.0.1:8000/v1'
++                }
++                const funASRClient = new OpenAIClient(funASRClientOptions)
++                const file = await toFile(audio_file, upload.name)
++                const funASRTranscription = await funASRClient.audio.transcriptions.create({
++                    file,
++                    model: speechToTextConfig?.model || 'sensevoice',
++                    language: speechToTextConfig?.language
++                })
++                if (funASRTranscription?.text) {
++                    return funASRTranscription.text
++                }
++                break
++            }
+             case SpeechToTextType.AZURE_COGNITIVE: {
+                 try {
+                     const baseUrl = `https://${credentialData.serviceRegion}.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe`
+diff --git a/packages/ui/src/assets/images/funasr.png b/packages/ui/src/assets/images/funasr.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..0e7170b6f3b816e233b308d294e5a96fa3a5920a
+GIT binary patch
+literal 3544
+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
+S9q^3+0000<MNUMnLSTX(p3-0d
+
+literal 0
+HcmV?d00001
+
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index 2ca7fd95c28..ddcf3ffb192 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -18,6 +18,7 @@ import { Dropdown } from '@/ui-component/dropdown/Dropdown'
+ import openAISVG from '@/assets/images/openai.svg'
+ import assemblyAIPng from '@/assets/images/assemblyai.png'
+ import localAiPng from '@/assets/images/localai.png'
++import funASRPng from '@/assets/images/funasr.png'
+ import azureSvg from '@/assets/images/azure_openai.svg'
+ import groqPng from '@/assets/images/groq.png'
+ 
+@@ -34,7 +35,8 @@ const SpeechToTextType = {
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    FUNASR_STT: 'funASRSTT'
+ }
+ 
+ // Weird quirk - the key must match the name property value.
+@@ -145,6 +147,43 @@ const speechToTextProviders = {
+             }
+         ]
+     },
++    [SpeechToTextType.FUNASR_STT]: {
++        label: 'FunASR',
++        name: SpeechToTextType.FUNASR_STT,
++        icon: funASRPng,
++        url: 'https://www.funasr.com/openai-api.html',
++        inputs: [
++            {
++                label: 'Connect Credential',
++                name: 'credential',
++                type: 'credential',
++                credentialNames: ['funASRApi'],
++                optional: true
++            },
++            {
++                label: 'Base URL',
++                name: 'baseUrl',
++                type: 'string',
++                description: 'OpenAI-compatible FunASR API base URL',
++                default: 'http://127.0.0.1:8000/v1'
++            },
++            {
++                label: 'Model',
++                name: 'model',
++                type: 'string',
++                description: 'Model name sent to the FunASR transcription endpoint',
++                default: 'sensevoice'
++            },
++            {
++                label: 'Language',
++                name: 'language',
++                type: 'string',
++                description: 'Optional language hint, such as zh, en, yue, ja, or ko',
++                placeholder: 'auto',
++                optional: true
++            }
++        ]
++    },
+     [SpeechToTextType.AZURE_COGNITIVE]: {
+         label: 'Azure Cognitive Services',
+         name: SpeechToTextType.AZURE_COGNITIVE,
+@@ -480,7 +519,13 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
+             )}
+             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
+                 <StyledButton
+-                    disabled={selectedProvider !== 'none' && !speechToText[selectedProvider]?.credentialId}
++                    disabled={
++                        selectedProvider !== 'none' &&
++                        speechToTextProviders[selectedProvider].inputs.some(
++                            (inputParam) => inputParam.type === 'credential' && !inputParam.optional
++                        ) &&
++                        !speechToText[selectedProvider]?.credentialId
++                    }
+                     variant='contained'
+                     onClick={onSave}
+                     sx={{ minWidth: 100 }}

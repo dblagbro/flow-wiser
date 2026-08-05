@@ -1,0 +1,46 @@
+From 20183eaf1ef0b1f93dd51427fa6ab0e27cf4a023 Mon Sep 17 00:00:00 2001
+From: gim-yongjun <kimybj123@naver.com>
+Date: Fri, 19 Jun 2026 13:51:27 +0900
+Subject: [PATCH] fix: condition node only ignores first edge when output fans
+ out to multiple nodes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In AgentFlow v2, `determineNodesToIgnore` used `edges.find()` to locate the
+edge for each unfulfilled condition output. When a single condition output
+fans out to multiple target nodes (parallel branches sharing the same
+`-output-${index}` handle), only the first target was added to the ignore
+list. The remaining parallel nodes were never gated and leaked into other
+branches — e.g. selecting the else branch would still execute one of the
+nodes wired to the matched branch.
+
+Switch to `edges.filter()` so every target connected to an unfulfilled
+output is ignored.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ packages/server/src/utils/buildAgentflow.ts | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..255095f2179 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -829,10 +829,14 @@ async function determineNodesToIgnore(
+             .filter((index) => index !== -1)
+ 
+         // Find nodes to ignore based on unfulfilled conditions
++        // Note: a single condition output can fan out to multiple target nodes
++        // (e.g. parallel branches sharing the same `-output-${index}` handle), so we
++        // must collect ALL matching edges. Using find() here would only ignore the
++        // first target and let the remaining parallel nodes leak into other branches.
+         for (const index of unfulfilledIndexes) {
+-            const ignoreEdge = edges.find((edge) => edge.source === nodeId && edge.sourceHandle === `${nodeId}-output-${index}`)
++            const ignoreEdges = edges.filter((edge) => edge.source === nodeId && edge.sourceHandle === `${nodeId}-output-${index}`)
+ 
+-            if (ignoreEdge) {
++            for (const ignoreEdge of ignoreEdges) {
+                 ignoreNodeIds.push(ignoreEdge.target)
+             }
+         }

@@ -1,0 +1,219 @@
+From 50a864108da571f257a508c6618b3a52280fd18c Mon Sep 17 00:00:00 2001
+From: Taka <nogataka@gmail.com>
+Date: Wed, 10 Sep 2025 13:09:51 +0900
+Subject: [PATCH 1/3] feat(ui): adapt GitHub MCP server for the new version
+
+---
+ .../nodes/tools/MCP/GithubV2/GithubV2MCP.ts   | 113 ++++++++++++++++++
+ .../nodes/tools/MCP/GithubV2/github.svg       |  13 ++
+ 2 files changed, 126 insertions(+)
+ create mode 100644 packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
+ create mode 100644 packages/components/nodes/tools/MCP/GithubV2/github.svg
+
+diff --git a/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts b/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
+new file mode 100644
+index 00000000000..bc589e0120a
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
+@@ -0,0 +1,113 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../../src/utils'
++import { MCPToolkit } from '../core'
++
++class GithubV2_MCP implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    documentation: string
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Github V2 MCP (Remote)'
++        this.name = 'githubV2MCP'
++        this.version = 1.0
++        this.type = 'Github V2 MCP Tool'
++        this.icon = 'github.svg'
++        this.category = 'Tools (MCP)'
++        this.description = 'Official GitHub MCP Server (Remote/Cloud Version) with enhanced capabilities'
++        this.documentation = 'https://github.com/github/github-mcp-server'
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['githubApi']
++        }
++        this.inputs = [
++            {
++                label: 'Available Actions',
++                name: 'mcpActions',
++                type: 'asyncMultiOptions',
++                loadMethod: 'listActions',
++                refresh: true,
++                description: 'Select from 15+ toolsets including Actions, Issues, PRs, Discussions, and more'
++            }
++        ]
++        this.baseClasses = ['Tool']
++    }
++
++    //@ts-ignore
++    loadMethods = {
++        listActions: async (nodeData: INodeData, options: ICommonObject): Promise<INodeOptionsValue[]> => {
++            try {
++                const toolset = await this.getTools(nodeData, options)
++                toolset.sort((a: any, b: any) => a.name.localeCompare(b.name))
++
++                return toolset.map(({ name, ...rest }) => ({
++                    label: name.toUpperCase(),
++                    name: name,
++                    description: rest.description || name
++                }))
++            } catch (error) {
++                console.error('Error listing actions:', error)
++                return [
++                    {
++                        label: 'No Available Actions',
++                        name: 'error',
++                        description: 'No available actions, please check your Github Access Token and refresh'
++                    }
++                ]
++            }
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const tools = await this.getTools(nodeData, options)
++
++        const _mcpActions = nodeData.inputs?.mcpActions
++        let mcpActions = []
++        if (_mcpActions) {
++            try {
++                mcpActions = typeof _mcpActions === 'string' ? JSON.parse(_mcpActions) : _mcpActions
++            } catch (error) {
++                console.error('Error parsing mcp actions:', error)
++            }
++        }
++
++        return tools.filter((tool: any) => mcpActions.includes(tool.name))
++    }
++
++    async getTools(nodeData: INodeData, options: ICommonObject): Promise<Tool[]> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const accessToken = getCredentialParam('accessToken', credentialData, nodeData)
++
++        if (!accessToken) {
++            throw new Error('Missing Github Access Token')
++        }
++
++        // Remote GitHub MCP Server configuration
++        const serverParams = {
++            url: 'https://api.githubcopilot.com/mcp/',
++            headers: {
++                'Authorization': `Bearer ${accessToken}`
++            }
++        }
++
++        const toolkit = new MCPToolkit(serverParams, 'sse')
++        await toolkit.initialize()
++
++        const tools = toolkit.tools ?? []
++
++        return tools as Tool[]
++    }
++}
++
++module.exports = { nodeClass: GithubV2_MCP }
+\ No newline at end of file
+diff --git a/packages/components/nodes/tools/MCP/GithubV2/github.svg b/packages/components/nodes/tools/MCP/GithubV2/github.svg
+new file mode 100644
+index 00000000000..01f228d108b
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/GithubV2/github.svg
+@@ -0,0 +1,13 @@
++<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
++<g clip-path="url(#clip0_115_14646)">
++<path d="M13.9788 7C13.3909 6.0801 12.5809 5.32307 11.6234 4.79876C10.6658 4.27445 9.59167 3.99974 8.5 4C8.0144 4.83956 7.72314 5.77729 7.64765 6.74423C7.57215 7.71117 7.71434 8.68274 8.06375 9.5875C7.37968 10.5949 7.00951 11.7824 7 13V14C7 15.5913 7.63214 17.1174 8.75736 18.2426C9.88258 19.3679 11.4087 20 13 20H19C20.5913 20 22.1174 19.3679 23.2426 18.2426C24.3679 17.1174 25 15.5913 25 14V13C24.9905 11.7824 24.6203 10.5949 23.9363 9.5875C24.2857 8.68274 24.4278 7.71117 24.3524 6.74423C24.2769 5.77729 23.9856 4.83956 23.5 4C22.4083 3.99974 21.3342 4.27445 20.3766 4.79876C19.4191 5.32307 18.6091 6.0801 18.0212 7H13.9788Z" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++<path d="M12 29V24C12 21.7909 13.7909 20 16 20V20C18.2091 20 20 21.7909 20 24V29" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++<path d="M12 26H10C8.93913 26 7.92172 25.5786 7.17157 24.8284C6.42143 24.0783 6 23.0609 6 22C6 20.9391 5.57857 19.9217 4.82843 19.1716C4.07828 18.4214 3.06087 18 2 18" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++<path d="M12 26H10C7.79086 26 6 24.2091 6 22V22C6 19.7909 4.20914 18 2 18V18" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++</g>
++<defs>
++<clipPath id="clip0_115_14646">
++<rect width="32" height="32" fill="white"/>
++</clipPath>
++</defs>
++</svg>
+
+From 74701c38ac75f9e4234d5ee22bed727a8e6906c9 Mon Sep 17 00:00:00 2001
+From: Taka <nogataka@gmail.com>
+Date: Sun, 14 Sep 2025 13:14:41 +0900
+Subject: [PATCH 2/3] feat(mcp): update GitHub MCP server to support the new
+ version
+
+---
+ packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts | 4 ++--
+ packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx  | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts b/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
+index bc589e0120a..160758a72ae 100644
+--- a/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
++++ b/packages/components/nodes/tools/MCP/GithubV2/GithubV2MCP.ts
+@@ -97,7 +97,7 @@ class GithubV2_MCP implements INode {
+         const serverParams = {
+             url: 'https://api.githubcopilot.com/mcp/',
+             headers: {
+-                'Authorization': `Bearer ${accessToken}`
++                Authorization: `Bearer ${accessToken}`
+             }
+         }
+ 
+@@ -110,4 +110,4 @@ class GithubV2_MCP implements INode {
+     }
+ }
+ 
+-module.exports = { nodeClass: GithubV2_MCP }
+\ No newline at end of file
++module.exports = { nodeClass: GithubV2_MCP }
+diff --git a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+index eb3d70c5686..c991ff9c094 100644
+--- a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+@@ -185,7 +185,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
+     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
+ 
+     const [chatlogs, setChatLogs] = useState([])
+-    const [allChatlogs, setAllChatLogs] = useState([])
++    const [_allChatlogs, setAllChatLogs] = useState([])
+     const [chatMessages, setChatMessages] = useState([])
+     const [stats, setStats] = useState({})
+     const [selectedMessageIndex, setSelectedMessageIndex] = useState(0)
+
+From e5e9f3aa56e4eea56931b5cdf384ae76ad9b67e1 Mon Sep 17 00:00:00 2001
+From: Taka <nogataka@gmail.com>
+Date: Sun, 14 Sep 2025 13:34:19 +0900
+Subject: [PATCH 3/3] revert(ui): restore ViewMessagesDialog.jsx to prior state
+
+---
+ packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+index c991ff9c094..eb3d70c5686 100644
+--- a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+@@ -185,7 +185,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
+     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
+ 
+     const [chatlogs, setChatLogs] = useState([])
+-    const [_allChatlogs, setAllChatLogs] = useState([])
++    const [allChatlogs, setAllChatLogs] = useState([])
+     const [chatMessages, setChatMessages] = useState([])
+     const [stats, setStats] = useState({})
+     const [selectedMessageIndex, setSelectedMessageIndex] = useState(0)

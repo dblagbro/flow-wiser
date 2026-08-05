@@ -1,0 +1,212 @@
+From 2a87089fd736b5d5236f247ea4c3624498defce9 Mon Sep 17 00:00:00 2001
+From: cyphercodes <cyphercodes@users.noreply.github.com>
+Date: Fri, 3 Jul 2026 19:08:12 +0300
+Subject: [PATCH] fix: keep free-solo dropdown values
+
+---
+ .../ui-component/dropdown/AsyncDropdown.jsx   | 14 ++++--
+ .../ui/src/ui-component/dropdown/Dropdown.jsx | 10 ++--
+ .../ui-component/dropdown/dropdownUtils.js    | 31 ++++++++++++
+ .../dropdown/dropdownUtils.test.js            | 48 +++++++++++++++++++
+ 4 files changed, 95 insertions(+), 8 deletions(-)
+ create mode 100644 packages/ui/src/ui-component/dropdown/dropdownUtils.js
+ create mode 100644 packages/ui/src/ui-component/dropdown/dropdownUtils.test.js
+
+diff --git a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+index 5534d6526fb..30ced3790d2 100644
+--- a/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/AsyncDropdown.jsx
+@@ -10,6 +10,7 @@ import { useTheme, styled } from '@mui/material/styles'
+ 
+ // API
+ import credentialsApi from '@/api/credentials'
++import { getOptionLabel, getSelectionValue, getSingleAutocompleteValue, isOptionEqualToValue } from './dropdownUtils'
+ 
+ // const
+ import { baseURL } from '@/store/constant'
+@@ -92,7 +93,10 @@ export const AsyncDropdown = ({
+         }
+         return options.find((option) => option.name === value)
+     }
+-    const getDefaultOptionValue = () => (multiple ? [] : '')
++    const getAutocompleteValue = () => {
++        if (multiple) return findMatchingOptions(options, internalValue) || []
++        return getSingleAutocompleteValue({ options, value: internalValue, freeSolo })
++    }
+     const addNewOption = [{ label: '- Create New -', name: '-create-' }]
+     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
+     const { reactFlowInstance } = useContext(flowContext)
+@@ -183,7 +187,10 @@ export const AsyncDropdown = ({
+                 disabled={disabled}
+                 disableClearable={disableClearable}
+                 multiple={multiple}
++                autoSelect={freeSolo && !multiple}
+                 filterSelectedOptions={multiple}
++                getOptionLabel={getOptionLabel}
++                isOptionEqualToValue={isOptionEqualToValue}
+                 size='small'
+                 sx={{ mt: 1, width: fullWidth ? '100%' : multiple ? '90%' : '100%' }}
+                 open={open}
+@@ -194,7 +201,7 @@ export const AsyncDropdown = ({
+                     setOpen(false)
+                 }}
+                 options={options}
+-                value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
++                value={getAutocompleteValue()}
+                 onChange={(e, selection) => {
+                     if (multiple) {
+                         let value = ''
+@@ -205,7 +212,7 @@ export const AsyncDropdown = ({
+                         setInternalValue(value)
+                         onSelect(value)
+                     } else {
+-                        const value = selection ? selection.name : ''
++                        const value = getSelectionValue(selection)
+                         if (isCreateNewOption && value === '-create-') {
+                             onCreateNew()
+                         } else {
+@@ -224,7 +231,6 @@ export const AsyncDropdown = ({
+                     const textField = (
+                         <TextField
+                             {...params}
+-                            value={internalValue}
+                             sx={{
+                                 height: '100%',
+                                 '& .MuiInputBase-root': {
+diff --git a/packages/ui/src/ui-component/dropdown/Dropdown.jsx b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+index c18f52c944e..2d34c0ab38f 100644
+--- a/packages/ui/src/ui-component/dropdown/Dropdown.jsx
++++ b/packages/ui/src/ui-component/dropdown/Dropdown.jsx
+@@ -5,6 +5,7 @@ import { Popper, FormControl, TextField, Box, Typography } from '@mui/material'
+ import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+ import { useTheme, styled } from '@mui/material/styles'
+ import PropTypes from 'prop-types'
++import { getOptionLabel, getSelectionValue, getSingleAutocompleteValue, isOptionEqualToValue } from './dropdownUtils'
+ 
+ const StyledPopper = styled(Popper)({
+     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
+@@ -21,7 +22,6 @@ const StyledPopper = styled(Popper)({
+ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = false, freeSolo = false, disableClearable = false }) => {
+     const customization = useSelector((state) => state.customization)
+     const findMatchingOptions = (options = [], value) => options.find((option) => option.name === value)
+-    const getDefaultOptionValue = () => ''
+     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
+     const theme = useTheme()
+ 
+@@ -32,12 +32,15 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
+                 disabled={disabled}
+                 freeSolo={freeSolo}
+                 disableClearable={disableClearable}
++                autoSelect={freeSolo}
++                getOptionLabel={getOptionLabel}
++                isOptionEqualToValue={isOptionEqualToValue}
+                 size='small'
+                 loading={loading}
+                 options={options || []}
+-                value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
++                value={getSingleAutocompleteValue({ options, value: internalValue, freeSolo })}
+                 onChange={(e, selection) => {
+-                    const value = selection ? selection.name : ''
++                    const value = getSelectionValue(selection)
+                     setInternalValue(value)
+                     onSelect(value)
+                 }}
+@@ -47,7 +50,6 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
+                     return (
+                         <TextField
+                             {...params}
+-                            value={internalValue}
+                             sx={{
+                                 height: '100%',
+                                 '& .MuiInputBase-root': {
+diff --git a/packages/ui/src/ui-component/dropdown/dropdownUtils.js b/packages/ui/src/ui-component/dropdown/dropdownUtils.js
+new file mode 100644
+index 00000000000..34062bda4cc
+--- /dev/null
++++ b/packages/ui/src/ui-component/dropdown/dropdownUtils.js
+@@ -0,0 +1,31 @@
++export const DEFAULT_DROPDOWN_VALUE = 'choose an option'
++
++export const getOptionName = (option) => {
++    if (typeof option === 'string') return option
++    return option?.name ?? ''
++}
++
++export const getOptionLabel = (option) => {
++    if (typeof option === 'string') return option
++    return option?.label ?? option?.name ?? ''
++}
++
++export const isEmptyDropdownValue = (value) => value === undefined || value === null || value === '' || value === DEFAULT_DROPDOWN_VALUE
++
++export const findMatchingOption = (options = [], value) => (options || []).find((option) => option.name === value)
++
++export const getSingleAutocompleteValue = ({ options = [], value, freeSolo = false }) => {
++    const matchingOption = findMatchingOption(options, value)
++    if (matchingOption) return matchingOption
++
++    if (freeSolo && !isEmptyDropdownValue(value)) return value
++
++    return ''
++}
++
++export const getSelectionValue = (selection) => {
++    if (typeof selection === 'string') return selection
++    return selection?.name ?? ''
++}
++
++export const isOptionEqualToValue = (option, value) => getOptionName(option) === getOptionName(value)
+diff --git a/packages/ui/src/ui-component/dropdown/dropdownUtils.test.js b/packages/ui/src/ui-component/dropdown/dropdownUtils.test.js
+new file mode 100644
+index 00000000000..a02be0d5df5
+--- /dev/null
++++ b/packages/ui/src/ui-component/dropdown/dropdownUtils.test.js
+@@ -0,0 +1,48 @@
++import {
++    DEFAULT_DROPDOWN_VALUE,
++    getOptionLabel,
++    getSelectionValue,
++    getSingleAutocompleteValue,
++    isOptionEqualToValue
++} from './dropdownUtils'
++
++describe('dropdownUtils', () => {
++    const options = [
++        { label: 'GPT 5', name: 'gpt-5' },
++        { label: 'GPT 5 Mini', name: 'gpt-5-mini' }
++    ]
++
++    it('keeps a typed free-solo value when it is not in the option list', () => {
++        expect(
++            getSingleAutocompleteValue({
++                options,
++                value: 'gpt-5.4-nano-suporte-juridico',
++                freeSolo: true
++            })
++        ).toBe('gpt-5.4-nano-suporte-juridico')
++    })
++
++    it('does not keep unknown values when free-solo entry is disabled', () => {
++        expect(
++            getSingleAutocompleteValue({
++                options,
++                value: 'gpt-5.4-nano-suporte-juridico',
++                freeSolo: false
++            })
++        ).toBe('')
++    })
++
++    it('treats the default placeholder as empty for free-solo fields', () => {
++        expect(getSingleAutocompleteValue({ options, value: DEFAULT_DROPDOWN_VALUE, freeSolo: true })).toBe('')
++    })
++
++    it('extracts typed free-solo selections and option selections', () => {
++        expect(getSelectionValue('gpt-5.4-nano-suporte-juridico')).toBe('gpt-5.4-nano-suporte-juridico')
++        expect(getSelectionValue(options[0])).toBe('gpt-5')
++    })
++
++    it('handles option labels and equality for string values', () => {
++        expect(getOptionLabel('gpt-5.4-nano-suporte-juridico')).toBe('gpt-5.4-nano-suporte-juridico')
++        expect(isOptionEqualToValue(options[0], 'gpt-5')).toBe(true)
++    })
++})

@@ -1,0 +1,355 @@
+From 1ca03ab5571a90a3cd49c62f1dee91f8bdbae501 Mon Sep 17 00:00:00 2001
+From: Yu Yang <ylctyuy@gmail.com>
+Date: Sat, 7 Mar 2026 22:53:04 +0800
+Subject: [PATCH 1/3] feat(chat model): add Volcengine chat model node
+
+---
+ .../credentials/VolcengineApi.credential.ts   |  23 ++
+ packages/components/models.json               |  17 ++
+ .../ChatVolcengine/ChatVolcengine.ts          | 196 ++++++++++++++++++
+ .../ChatVolcengine/volcengine-color.svg       |   1 +
+ 4 files changed, 237 insertions(+)
+ create mode 100644 packages/components/credentials/VolcengineApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatVolcengine/volcengine-color.svg
+
+diff --git a/packages/components/credentials/VolcengineApi.credential.ts b/packages/components/credentials/VolcengineApi.credential.ts
+new file mode 100644
+index 00000000000..25e64e1628c
+--- /dev/null
++++ b/packages/components/credentials/VolcengineApi.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class VolcengineApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Volcengine API'
++        this.name = 'volcengineApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'Volcengine API Key',
++                name: 'volcengineApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: VolcengineApi }
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 2e1bed31fbd..e259510de5c 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1134,6 +1134,23 @@
+                 }
+             ]
+         },
++        {
++            "name": "volcengine",
++            "models": [
++                {
++                    "label": "doubao-1-5-lite-32k-250115",
++                    "name": "doubao-1-5-lite-32k-250115",
++                    "input_cost": 0.0000417,
++                    "output_cost": 0.0000833
++                },
++                {
++                    "label": "doubao-1-5-pro-32k-250115",
++                    "name": "doubao-1-5-pro-32k-250115",
++                    "input_cost": 0.0001111,
++                    "output_cost": 0.0002778
++                }
++            ]
++        },
+         {
+             "name": "chatOpenAI",
+             "models": [
+diff --git a/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+new file mode 100644
+index 00000000000..29d92875ef5
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+@@ -0,0 +1,196 @@
++import { BaseCache } from '@langchain/core/caches'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class ChatVolcengine_ChatModels implements INode {
++    readonly baseURL: string = 'https://ark.cn-beijing.volces.com/api/v3'
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatVolcengine'
++        this.name = 'chatVolcengine'
++        this.version = 1.0
++        this.type = 'chatVolcengine'
++        this.icon = 'volcengine-color.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around Volcengine (火山引擎) large language models that use the Chat endpoint'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['volcengineApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'doubao-1.5-pro-32k'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Stop Sequence',
++                name: 'stopSequence',
++                type: 'string',
++                rows: 4,
++                optional: true,
++                description: 'List of stop words to use when generating. Use comma to separate multiple stop words.',
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                additionalParams: true,
++                description: 'Additional options to pass to the Volcengine client. This should be a JSON object.'
++            }
++        ]
++    }
++
++    //@ts-ignore
++    loadMethods = {
++        async listModels(): Promise<INodeOptionsValue[]> {
++            return await getModels(MODEL_TYPE.CHAT, 'volcengine')
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const stopSequence = nodeData.inputs?.stopSequence as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const baseOptions = nodeData.inputs?.baseOptions
++
++        if (nodeData.inputs?.credentialId) {
++            nodeData.credential = nodeData.inputs?.credentialId
++        }
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const openAIApiKey = getCredentialParam('volcengineApiKey', credentialData, nodeData)
++
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            modelName,
++            openAIApiKey,
++            apiKey: openAIApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++        if (stopSequence) {
++            const stopSequenceArray = stopSequence.split(',').map((item) => item.trim())
++            obj.stop = stopSequenceArray
++        }
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                if (parsedBaseOptions.baseURL) {
++                    console.warn("The 'baseURL' parameter is not allowed when using the ChatVolcengine node.")
++                    parsedBaseOptions.baseURL = undefined
++                }
++            } catch (exception) {
++                throw new Error('Invalid JSON in the BaseOptions: ' + exception)
++            }
++        }
++
++        const model = new ChatOpenAI({
++            ...obj,
++            configuration: {
++                baseURL: this.baseURL,
++                ...parsedBaseOptions
++            }
++        })
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatVolcengine_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatVolcengine/volcengine-color.svg b/packages/components/nodes/chatmodels/ChatVolcengine/volcengine-color.svg
+new file mode 100644
+index 00000000000..ecf6d75e0aa
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatVolcengine/volcengine-color.svg
+@@ -0,0 +1 @@
++<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Volcengine</title><path d="M19.44 10.153l-2.936 11.586a.215.215 0 00.214.261h5.87a.215.215 0 00.214-.261l-2.95-11.586a.214.214 0 00-.412 0zM3.28 12.778l-2.275 8.96A.214.214 0 001.22 22h4.532a.212.212 0 00.214-.165.214.214 0 000-.097l-2.276-8.96a.214.214 0 00-.41 0z" fill="#00E5E5"></path><path d="M7.29 5.359L3.148 21.738a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.358a.214.214 0 00-.41 0z" fill="#006EFF"></path><path d="M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.216.216 0 00.171-.078.214.214 0 00.044-.183L14.439.15z" fill="#006EFF"></path><path d="M10.278 7.741L6.685 21.736a.214.214 0 00.214.264h7.17a.215.215 0 00.214-.264L10.688 7.741a.214.214 0 00-.41 0z" fill="#00E5E5"></path></svg>
+\ No newline at end of file
+
+From 268992d063024e0a1d233c9d900dfff674b591cd Mon Sep 17 00:00:00 2001
+From: Yu Yang <ylctyuy@gmail.com>
+Date: Sun, 8 Mar 2026 00:05:13 +0800
+Subject: [PATCH 2/3] fix: address review comments for Volcengine chat model
+
+---
+ .../nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts     | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+index 29d92875ef5..2a999d45998 100644
+--- a/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
++++ b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+@@ -150,13 +150,17 @@ class ChatVolcengine_ChatModels implements INode {
+         const cache = nodeData.inputs?.cache as BaseCache
+ 
+         const obj: ChatOpenAIFields = {
+-            temperature: parseFloat(temperature),
+             modelName,
+             openAIApiKey,
+             apiKey: openAIApiKey,
+             streaming: streaming ?? true
+         }
+ 
++        const parsedTemperature = parseFloat(temperature as string)
++        if (!isNaN(parsedTemperature)) {
++            obj.temperature = parsedTemperature
++        }
++
+         if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
+         if (topP) obj.topP = parseFloat(topP)
+         if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
+@@ -175,7 +179,7 @@ class ChatVolcengine_ChatModels implements INode {
+                 parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
+                 if (parsedBaseOptions.baseURL) {
+                     console.warn("The 'baseURL' parameter is not allowed when using the ChatVolcengine node.")
+-                    parsedBaseOptions.baseURL = undefined
++                    delete parsedBaseOptions.baseURL
+                 }
+             } catch (exception) {
+                 throw new Error('Invalid JSON in the BaseOptions: ' + exception)
+
+From fd8f114f78c1933c09cd1d4121e3170b94d6116e Mon Sep 17 00:00:00 2001
+From: Yu Yang <ylctyuy@gmail.com>
+Date: Sun, 8 Mar 2026 07:41:43 +0800
+Subject: [PATCH 3/3] fix: fix default model name and deprecated openAIApiKey
+
+---
+ .../nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts          | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+index 2a999d45998..dcc46083185 100644
+--- a/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
++++ b/packages/components/nodes/chatmodels/ChatVolcengine/ChatVolcengine.ts
+@@ -44,7 +44,7 @@ class ChatVolcengine_ChatModels implements INode {
+                 name: 'modelName',
+                 type: 'asyncOptions',
+                 loadMethod: 'listModels',
+-                default: 'doubao-1.5-pro-32k'
++                default: 'doubao-1-5-pro-32k-250115'
+             },
+             {
+                 label: 'Temperature',
+@@ -151,7 +151,6 @@ class ChatVolcengine_ChatModels implements INode {
+ 
+         const obj: ChatOpenAIFields = {
+             modelName,
+-            openAIApiKey,
+             apiKey: openAIApiKey,
+             streaming: streaming ?? true
+         }

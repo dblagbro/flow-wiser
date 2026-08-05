@@ -1,0 +1,185 @@
+From 9077117c54204b2e79f20f808234de8364486200 Mon Sep 17 00:00:00 2001
+From: ZeroIce <zeroicework@163.com>
+Date: Tue, 23 Jun 2026 00:40:03 +0800
+Subject: [PATCH 1/2] fix voyage rerank response parsing
+
+---
+ .../VoyageAIRetriever/VoyageAIRerank.test.ts  | 64 +++++++++++++++++++
+ .../VoyageAIRetriever/VoyageAIRerank.ts       | 10 +--
+ 2 files changed, 70 insertions(+), 4 deletions(-)
+ create mode 100644 packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
+
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
+new file mode 100644
+index 00000000000..fff066275e0
+--- /dev/null
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
+@@ -0,0 +1,64 @@
++import axios from 'axios'
++import { Document } from '@langchain/core/documents'
++import { VoyageAIRerank } from './VoyageAIRerank'
++
++jest.mock('axios')
++
++describe('VoyageAIRerank', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('maps Voyage API data responses back to the reranked documents', async () => {
++        const reranker = new VoyageAIRerank('test-key', 'rerank-2', 2)
++        const documents = [
++            new Document({ pageContent: 'alpha', metadata: { source: 'a' } }),
++            new Document({ pageContent: 'bravo', metadata: { source: 'b' } }),
++            new Document({ pageContent: 'charlie', metadata: { source: 'c' } })
++        ]
++
++        ;(axios.post as jest.Mock).mockResolvedValue({
++            data: {
++                data: [
++                    { index: 2, relevance_score: 0.97 },
++                    { index: 0, relevance_score: 0.86 }
++                ]
++            }
++        })
++
++        const result = await reranker.compressDocuments(documents, 'letters')
++
++        expect(axios.post).toHaveBeenCalledWith(
++            'https://api.voyageai.com/v1/rerank',
++            {
++                model: 'rerank-2',
++                query: 'letters',
++                documents: ['alpha', 'bravo', 'charlie'],
++                top_k: 2
++            },
++            expect.objectContaining({
++                headers: expect.objectContaining({
++                    Authorization: 'Bearer test-key'
++                })
++            })
++        )
++        expect(result.map((doc) => doc.pageContent)).toEqual(['charlie', 'alpha'])
++        expect(result.map((doc) => doc.metadata.relevance_score)).toEqual([0.97, 0.86])
++    })
++
++    it('continues to support legacy Voyage API results responses', async () => {
++        const reranker = new VoyageAIRerank('test-key', 'rerank-lite-1', 1)
++        const documents = [new Document({ pageContent: 'alpha', metadata: {} }), new Document({ pageContent: 'bravo', metadata: {} })]
++
++        ;(axios.post as jest.Mock).mockResolvedValue({
++            data: {
++                results: [{ index: 1, relevance_score: 0.91 }]
++            }
++        })
++
++        const result = await reranker.compressDocuments(documents, 'letters')
++
++        expect(result.map((doc) => doc.pageContent)).toEqual(['bravo'])
++        expect(result[0].metadata.relevance_score).toBe(0.91)
++    })
++})
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+index 6e7e62b5ad6..c9d01aaf31d 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+@@ -34,17 +34,19 @@ export class VoyageAIRerank extends BaseDocumentCompressor {
+         const data = {
+             model: this.model,
+             query: query,
+-            documents: documents.map((doc) => doc.pageContent)
++            documents: documents.map((doc) => doc.pageContent),
++            top_k: this.k
+         }
+         try {
+-            let returnedDocs = await axios.post(this.VOYAGEAI_RERANK_API_URL, data, config)
++            const returnedDocs = await axios.post(this.VOYAGEAI_RERANK_API_URL, data, config)
++            const rerankResults = returnedDocs.data.data ?? returnedDocs.data.results
+             const finalResults: Document<Record<string, any>>[] = []
+-            returnedDocs.data.results.forEach((result: any) => {
++            rerankResults.forEach((result: any) => {
+                 const doc = documents[result.index]
+                 doc.metadata.relevance_score = result.relevance_score
+                 finalResults.push(doc)
+             })
+-            return finalResults.splice(0, this.k)
++            return finalResults.slice(0, this.k)
+         } catch (error) {
+             return documents
+         }
+
+From b7dee6c492f8b03a472498a5ccb7d52d7e4b9199 Mon Sep 17 00:00:00 2001
+From: ZeroIce <zeroicework@163.com>
+Date: Tue, 23 Jun 2026 00:49:48 +0800
+Subject: [PATCH 2/2] Handle invalid Voyage rerank results
+
+---
+ .../VoyageAIRetriever/VoyageAIRerank.test.ts  | 30 +++++++++++++++++++
+ .../VoyageAIRetriever/VoyageAIRerank.ts       | 12 ++++++--
+ 2 files changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
+index fff066275e0..63322e8e866 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.test.ts
+@@ -61,4 +61,34 @@ describe('VoyageAIRerank', () => {
+         expect(result.map((doc) => doc.pageContent)).toEqual(['bravo'])
+         expect(result[0].metadata.relevance_score).toBe(0.91)
+     })
++
++    it('falls back to original documents when Voyage API returns an invalid result shape', async () => {
++        const reranker = new VoyageAIRerank('test-key', 'rerank-lite-1', 2)
++        const documents = [new Document({ pageContent: 'alpha', metadata: {} }), new Document({ pageContent: 'bravo', metadata: {} })]
++
++        ;(axios.post as jest.Mock).mockResolvedValue({
++            data: {}
++        })
++
++        await expect(reranker.compressDocuments(documents, 'letters')).resolves.toBe(documents)
++    })
++
++    it('skips rerank results that point outside the provided documents', async () => {
++        const reranker = new VoyageAIRerank('test-key', 'rerank-lite-1', 2)
++        const documents = [new Document({ pageContent: 'alpha', metadata: {} }), new Document({ pageContent: 'bravo', metadata: {} })]
++
++        ;(axios.post as jest.Mock).mockResolvedValue({
++            data: {
++                data: [
++                    { index: 3, relevance_score: 0.99 },
++                    { index: 1, relevance_score: 0.88 }
++                ]
++            }
++        })
++
++        const result = await reranker.compressDocuments(documents, 'letters')
++
++        expect(result.map((doc) => doc.pageContent)).toEqual(['bravo'])
++        expect(result[0].metadata.relevance_score).toBe(0.88)
++    })
+ })
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+index c9d01aaf31d..a717ee58104 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+@@ -39,12 +39,18 @@ export class VoyageAIRerank extends BaseDocumentCompressor {
+         }
+         try {
+             const returnedDocs = await axios.post(this.VOYAGEAI_RERANK_API_URL, data, config)
+-            const rerankResults = returnedDocs.data.data ?? returnedDocs.data.results
++            const rerankResults = returnedDocs.data?.data ?? returnedDocs.data?.results
++            if (!Array.isArray(rerankResults)) {
++                throw new Error('Invalid response format from Voyage API: rerank results must be an array')
++            }
++
+             const finalResults: Document<Record<string, any>>[] = []
+             rerankResults.forEach((result: any) => {
+                 const doc = documents[result.index]
+-                doc.metadata.relevance_score = result.relevance_score
+-                finalResults.push(doc)
++                if (doc) {
++                    doc.metadata.relevance_score = result.relevance_score
++                    finalResults.push(doc)
++                }
+             })
+             return finalResults.slice(0, this.k)
+         } catch (error) {

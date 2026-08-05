@@ -1,0 +1,203 @@
+From 679522757282eb9642a05879aebe5e9de06ec4ac Mon Sep 17 00:00:00 2001
+From: Deepak Bhagat <deepak988088@gmail.com>
+Date: Thu, 30 Apr 2026 01:06:56 +0530
+Subject: [PATCH] fix: allow absolute folder paths in Docker via
+ FLOWISE_ALLOWED_FOLDER_PATHS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #5958
+
+isPathTraversal() blocked all absolute Unix paths (/^\//). This
+made the Folder with Files document loader unusable in Docker where
+users mount volumes at absolute paths like /data/documents.
+
+The existing escape hatch (PATH_TRAVERSAL_SAFETY=false) disables
+ALL traversal safety, which is too broad for operators who only
+need to grant access to specific mount points.
+
+This fix adds a targeted FLOWISE_ALLOWED_FOLDER_PATHS env var:
+  FLOWISE_ALLOWED_FOLDER_PATHS=/data/documents,/mnt/shared
+
+When set, absolute Unix paths within one of those base directories
+pass through isPathTraversal() without triggering the block.
+All other checks (../ traversal, encoded chars, UNC/Windows paths,
+null bytes) remain fully enforced.
+
+Changes:
+  validator.ts — getAllowedFolderPaths() helper + updated isPathTraversal()
+  validator.test.ts — 8 new test cases covering the env var behaviour
+  docker/.env.example, packages/server/.env.example — documented
+---
+ docker/.env.example                       |  1 +
+ packages/components/src/validator.test.ts | 40 ++++++++++++++++
+ packages/components/src/validator.ts      | 58 ++++++++++++++++++++---
+ packages/server/.env.example              |  1 +
+ 4 files changed, 93 insertions(+), 7 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index 68ee0a3ceae..2628107c23e 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -195,6 +195,7 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # HTTP_DENY_LIST=
+ # HTTP_SECURITY_CHECK=true
+ # PATH_TRAVERSAL_SAFETY=true
++# FLOWISE_ALLOWED_FOLDER_PATHS= # Comma-separated absolute paths Docker/self-hosted users may read with the Folder node (e.g. /data/docs,/mnt/shared). Prefer this over disabling PATH_TRAVERSAL_SAFETY entirely.
+ # CUSTOM_MCP_SECURITY_CHECK=true
+ # CUSTOM_MCP_PROTOCOL=sse #(stdio | sse)
+ # TRUST_PROXY=true #(true | false | 1 | loopback| linklocal | uniquelocal | IP addresses | loopback, IP addresses)
+diff --git a/packages/components/src/validator.test.ts b/packages/components/src/validator.test.ts
+index 44b3af7d40e..7b538678fbe 100644
+--- a/packages/components/src/validator.test.ts
++++ b/packages/components/src/validator.test.ts
+@@ -60,6 +60,46 @@ describe('isPathTraversal', () => {
+     })
+ })
+ 
++describe('FLOWISE_ALLOWED_FOLDER_PATHS allows specific absolute paths', () => {
++    beforeEach(() => {
++        process.env.FLOWISE_ALLOWED_FOLDER_PATHS = '/data/documents,/mnt/shared'
++    })
++    afterEach(() => {
++        delete process.env.FLOWISE_ALLOWED_FOLDER_PATHS
++    })
++
++    it.each([
++        ['exact allowed path', '/data/documents'],
++        ['subdirectory of allowed path', '/data/documents/reports'],
++        ['deeply nested subdirectory', '/data/documents/2024/q1/report.pdf'],
++        ['second allowed path', '/mnt/shared'],
++        ['subdirectory of second allowed path', '/mnt/shared/uploads']
++    ])('should return false for %s when within an allowed base path', (_desc, input) => {
++        expect(isPathTraversal(input)).toBe(false)
++    })
++
++    it.each([
++        ['path outside allowed list', '/etc/passwd'],
++        ['path that is a prefix but not a child', '/data/documents2'],
++        ['path with traversal into allowed dir', '/data/documents/../../../etc/passwd']
++    ])('should still return true for %s even with allowed paths configured', (_desc, input) => {
++        expect(isPathTraversal(input)).toBe(true)
++    })
++})
++
++describe('FLOWISE_ALLOWED_FOLDER_PATHS with trailing slash normalisation', () => {
++    beforeEach(() => {
++        process.env.FLOWISE_ALLOWED_FOLDER_PATHS = '/data/documents/'
++    })
++    afterEach(() => {
++        delete process.env.FLOWISE_ALLOWED_FOLDER_PATHS
++    })
++
++    it('should allow a subdirectory of a path configured with trailing slash', () => {
++        expect(isPathTraversal('/data/documents/file.txt')).toBe(false)
++    })
++})
++
+ describe('isUnsafeFilePath', () => {
+     describe('PATH_TRAVERSAL_SAFETY=false bypasses all checks', () => {
+         beforeEach(() => {
+diff --git a/packages/components/src/validator.ts b/packages/components/src/validator.ts
+index 42ef4bf9413..f7d9f2cf468 100644
+--- a/packages/components/src/validator.ts
++++ b/packages/components/src/validator.ts
+@@ -27,12 +27,37 @@ export const isValidURL = (url: string): boolean => {
+     }
+ }
+ 
++/**
++ * Returns the list of absolute Unix paths that are explicitly allowed for folder operations.
++ *
++ * Set FLOWISE_ALLOWED_FOLDER_PATHS to a comma-separated list of absolute paths, e.g.:
++ *   FLOWISE_ALLOWED_FOLDER_PATHS=/data/documents,/mnt/shared
++ *
++ * Only absolute paths are accepted; relative entries are ignored.
++ * This is the targeted alternative to disabling all traversal safety with
++ * PATH_TRAVERSAL_SAFETY=false.
++ */
++const getAllowedFolderPaths = (): string[] => {
++    const raw = process.env.FLOWISE_ALLOWED_FOLDER_PATHS
++    if (!raw) return []
++    return raw
++        .split(',')
++        .map((p) => p.trim())
++        .filter((p) => p !== '' && path.isAbsolute(p))
++        .map((p) => {
++            const normalized = path.normalize(p)
++            // Strip trailing separator so startsWith checks work correctly,
++            // but never strip the root '/' itself.
++            return normalized.length > 1 && normalized.endsWith(path.sep) ? normalized.slice(0, -1) : normalized
++        })
++}
++
+ /**
+  * Validates if a string contains path traversal attempts
+- * @param {string} path The string to validate
++ * @param {inputPath} inputPath The string to validate
+  * @returns {boolean} True if path traversal detected, false otherwise
+  */
+-export const isPathTraversal = (path: string): boolean => {
++export const isPathTraversal = (inputPath: string): boolean => {
+     // PATH_TRAVERSAL_SAFETY defaults to true; must be explicitly set to 'false' to disable
+     if (process.env.PATH_TRAVERSAL_SAFETY === 'false') {
+         return false
+@@ -40,21 +65,40 @@ export const isPathTraversal = (path: string): boolean => {
+ 
+     // Normalize %2e → . before checking for .. to catch mixed-encoding bypasses
+     // e.g. .%2e/, %2e./, %2e%2e all become ../
+-    if (/\.\./.test(path.replace(/%2e/gi, '.'))) {
++    if (/\.\./.test(inputPath.replace(/%2e/gi, '.'))) {
+         return true
+     }
+ 
+-    const dangerousPatterns = [
++    // These patterns are always dangerous regardless of FLOWISE_ALLOWED_FOLDER_PATHS
++    const alwaysDangerousPatterns = [
+         /%2f/i, // URL encoded /
+         /%5c/i, // URL encoded \ (Windows path)
+         /\0/, // Null bytes
+         /%00/i, // URL encoded null byte
+         /^\s*[a-zA-Z]:[/\\]/, // Windows absolute paths (C:\, C:/) with optional leading whitespace
+-        /^\\\\[^\\]/, // UNC paths (\\server\)
+-        /^\// // Absolute Unix paths (/etc, /data, /root, etc.)
++        /^\\\\[^\\]/ // UNC paths (\\server\)
+     ]
+ 
+-    return dangerousPatterns.some((pattern) => pattern.test(path))
++    if (alwaysDangerousPatterns.some((pattern) => pattern.test(inputPath))) {
++        return true
++    }
++
++    // Absolute Unix paths are blocked by default.
++    // Exception: if the path starts with one of the entries in FLOWISE_ALLOWED_FOLDER_PATHS
++    // it is considered explicitly trusted by the operator and is allowed through.
++    if (/^\//.test(inputPath)) {
++        const allowedPaths = getAllowedFolderPaths()
++        if (allowedPaths.length > 0) {
++            const normalizedInput = path.normalize(inputPath)
++            const isExplicitlyAllowed = allowedPaths.some(
++                (allowed) => normalizedInput === allowed || normalizedInput.startsWith(allowed + path.sep)
++            )
++            if (isExplicitlyAllowed) return false
++        }
++        return true
++    }
++
++    return false
+ }
+ 
+ /**
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 52cbcaa023d..767465e9332 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -194,6 +194,7 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # HTTP_DENY_LIST=
+ # HTTP_SECURITY_CHECK=true
+ # PATH_TRAVERSAL_SAFETY=true
++# FLOWISE_ALLOWED_FOLDER_PATHS= # Comma-separated absolute paths Docker/self-hosted users may read with the Folder node (e.g. /data/docs,/mnt/shared). Prefer this over disabling PATH_TRAVERSAL_SAFETY entirely.
+ # CUSTOM_MCP_SECURITY_CHECK=true
+ # CUSTOM_MCP_PROTOCOL=sse #(stdio | sse)
+ # TRUST_PROXY=true #(true | false | 1 | loopback| linklocal | uniquelocal | IP addresses | loopback, IP addresses)

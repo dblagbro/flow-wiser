@@ -1,0 +1,6 @@
+From 9c622119a28e3fd9e7f75603c605f57a0186612e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Bruno=20P=C3=A9rez?= <bruno@manifest.build>
+Date: Mon, 13 Jul 2026 11:54:44 +0200
+Subject: [PATCH] Fix anchor link on README.md
+
+Fixed the "Developers" anchor link that was missing a hyphen

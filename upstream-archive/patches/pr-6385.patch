@@ -1,0 +1,1483 @@
+From f8d235648824d6c868371ad45583c0b9cd8caee3 Mon Sep 17 00:00:00 2001
+From: kriptoburak <kriptoburak@users.noreply.github.com>
+Date: Thu, 14 May 2026 15:02:21 +0300
+Subject: [PATCH 1/4] feat: add Xquik read-only X data tools
+
+---
+ .../credentials/XquikApi.credential.ts        |  25 +
+ .../nodes/tools/Xquik/Xquik.test.ts           | 222 ++++++++
+ .../components/nodes/tools/Xquik/Xquik.ts     | 107 ++++
+ packages/components/nodes/tools/Xquik/core.ts | 518 ++++++++++++++++++
+ .../components/nodes/tools/Xquik/xquik.svg    |   5 +
+ 5 files changed, 877 insertions(+)
+ create mode 100644 packages/components/credentials/XquikApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/Xquik/Xquik.test.ts
+ create mode 100644 packages/components/nodes/tools/Xquik/Xquik.ts
+ create mode 100644 packages/components/nodes/tools/Xquik/core.ts
+ create mode 100644 packages/components/nodes/tools/Xquik/xquik.svg
+
+diff --git a/packages/components/credentials/XquikApi.credential.ts b/packages/components/credentials/XquikApi.credential.ts
+new file mode 100644
+index 00000000000..4f4f6b713bc
+--- /dev/null
++++ b/packages/components/credentials/XquikApi.credential.ts
+@@ -0,0 +1,25 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class XquikApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Xquik API'
++        this.name = 'xquikApi'
++        this.version = 1.0
++        this.description = 'Use an Xquik API key for read-only public X/Twitter data tools'
++        this.inputs = [
++            {
++                label: 'Xquik API Key',
++                name: 'xquikApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: XquikApi }
+diff --git a/packages/components/nodes/tools/Xquik/Xquik.test.ts b/packages/components/nodes/tools/Xquik/Xquik.test.ts
+new file mode 100644
+index 00000000000..55667692e95
+--- /dev/null
++++ b/packages/components/nodes/tools/Xquik/Xquik.test.ts
+@@ -0,0 +1,222 @@
++import type { Response } from 'node-fetch'
++import { secureFetch } from '../../../src/httpSecurity'
++import { GetTrendsTool, GetUserTool, SearchTweetsTool, buildXquikUrl, createXquikTools } from './core'
++
++jest.mock('../../../src/httpSecurity', () => ({
++    secureFetch: jest.fn()
++}))
++
++const mockedSecureFetch = secureFetch as jest.MockedFunction<typeof secureFetch>
++
++describe('Xquik tools', () => {
++    beforeEach(() => {
++        mockedSecureFetch.mockReset()
++    })
++
++    it('creates separate read-only tools for selected actions', () => {
++        expect(
++            createXquikTools({
++                actions: ['searchTweets', 'getUser'],
++                apiKey: 'test-key'
++            }).map((tool) => tool.name)
++        ).toEqual(['xquik_search_tweets', 'xquik_get_user'])
++    })
++
++    it('creates all read-only tools when no action is selected', () => {
++        expect(createXquikTools({ apiKey: 'test-key' }).map((tool) => tool.name)).toEqual([
++            'xquik_search_tweets',
++            'xquik_get_tweet',
++            'xquik_get_user',
++            'xquik_search_users',
++            'xquik_list_user_tweets',
++            'xquik_get_trends'
++        ])
++    })
++
++    it('builds Xquik API URLs with encoded search params', () => {
++        expect(
++            buildXquikUrl('https://xquik.test/api/v1/', '/x/tweets/search', {
++                q: 'agent workflows',
++                cursor: 'next cursor',
++                includeReplies: false
++            })
++        ).toBe('https://xquik.test/api/v1/x/tweets/search?q=agent+workflows&cursor=next+cursor&includeReplies=false')
++    })
++
++    it('returns tweet search results with provenance and rate limit metadata', async () => {
++        mockedSecureFetch.mockResolvedValue(
++            createResponse(
++                {
++                    tweets: [
++                        {
++                            id: '1911111111111111111',
++                            text: 'Flowise agent research',
++                            createdAt: '2026-05-14T11:00:00.000Z',
++                            author: {
++                                id: '42',
++                                username: 'flowiseai'
++                            }
++                        }
++                    ],
++                    has_next_page: true,
++                    next_cursor: 'cursor-2'
++                },
++                {
++                    'x-ratelimit-remaining': '88',
++                    'x-ratelimit-reset': '1778758800'
++                }
++            )
++        )
++
++        const tool = new SearchTweetsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1',
++            maxResults: 5
++        })
++        const result = JSON.parse(
++            await tool._call({
++                query: 'Flowise agent research',
++                query_type: 'Latest',
++                cursor: 'cursor-1'
++            })
++        )
++
++        expect(mockedSecureFetch).toHaveBeenCalledWith(
++            'https://xquik.test/api/v1/x/tweets/search?q=Flowise+agent+research&queryType=Latest&cursor=cursor-1&limit=5',
++            expect.objectContaining({
++                method: 'GET',
++                headers: expect.objectContaining({
++                    accept: 'application/json',
++                    'x-api-key': 'test-key'
++                })
++            })
++        )
++        expect(result.operation).toBe('search_tweets')
++        expect(result.pagination).toEqual({
++            has_next_page: true,
++            next_cursor: 'cursor-2'
++        })
++        expect(result.items[0]).toEqual(
++            expect.objectContaining({
++                source: 'xquik',
++                resource_type: 'tweet',
++                id: '1911111111111111111',
++                url: 'https://x.com/flowiseai/status/1911111111111111111',
++                author_id: '42',
++                created_at: '2026-05-14T11:00:00.000Z',
++                query: 'Flowise agent research',
++                rate_limit: {
++                    remaining: 88,
++                    reset_at: '2026-05-14T11:40:00.000Z'
++                }
++            })
++        )
++    })
++
++    it('returns user lookup results with a public profile URL', async () => {
++        mockedSecureFetch.mockResolvedValue(
++            createResponse({
++                id: '783214',
++                username: 'xquik_dev',
++                name: 'Xquik'
++            })
++        )
++
++        const tool = new GetUserTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++        const result = JSON.parse(
++            await tool._call({
++                user_id: 'xquik_dev'
++            })
++        )
++
++        expect(mockedSecureFetch).toHaveBeenCalledWith(
++            'https://xquik.test/api/v1/x/users/xquik_dev',
++            expect.objectContaining({
++                method: 'GET'
++            })
++        )
++        expect(result.operation).toBe('get_user')
++        expect(result.items[0]).toEqual(
++            expect.objectContaining({
++                source: 'xquik',
++                resource_type: 'user',
++                id: '783214',
++                url: 'https://x.com/xquik_dev',
++                query: 'xquik_dev'
++            })
++        )
++    })
++
++    it('returns trend results with source URLs and requested count', async () => {
++        mockedSecureFetch.mockResolvedValue(
++            createResponse({
++                trends: [
++                    {
++                        name: 'Flowise',
++                        rank: 1,
++                        query: 'Flowise'
++                    }
++                ],
++                count: 1,
++                woeid: 1
++            })
++        )
++
++        const tool = new GetTrendsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++        const result = JSON.parse(
++            await tool._call({
++                woeid: 1,
++                count: 1
++            })
++        )
++
++        expect(mockedSecureFetch).toHaveBeenCalledWith(
++            'https://xquik.test/api/v1/x/trends?woeid=1&count=1',
++            expect.objectContaining({
++                method: 'GET'
++            })
++        )
++        expect(result.operation).toBe('get_trends')
++        expect(result.items[0]).toEqual(
++            expect.objectContaining({
++                source: 'xquik',
++                resource_type: 'trend',
++                id: 'Flowise',
++                url: 'https://x.com/search?q=Flowise',
++                query: 'woeid:1'
++            })
++        )
++    })
++
++    it('requires query input for tweet searches', async () => {
++        const tool = new SearchTweetsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++
++        await expect(
++            tool._call({
++                query: ''
++            })
++        ).rejects.toThrow('Xquik query is required for this operation')
++        expect(mockedSecureFetch).not.toHaveBeenCalled()
++    })
++})
++
++function createResponse(body: unknown, headers: Record<string, string> = {}): Response {
++    return {
++        ok: true,
++        status: 200,
++        headers: {
++            get: (name: string): string | null => headers[name.toLowerCase()] ?? null
++        },
++        json: async (): Promise<unknown> => body,
++        text: async (): Promise<string> => JSON.stringify(body)
++    } as unknown as Response
++}
+diff --git a/packages/components/nodes/tools/Xquik/Xquik.ts b/packages/components/nodes/tools/Xquik/Xquik.ts
+new file mode 100644
+index 00000000000..2a8f1581cbd
+--- /dev/null
++++ b/packages/components/nodes/tools/Xquik/Xquik.ts
+@@ -0,0 +1,107 @@
++import { convertMultiOptionsToStringArray, getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { SearchTweetsTool, XQUIK_ACTIONS, XquikTool, createXquikTools } from './core'
++
++class XquikXData_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Xquik X Data'
++        this.name = 'xquikXData'
++        this.version = 1.0
++        this.type = 'XquikXData'
++        this.icon = 'xquik.svg'
++        this.category = 'Tools'
++        this.description = 'Read-only public X/Twitter data from Xquik with provenance metadata for RAG and agent workflows'
++        this.baseClasses = [this.type, 'Tool', ...getBaseClasses(SearchTweetsTool)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['xquikApi']
++        }
++        this.inputs = [
++            {
++                label: 'Actions',
++                name: 'actions',
++                type: 'multiOptions',
++                options: [
++                    {
++                        label: 'Search Tweets',
++                        name: 'searchTweets'
++                    },
++                    {
++                        label: 'Get Tweet',
++                        name: 'getTweet'
++                    },
++                    {
++                        label: 'Get User',
++                        name: 'getUser'
++                    },
++                    {
++                        label: 'Search Users',
++                        name: 'searchUsers'
++                    },
++                    {
++                        label: 'List User Tweets',
++                        name: 'listUserTweets'
++                    },
++                    {
++                        label: 'Get Trends',
++                        name: 'getTrends'
++                    }
++                ],
++                description: 'Select the read-only Xquik tools to expose'
++            },
++            {
++                label: 'Tool Description',
++                name: 'description',
++                type: 'string',
++                rows: 4,
++                optional: true,
++                additionalParams: true,
++                default:
++                    'Use Xquik for read-only public X/Twitter data. Results include source, resource_type, id, url, retrieved_at, query, rate_limit, and pagination metadata.'
++            },
++            {
++                label: 'Default Max Results',
++                name: 'maxResults',
++                type: 'number',
++                optional: true,
++                additionalParams: true,
++                default: 20,
++                description: 'Default tweet result limit for operations that support a limit parameter'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<XquikTool[]> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('xquikApiKey', credentialData, nodeData) as string
++        const description = nodeData.inputs?.description as string | undefined
++        const maxResults = nodeData.inputs?.maxResults as number | undefined
++        const actions = convertMultiOptionsToStringArray(nodeData.inputs?.actions)
++
++        if (!apiKey) {
++            throw new Error('Xquik API key is required')
++        }
++
++        return createXquikTools({
++            actions: actions.length > 0 ? actions : [...XQUIK_ACTIONS],
++            apiKey,
++            description,
++            maxResults
++        })
++    }
++}
++
++module.exports = { nodeClass: XquikXData_Tools }
+diff --git a/packages/components/nodes/tools/Xquik/core.ts b/packages/components/nodes/tools/Xquik/core.ts
+new file mode 100644
+index 00000000000..8fcb9a6e869
+--- /dev/null
++++ b/packages/components/nodes/tools/Xquik/core.ts
+@@ -0,0 +1,518 @@
++import { z } from 'zod/v3'
++import type { Headers, Response } from 'node-fetch'
++import { StructuredTool } from '@langchain/core/tools'
++import { secureFetch } from '../../../src/httpSecurity'
++
++const DEFAULT_BASE_URL = 'https://xquik.com/api/v1'
++const XQUIK_SOURCE = 'xquik'
++const PROVENANCE_DESCRIPTION =
++    'Returns JSON with source, resource_type, id, url, retrieved_at, query, rate_limit, and pagination metadata for citation and freshness checks.'
++
++const searchTweetsSchema = z.object({
++    query: z.string().describe('Public X/Twitter search query'),
++    cursor: z.string().optional().describe('Pagination cursor returned by a previous response'),
++    query_type: z.enum(['Top', 'Latest']).optional().describe('Tweet search ordering'),
++    max_results: z.number().int().positive().max(100).optional().describe('Maximum tweet results to request')
++})
++
++const getTweetSchema = z.object({
++    tweet_id: z.string().describe('Tweet ID to fetch')
++})
++
++const getUserSchema = z.object({
++    user_id: z.string().describe('X user ID or username to fetch')
++})
++
++const searchUsersSchema = z.object({
++    query: z.string().describe('Public X/Twitter user search query'),
++    cursor: z.string().optional().describe('Pagination cursor returned by a previous response')
++})
++
++const listUserTweetsSchema = z.object({
++    user_id: z.string().describe('X user ID or username whose public tweets should be listed'),
++    cursor: z.string().optional().describe('Pagination cursor returned by a previous response'),
++    include_replies: z.boolean().optional().describe('Include replies in the user timeline'),
++    include_parent_tweet: z.boolean().optional().describe('Include parent tweet context when available')
++})
++
++const getTrendsSchema = z.object({
++    woeid: z.number().int().positive().optional().describe('Where On Earth ID for trends'),
++    count: z.number().int().positive().max(50).optional().describe('Trend count to request')
++})
++
++export const XQUIK_ACTIONS = ['searchTweets', 'getTweet', 'getUser', 'searchUsers', 'listUserTweets', 'getTrends'] as const
++
++type XquikAction = (typeof XQUIK_ACTIONS)[number]
++
++type RateLimit = {
++    remaining: number | null
++    reset_at: string | null
++}
++
++type Pagination = {
++    has_next_page: boolean | null
++    next_cursor: string | null
++}
++
++type OperationDefinition = {
++    operation: string
++    path: string
++    resourceType: string
++    query: string
++    searchParams: Record<string, string | number | boolean | undefined>
++}
++
++type XquikToolOptions = {
++    apiKey: string
++    baseUrl?: string
++    description?: string
++    maxResults?: number
++}
++
++export type CreateXquikToolsOptions = XquikToolOptions & {
++    actions?: string[]
++}
++
++abstract class BaseXquikTool<TSchema extends z.AnyZodObject> extends StructuredTool {
++    abstract schema: TSchema
++
++    protected readonly apiKey: string
++    protected readonly baseApiUrl: string
++    protected readonly defaultMaxResults: number | undefined
++    private readonly extraDescription: string | undefined
++
++    constructor(options: XquikToolOptions) {
++        super()
++        this.apiKey = options.apiKey
++        this.baseApiUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL)
++        this.defaultMaxResults = options.maxResults
++        this.extraDescription = options.description
++    }
++
++    protected buildDescription(defaultDescription: string): string {
++        if (!this.extraDescription) {
++            return defaultDescription
++        }
++
++        return `${defaultDescription}\n\n${this.extraDescription}`
++    }
++
++    protected async requestAndFormat(definition: OperationDefinition): Promise<string> {
++        const url = buildXquikUrl(this.baseApiUrl, definition.path, definition.searchParams)
++        const response = await secureFetch(url, {
++            method: 'GET',
++            headers: {
++                accept: 'application/json',
++                'x-api-key': this.apiKey
++            }
++        })
++
++        if (!response.ok) {
++            const errorPayload = await readResponsePayload(response)
++            const errorMessage = getErrorMessage(errorPayload)
++            throw new Error(`Xquik request failed with HTTP ${response.status}${errorMessage ? `: ${errorMessage}` : ''}`)
++        }
++
++        const payload = (await response.json()) as unknown
++        const retrievedAt = new Date().toISOString()
++        const rateLimit = getRateLimit(response.headers)
++        const pagination = getPagination(payload)
++        const items = getPayloadItems(payload, definition.resourceType).map((item) =>
++            addProvenance(item, {
++                resourceType: definition.resourceType,
++                query: definition.query,
++                retrievedAt,
++                rateLimit
++            })
++        )
++
++        return JSON.stringify({
++            source: XQUIK_SOURCE,
++            operation: definition.operation,
++            retrieved_at: retrievedAt,
++            rate_limit: rateLimit,
++            pagination,
++            items
++        })
++    }
++}
++
++export class SearchTweetsTool extends BaseXquikTool<typeof searchTweetsSchema> {
++    name = 'xquik_search_tweets'
++    description = this.buildDescription(`Search public X/Twitter tweets with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = searchTweetsSchema
++
++    async _call(input: z.infer<typeof searchTweetsSchema>): Promise<string> {
++        const query = requireInput(input.query, 'query')
++        return this.requestAndFormat({
++            operation: 'search_tweets',
++            path: '/x/tweets/search',
++            resourceType: 'tweet',
++            query,
++            searchParams: {
++                q: query,
++                queryType: input.query_type,
++                cursor: input.cursor,
++                limit: input.max_results ?? this.defaultMaxResults
++            }
++        })
++    }
++}
++
++export class GetTweetTool extends BaseXquikTool<typeof getTweetSchema> {
++    name = 'xquik_get_tweet'
++    description = this.buildDescription(`Fetch one public X/Twitter tweet by ID with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = getTweetSchema
++
++    async _call(input: z.infer<typeof getTweetSchema>): Promise<string> {
++        const tweetId = requireInput(input.tweet_id, 'tweet_id')
++        return this.requestAndFormat({
++            operation: 'get_tweet',
++            path: `/x/tweets/${encodeURIComponent(tweetId)}`,
++            resourceType: 'tweet',
++            query: tweetId,
++            searchParams: {}
++        })
++    }
++}
++
++export class GetUserTool extends BaseXquikTool<typeof getUserSchema> {
++    name = 'xquik_get_user'
++    description = this.buildDescription(`Fetch one public X/Twitter user by ID or username with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = getUserSchema
++
++    async _call(input: z.infer<typeof getUserSchema>): Promise<string> {
++        const userId = requireInput(input.user_id, 'user_id')
++        return this.requestAndFormat({
++            operation: 'get_user',
++            path: `/x/users/${encodeURIComponent(userId)}`,
++            resourceType: 'user',
++            query: userId,
++            searchParams: {}
++        })
++    }
++}
++
++export class SearchUsersTool extends BaseXquikTool<typeof searchUsersSchema> {
++    name = 'xquik_search_users'
++    description = this.buildDescription(`Search public X/Twitter users with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = searchUsersSchema
++
++    async _call(input: z.infer<typeof searchUsersSchema>): Promise<string> {
++        const query = requireInput(input.query, 'query')
++        return this.requestAndFormat({
++            operation: 'search_users',
++            path: '/x/users/search',
++            resourceType: 'user',
++            query,
++            searchParams: {
++                q: query,
++                cursor: input.cursor
++            }
++        })
++    }
++}
++
++export class ListUserTweetsTool extends BaseXquikTool<typeof listUserTweetsSchema> {
++    name = 'xquik_list_user_tweets'
++    description = this.buildDescription(`List public tweets for one X/Twitter user with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = listUserTweetsSchema
++
++    async _call(input: z.infer<typeof listUserTweetsSchema>): Promise<string> {
++        const userId = requireInput(input.user_id, 'user_id')
++        return this.requestAndFormat({
++            operation: 'list_user_tweets',
++            path: `/x/users/${encodeURIComponent(userId)}/tweets`,
++            resourceType: 'tweet',
++            query: userId,
++            searchParams: {
++                cursor: input.cursor,
++                includeReplies: input.include_replies,
++                includeParentTweet: input.include_parent_tweet
++            }
++        })
++    }
++}
++
++export class GetTrendsTool extends BaseXquikTool<typeof getTrendsSchema> {
++    name = 'xquik_get_trends'
++    description = this.buildDescription(`Fetch public X/Twitter trends with Xquik. ${PROVENANCE_DESCRIPTION}`)
++    schema = getTrendsSchema
++
++    async _call(input: z.infer<typeof getTrendsSchema>): Promise<string> {
++        return this.requestAndFormat({
++            operation: 'get_trends',
++            path: '/x/trends',
++            resourceType: 'trend',
++            query: input.woeid ? `woeid:${input.woeid}` : 'global',
++            searchParams: {
++                woeid: input.woeid,
++                count: input.count
++            }
++        })
++    }
++}
++
++export type XquikTool = SearchTweetsTool | GetTweetTool | GetUserTool | SearchUsersTool | ListUserTweetsTool | GetTrendsTool
++
++export function createXquikTools(options: CreateXquikToolsOptions): XquikTool[] {
++    const actions = getSelectedActions(options.actions)
++    const tools: XquikTool[] = []
++
++    if (actions.includes('searchTweets')) {
++        tools.push(new SearchTweetsTool(options))
++    }
++
++    if (actions.includes('getTweet')) {
++        tools.push(new GetTweetTool(options))
++    }
++
++    if (actions.includes('getUser')) {
++        tools.push(new GetUserTool(options))
++    }
++
++    if (actions.includes('searchUsers')) {
++        tools.push(new SearchUsersTool(options))
++    }
++
++    if (actions.includes('listUserTweets')) {
++        tools.push(new ListUserTweetsTool(options))
++    }
++
++    if (actions.includes('getTrends')) {
++        tools.push(new GetTrendsTool(options))
++    }
++
++    return tools
++}
++
++function getSelectedActions(actions: string[] | undefined): XquikAction[] {
++    if (!actions || actions.length === 0) {
++        return [...XQUIK_ACTIONS]
++    }
++
++    return actions.filter((action): action is XquikAction => XQUIK_ACTIONS.includes(action as XquikAction))
++}
++
++function normalizeBaseUrl(baseUrl: string): string {
++    return baseUrl.replace(/\/+$/, '')
++}
++
++export function buildXquikUrl(baseUrl: string, path: string, searchParams: Record<string, string | number | boolean | undefined>): string {
++    const url = new URL(`${normalizeBaseUrl(baseUrl)}${path}`)
++
++    for (const [key, value] of Object.entries(searchParams)) {
++        if (value !== undefined) {
++            url.searchParams.set(key, String(value))
++        }
++    }
++
++    return url.toString()
++}
++
++function requireInput(value: string | undefined, field: string): string {
++    if (!value) {
++        throw new Error(`Xquik ${field} is required for this operation`)
++    }
++
++    return value
++}
++
++async function readResponsePayload(response: Response): Promise<unknown> {
++    try {
++        return await response.json()
++    } catch {
++        try {
++            return await response.text()
++        } catch {
++            return undefined
++        }
++    }
++}
++
++function getErrorMessage(payload: unknown): string | null {
++    if (typeof payload === 'string') {
++        return payload
++    }
++
++    const record = asRecord(payload)
++    return getString(record, ['error', 'message', 'detail'])
++}
++
++function getRateLimit(headers: Headers): RateLimit {
++    const remaining = headers.get('x-ratelimit-remaining') ?? headers.get('ratelimit-remaining')
++    const reset = headers.get('x-ratelimit-reset') ?? headers.get('ratelimit-reset')
++
++    return {
++        remaining: parseNumber(remaining),
++        reset_at: parseResetAt(reset)
++    }
++}
++
++function parseNumber(value: string | null): number | null {
++    if (!value) {
++        return null
++    }
++
++    const numericValue = Number(value)
++    return Number.isFinite(numericValue) ? numericValue : null
++}
++
++function parseResetAt(value: string | null): string | null {
++    if (!value) {
++        return null
++    }
++
++    const numericValue = Number(value)
++    if (Number.isFinite(numericValue)) {
++        return new Date(numericValue * 1000).toISOString()
++    }
++
++    return value
++}
++
++function getPagination(payload: unknown): Pagination {
++    const record = asRecord(payload)
++
++    return {
++        has_next_page: getBoolean(record, ['has_next_page', 'hasNextPage']),
++        next_cursor: getString(record, ['next_cursor', 'nextCursor'])
++    }
++}
++
++function getPayloadItems(payload: unknown, resourceType: string): Record<string, unknown>[] {
++    const record = asRecord(payload)
++    const collectionKeys = getCollectionKeys(resourceType)
++
++    for (const key of collectionKeys) {
++        const value = record[key]
++        if (Array.isArray(value)) {
++            return value.map(asRecord)
++        }
++    }
++
++    if (Object.keys(record).length > 0) {
++        return [record]
++    }
++
++    return []
++}
++
++function getCollectionKeys(resourceType: string): string[] {
++    if (resourceType === 'tweet') {
++        return ['tweets', 'data', 'items', 'results']
++    }
++
++    if (resourceType === 'user') {
++        return ['users', 'data', 'items', 'results']
++    }
++
++    return ['trends', 'data', 'items', 'results']
++}
++
++function addProvenance(
++    item: Record<string, unknown>,
++    options: {
++        resourceType: string
++        query: string
++        retrievedAt: string
++        rateLimit: RateLimit
++    }
++): Record<string, unknown> {
++    const id = getResourceId(item, options.resourceType)
++
++    return {
++        ...item,
++        source: XQUIK_SOURCE,
++        resource_type: options.resourceType,
++        id,
++        url: getResourceUrl(item, options.resourceType, id),
++        author_id: getAuthorId(item),
++        created_at: getString(item, ['created_at', 'createdAt', 'date']),
++        retrieved_at: options.retrievedAt,
++        query: options.query,
++        rate_limit: options.rateLimit
++    }
++}
++
++function getResourceId(item: Record<string, unknown>, resourceType: string): string | null {
++    const id = getString(item, ['id', 'tweet_id', 'tweetId', 'user_id', 'userId'])
++
++    if (id) {
++        return id
++    }
++
++    if (resourceType === 'trend') {
++        return getString(item, ['name', 'query'])
++    }
++
++    return null
++}
++
++function getAuthorId(item: Record<string, unknown>): string | null {
++    const directAuthorId = getString(item, ['author_id', 'authorId', 'user_id', 'userId'])
++    if (directAuthorId) {
++        return directAuthorId
++    }
++
++    return getString(asRecord(item.author), ['id', 'user_id', 'userId'])
++}
++
++function getResourceUrl(item: Record<string, unknown>, resourceType: string, id: string | null): string | null {
++    if (resourceType === 'user') {
++        const username = getString(item, ['username', 'screen_name', 'screenName'])
++        return username ? `https://x.com/${username}` : null
++    }
++
++    if (resourceType === 'trend') {
++        const query = getString(item, ['query', 'name'])
++        return query ? `https://x.com/search?q=${encodeURIComponent(query)}` : null
++    }
++
++    const directUrl = getString(item, ['url', 'tweet_url', 'tweetUrl'])
++    if (directUrl) {
++        return directUrl
++    }
++
++    const author = asRecord(item.author)
++    const username = getString(author, ['username', 'screen_name', 'screenName'])
++    if (username && id) {
++        return `https://x.com/${username}/status/${id}`
++    }
++
++    return id ? `https://x.com/i/web/status/${id}` : null
++}
++
++function asRecord(value: unknown): Record<string, unknown> {
++    if (value && typeof value === 'object' && !Array.isArray(value)) {
++        return value as Record<string, unknown>
++    }
++
++    return {}
++}
++
++function getString(record: Record<string, unknown>, keys: string[]): string | null {
++    for (const key of keys) {
++        const value = record[key]
++        if (typeof value === 'string' && value.length > 0) {
++            return value
++        }
++
++        if (typeof value === 'number' && Number.isFinite(value)) {
++            return String(value)
++        }
++    }
++
++    return null
++}
++
++function getBoolean(record: Record<string, unknown>, keys: string[]): boolean | null {
++    for (const key of keys) {
++        const value = record[key]
++        if (typeof value === 'boolean') {
++            return value
++        }
++    }
++
++    return null
++}
+diff --git a/packages/components/nodes/tools/Xquik/xquik.svg b/packages/components/nodes/tools/Xquik/xquik.svg
+new file mode 100644
+index 00000000000..2ca2afa633d
+--- /dev/null
++++ b/packages/components/nodes/tools/Xquik/xquik.svg
+@@ -0,0 +1,5 @@
++<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <rect width="32" height="32" rx="6" fill="#050505"/>
++  <path d="M8 8L24 24M24 8L8 24" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round"/>
++  <circle cx="24" cy="8" r="3" fill="#33D6A6"/>
++</svg>
+
+From 899a8c0e7bd45fff149131a677c7ed77f99a194b Mon Sep 17 00:00:00 2001
+From: kriptoburak <kriptoburak@users.noreply.github.com>
+Date: Thu, 14 May 2026 15:07:10 +0300
+Subject: [PATCH 2/4] fix: harden Xquik response parsing
+
+---
+ .../nodes/tools/Xquik/Xquik.test.ts           | 71 ++++++++++++++++++-
+ packages/components/nodes/tools/Xquik/core.ts | 36 +++++++---
+ 2 files changed, 94 insertions(+), 13 deletions(-)
+
+diff --git a/packages/components/nodes/tools/Xquik/Xquik.test.ts b/packages/components/nodes/tools/Xquik/Xquik.test.ts
+index 55667692e95..cac01191a51 100644
+--- a/packages/components/nodes/tools/Xquik/Xquik.test.ts
++++ b/packages/components/nodes/tools/Xquik/Xquik.test.ts
+@@ -150,6 +150,40 @@ describe('Xquik tools', () => {
+         )
+     })
+ 
++    it('returns top-level array results with provenance', async () => {
++        mockedSecureFetch.mockResolvedValue(
++            createResponse([
++                {
++                    id: '1911111111111111112',
++                    text: 'Top-level array result',
++                    author: {
++                        username: 'flowiseai'
++                    }
++                }
++            ])
++        )
++
++        const tool = new SearchTweetsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++        const result = JSON.parse(
++            await tool._call({
++                query: 'Flowise'
++            })
++        )
++
++        expect(result.items[0]).toEqual(
++            expect.objectContaining({
++                source: 'xquik',
++                resource_type: 'tweet',
++                id: '1911111111111111112',
++                url: 'https://x.com/flowiseai/status/1911111111111111112',
++                query: 'Flowise'
++            })
++        )
++    })
++
+     it('returns trend results with source URLs and requested count', async () => {
+         mockedSecureFetch.mockResolvedValue(
+             createResponse({
+@@ -207,16 +241,49 @@ describe('Xquik tools', () => {
+         ).rejects.toThrow('Xquik query is required for this operation')
+         expect(mockedSecureFetch).not.toHaveBeenCalled()
+     })
++
++    it('fails fast when Xquik returns invalid JSON', async () => {
++        mockedSecureFetch.mockResolvedValue(createTextResponse('not json'))
++
++        const tool = new SearchTweetsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++
++        await expect(
++            tool._call({
++                query: 'Flowise'
++            })
++        ).rejects.toThrow('Xquik response body is not valid JSON')
++    })
++
++    it('fails fast when Xquik returns an unsupported payload shape', async () => {
++        mockedSecureFetch.mockResolvedValue(createResponse({}))
++
++        const tool = new SearchTweetsTool({
++            apiKey: 'test-key',
++            baseUrl: 'https://xquik.test/api/v1'
++        })
++
++        await expect(
++            tool._call({
++                query: 'Flowise'
++            })
++        ).rejects.toThrow('Xquik tweet response payload has an unsupported format')
++    })
+ })
+ 
+ function createResponse(body: unknown, headers: Record<string, string> = {}): Response {
++    return createTextResponse(JSON.stringify(body), headers)
++}
++
++function createTextResponse(text: string, headers: Record<string, string> = {}): Response {
+     return {
+         ok: true,
+         status: 200,
+         headers: {
+             get: (name: string): string | null => headers[name.toLowerCase()] ?? null
+         },
+-        json: async (): Promise<unknown> => body,
+-        text: async (): Promise<string> => JSON.stringify(body)
++        text: async (): Promise<string> => text
+     } as unknown as Response
+ }
+diff --git a/packages/components/nodes/tools/Xquik/core.ts b/packages/components/nodes/tools/Xquik/core.ts
+index 8fcb9a6e869..3e7e43a554b 100644
+--- a/packages/components/nodes/tools/Xquik/core.ts
++++ b/packages/components/nodes/tools/Xquik/core.ts
+@@ -108,12 +108,12 @@ abstract class BaseXquikTool<TSchema extends z.AnyZodObject> extends StructuredT
+         })
+ 
+         if (!response.ok) {
+-            const errorPayload = await readResponsePayload(response)
++            const errorPayload = await readJsonResponse(response)
+             const errorMessage = getErrorMessage(errorPayload)
+             throw new Error(`Xquik request failed with HTTP ${response.status}${errorMessage ? `: ${errorMessage}` : ''}`)
+         }
+ 
+-        const payload = (await response.json()) as unknown
++        const payload = await readJsonResponse(response)
+         const retrievedAt = new Date().toISOString()
+         const rateLimit = getRateLimit(response.headers)
+         const pagination = getPagination(payload)
+@@ -318,15 +318,16 @@ function requireInput(value: string | undefined, field: string): string {
+     return value
+ }
+ 
+-async function readResponsePayload(response: Response): Promise<unknown> {
++async function readJsonResponse(response: Response): Promise<unknown> {
++    const text = await response.text()
++    if (!text) {
++        throw new Error('Xquik response body is empty')
++    }
++
+     try {
+-        return await response.json()
++        return JSON.parse(text) as unknown
+     } catch {
+-        try {
+-            return await response.text()
+-        } catch {
+-            return undefined
+-        }
++        throw new Error('Xquik response body is not valid JSON')
+     }
+ }
+ 
+@@ -381,13 +382,17 @@ function getPagination(payload: unknown): Pagination {
+ }
+ 
+ function getPayloadItems(payload: unknown, resourceType: string): Record<string, unknown>[] {
++    if (Array.isArray(payload)) {
++        return payload.map((item) => toPayloadRecord(item, resourceType))
++    }
++
+     const record = asRecord(payload)
+     const collectionKeys = getCollectionKeys(resourceType)
+ 
+     for (const key of collectionKeys) {
+         const value = record[key]
+         if (Array.isArray(value)) {
+-            return value.map(asRecord)
++            return value.map((item) => toPayloadRecord(item, resourceType))
+         }
+     }
+ 
+@@ -395,7 +400,16 @@ function getPayloadItems(payload: unknown, resourceType: string): Record<string,
+         return [record]
+     }
+ 
+-    return []
++    throw new Error(`Xquik ${resourceType} response payload has an unsupported format`)
++}
++
++function toPayloadRecord(value: unknown, resourceType: string): Record<string, unknown> {
++    const record = asRecord(value)
++    if (Object.keys(record).length === 0) {
++        throw new Error(`Xquik ${resourceType} response item has an unsupported format`)
++    }
++
++    return record
+ }
+ 
+ function getCollectionKeys(resourceType: string): string[] {
+
+From ca718584d2ab60f4e428819aa14f584d97305dd8 Mon Sep 17 00:00:00 2001
+From: kriptoburak <kriptoburak@users.noreply.github.com>
+Date: Sun, 19 Jul 2026 04:10:36 +0300
+Subject: [PATCH 3/4] fix: protect credentials across redirects
+
+---
+ packages/components/src/httpSecurity.test.ts | 154 +++++++++++++++++++
+ packages/components/src/httpSecurity.ts      |  53 ++++++-
+ 2 files changed, 202 insertions(+), 5 deletions(-)
+ create mode 100644 packages/components/src/httpSecurity.test.ts
+
+diff --git a/packages/components/src/httpSecurity.test.ts b/packages/components/src/httpSecurity.test.ts
+new file mode 100644
+index 00000000000..e8971b212f4
+--- /dev/null
++++ b/packages/components/src/httpSecurity.test.ts
+@@ -0,0 +1,154 @@
++import axios, { AxiosRequestConfig } from 'axios'
++import dns from 'dns/promises'
++import fetch, { Headers, Response } from 'node-fetch'
++import { secureAxiosRequest, secureFetch } from './httpSecurity'
++
++jest.mock('axios', () => {
++    const actual = jest.requireActual('axios')
++    return {
++        ...actual,
++        __esModule: true,
++        default: jest.fn()
++    }
++})
++jest.mock('dns/promises')
++jest.mock('node-fetch', () => {
++    const actual = jest.requireActual('node-fetch')
++    return {
++        ...actual,
++        __esModule: true,
++        default: jest.fn()
++    }
++})
++
++const mockedAxios = axios as jest.MockedFunction<typeof axios>
++const mockedDnsLookup = dns.lookup as jest.MockedFunction<typeof dns.lookup>
++const mockedFetch = fetch as jest.MockedFunction<typeof fetch>
++
++const sensitiveHeaders = {
++    Authorization: 'Bearer secret',
++    Cookie: 'session=secret',
++    'X-Api-Key': 'secret-key'
++}
++
++describe('secure redirect handling', () => {
++    beforeEach(() => {
++        mockedAxios.mockReset()
++        mockedDnsLookup.mockReset()
++        mockedFetch.mockReset()
++        mockedDnsLookup.mockResolvedValue([{ address: '203.0.113.10', family: 4 }] as never)
++    })
++
++    it('removes credentials before a fetch follows a cross-origin redirect', async () => {
++        mockedFetch
++            .mockResolvedValueOnce(createFetchResponse(302, 'https://redirected.example/result'))
++            .mockResolvedValueOnce(createFetchResponse(200))
++
++        await secureFetch('https://source.example/start', {
++            headers: {
++                ...sensitiveHeaders,
++                Accept: 'application/json'
++            }
++        })
++
++        const redirectedInit = mockedFetch.mock.calls[1][1]
++        const redirectedHeaders = new Headers(redirectedInit?.headers)
++        expect(redirectedHeaders.get('authorization')).toBeNull()
++        expect(redirectedHeaders.get('cookie')).toBeNull()
++        expect(redirectedHeaders.get('x-api-key')).toBeNull()
++        expect(redirectedHeaders.get('accept')).toBe('application/json')
++    })
++
++    it('removes credentials before Axios follows a cross-origin redirect', async () => {
++        mockedAxios
++            .mockResolvedValueOnce(createAxiosResponse(302, 'https://redirected.example/result'))
++            .mockResolvedValueOnce(createAxiosResponse(200))
++
++        await secureAxiosRequest({
++            url: 'https://source.example/start',
++            headers: {
++                ...sensitiveHeaders,
++                Accept: 'application/json'
++            }
++        })
++
++        const redirectedConfig = mockedAxios.mock.calls[1][0] as AxiosRequestConfig
++        const redirectedHeaders = new Headers(redirectedConfig.headers as Record<string, string>)
++        expect(redirectedHeaders.get('authorization')).toBeNull()
++        expect(redirectedHeaders.get('cookie')).toBeNull()
++        expect(redirectedHeaders.get('x-api-key')).toBeNull()
++        expect(redirectedHeaders.get('accept')).toBe('application/json')
++    })
++
++    it('keeps credentials on same-origin redirects', async () => {
++        mockedFetch.mockResolvedValueOnce(createFetchResponse(302, '/result')).mockResolvedValueOnce(createFetchResponse(200))
++
++        await secureFetch('https://source.example/start', {
++            headers: sensitiveHeaders
++        })
++
++        const redirectedHeaders = new Headers(mockedFetch.mock.calls[1][1]?.headers)
++        expect(redirectedHeaders.get('authorization')).toBe('Bearer secret')
++        expect(redirectedHeaders.get('cookie')).toBe('session=secret')
++        expect(redirectedHeaders.get('x-api-key')).toBe('secret-key')
++    })
++
++    it('removes entity headers when a redirect changes POST to GET', async () => {
++        mockedFetch.mockResolvedValueOnce(createFetchResponse(303, '/result')).mockResolvedValueOnce(createFetchResponse(200))
++
++        await secureFetch('https://source.example/start', {
++            method: 'POST',
++            body: '{"query":"value"}',
++            headers: {
++                'Content-Length': '17',
++                'Content-Type': 'application/json',
++                'X-Request-Id': 'request-1'
++            }
++        })
++
++        const redirectedInit = mockedFetch.mock.calls[1][1]
++        const redirectedHeaders = new Headers(redirectedInit?.headers)
++        expect(redirectedInit?.method).toBe('GET')
++        expect(redirectedInit?.body).toBeUndefined()
++        expect(redirectedHeaders.get('content-length')).toBeNull()
++        expect(redirectedHeaders.get('content-type')).toBeNull()
++        expect(redirectedHeaders.get('x-request-id')).toBe('request-1')
++    })
++
++    it('removes Axios entity headers when a redirect changes POST to GET', async () => {
++        mockedAxios.mockResolvedValueOnce(createAxiosResponse(303, '/result')).mockResolvedValueOnce(createAxiosResponse(200))
++
++        await secureAxiosRequest({
++            url: 'https://source.example/start',
++            method: 'POST',
++            data: '{"query":"value"}',
++            headers: {
++                'Content-Length': '17',
++                'Content-Type': 'application/json',
++                'X-Request-Id': 'request-1'
++            }
++        })
++
++        const redirectedConfig = mockedAxios.mock.calls[1][0] as AxiosRequestConfig
++        const redirectedHeaders = new Headers(redirectedConfig.headers as Record<string, string>)
++        expect(redirectedConfig.method).toBe('GET')
++        expect(redirectedConfig.data).toBeUndefined()
++        expect(redirectedHeaders.get('content-length')).toBeNull()
++        expect(redirectedHeaders.get('content-type')).toBeNull()
++        expect(redirectedHeaders.get('x-request-id')).toBe('request-1')
++    })
++})
++
++function createFetchResponse(status: number, location?: string): Response {
++    return {
++        status,
++        headers: new Headers(location ? { location } : {})
++    } as Response
++}
++
++function createAxiosResponse(status: number, location?: string): Awaited<ReturnType<typeof axios>> {
++    return {
++        status,
++        headers: location ? { location } : {}
++    } as Awaited<ReturnType<typeof axios>>
++}
+diff --git a/packages/components/src/httpSecurity.ts b/packages/components/src/httpSecurity.ts
+index 476a373c229..c4edb480279 100644
+--- a/packages/components/src/httpSecurity.ts
++++ b/packages/components/src/httpSecurity.ts
+@@ -1,9 +1,21 @@
+-import axios, { AxiosRequestConfig, AxiosResponse } from 'axios'
++import axios, { AxiosHeaders, AxiosRequestConfig, AxiosResponse } from 'axios'
+ import dns from 'dns/promises'
+ import http from 'http'
+ import https from 'https'
+ import * as ipaddr from 'ipaddr.js'
+-import fetch, { RequestInit, Response } from 'node-fetch'
++import fetch, { Headers, RequestInit, Response } from 'node-fetch'
++
++const CROSS_ORIGIN_SENSITIVE_HEADERS = [
++    'authorization',
++    'proxy-authorization',
++    'cookie',
++    'cookie2',
++    'x-api-key',
++    'x-auth-token',
++    'x-amz-security-token'
++]
++
++const ENTITY_HEADERS = ['content-length', 'content-type', 'transfer-encoding']
+ 
+ const DEFAULT_DENY_LIST = [
+     '0.0.0.0',
+@@ -163,7 +175,11 @@ export async function secureAxiosRequest(
+             throw new Error('Too many redirects')
+         }
+ 
+-        currentUrl = new URL(location, currentUrl).toString()
++        const redirectUrl = new URL(location, currentUrl).toString()
++        if (!hasSameOrigin(currentUrl, redirectUrl)) {
++            currentConfig.headers = removeAxiosHeaders(currentConfig.headers, CROSS_ORIGIN_SENSITIVE_HEADERS)
++        }
++        currentUrl = redirectUrl
+ 
+         // For redirects, we only need to preserve certain headers and change method if needed
+         if (response.status === 301 || response.status === 302 || response.status === 303) {
+@@ -174,6 +190,7 @@ export async function secureAxiosRequest(
+             ) {
+                 currentConfig.method = 'GET'
+                 delete currentConfig.data
++                currentConfig.headers = removeAxiosHeaders(currentConfig.headers, ENTITY_HEADERS)
+             }
+         }
+     }
+@@ -225,7 +242,14 @@ export async function secureFetch(
+         }
+ 
+         // Resolve the redirect URL (handle relative URLs)
+-        currentUrl = new URL(location, currentUrl).toString()
++        const redirectUrl = new URL(location, currentUrl).toString()
++        if (!hasSameOrigin(currentUrl, redirectUrl)) {
++            currentInit = {
++                ...currentInit,
++                headers: removeFetchHeaders(currentInit.headers, CROSS_ORIGIN_SENSITIVE_HEADERS)
++            }
++        }
++        currentUrl = redirectUrl
+ 
+         // Handle method changes for redirects according to HTTP specs
+         if (response.status === 301 || response.status === 302 || response.status === 303) {
+@@ -234,7 +258,8 @@ export async function secureFetch(
+                 currentInit = {
+                     ...currentInit,
+                     method: 'GET',
+-                    body: undefined
++                    body: undefined,
++                    headers: removeFetchHeaders(currentInit.headers, ENTITY_HEADERS)
+                 }
+             }
+         }
+@@ -243,6 +268,24 @@ export async function secureFetch(
+     throw new Error('Too many redirects')
+ }
+ 
++function hasSameOrigin(currentUrl: string, redirectUrl: string): boolean {
++    return new URL(currentUrl).origin === new URL(redirectUrl).origin
++}
++
++function removeAxiosHeaders(headers: AxiosRequestConfig['headers'], names: string[]): AxiosHeaders {
++    const sanitized = AxiosHeaders.from(headers as Parameters<typeof AxiosHeaders.from>[0])
++    sanitized.delete(names)
++    return sanitized
++}
++
++function removeFetchHeaders(headers: RequestInit['headers'], names: string[]): Headers {
++    const sanitized = new Headers(headers)
++    for (const name of names) {
++        sanitized.delete(name)
++    }
++    return sanitized
++}
++
+ type ResolvedTarget = {
+     hostname: string
+     ip: string
+
+From a05868e61c0e93404e9c3d7382ad92d15db8bd69 Mon Sep 17 00:00:00 2001
+From: kriptoburak <kriptoburak@users.noreply.github.com>
+Date: Sun, 19 Jul 2026 04:14:52 +0300
+Subject: [PATCH 4/4] fix: complete redirect header sanitization
+
+---
+ packages/components/src/httpSecurity.test.ts | 8 ++++++++
+ packages/components/src/httpSecurity.ts      | 3 ++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/httpSecurity.test.ts b/packages/components/src/httpSecurity.test.ts
+index ca0d33a923d..0b7619db8f7 100644
+--- a/packages/components/src/httpSecurity.test.ts
++++ b/packages/components/src/httpSecurity.test.ts
+@@ -29,6 +29,7 @@ const mockedFetch = fetch as jest.MockedFunction<typeof fetch>
+ const sensitiveHeaders = {
+     Authorization: 'Bearer secret',
+     Cookie: 'session=secret',
++    Host: 'source.example',
+     'X-Api-Key': 'secret-key'
+ }
+ 
+@@ -451,6 +452,7 @@ describe('secure redirect handling', () => {
+         const redirectedHeaders = new Headers(redirectedInit?.headers)
+         expect(redirectedHeaders.get('authorization')).toBeNull()
+         expect(redirectedHeaders.get('cookie')).toBeNull()
++        expect(redirectedHeaders.get('host')).toBeNull()
+         expect(redirectedHeaders.get('x-api-key')).toBeNull()
+         expect(redirectedHeaders.get('accept')).toBe('application/json')
+     })
+@@ -472,6 +474,7 @@ describe('secure redirect handling', () => {
+         const redirectedHeaders = new Headers(redirectedConfig.headers as Record<string, string>)
+         expect(redirectedHeaders.get('authorization')).toBeNull()
+         expect(redirectedHeaders.get('cookie')).toBeNull()
++        expect(redirectedHeaders.get('host')).toBe('redirected.example')
+         expect(redirectedHeaders.get('x-api-key')).toBeNull()
+         expect(redirectedHeaders.get('accept')).toBe('application/json')
+     })
+@@ -486,6 +489,7 @@ describe('secure redirect handling', () => {
+         const redirectedHeaders = new Headers(mockedFetch.mock.calls[1][1]?.headers)
+         expect(redirectedHeaders.get('authorization')).toBe('Bearer secret')
+         expect(redirectedHeaders.get('cookie')).toBe('session=secret')
++        expect(redirectedHeaders.get('host')).toBe('source.example')
+         expect(redirectedHeaders.get('x-api-key')).toBe('secret-key')
+     })
+ 
+@@ -497,6 +501,7 @@ describe('secure redirect handling', () => {
+             body: '{"query":"value"}',
+             headers: {
+                 'Content-Length': '17',
++                'Content-Encoding': 'gzip',
+                 'Content-Type': 'application/json',
+                 'X-Request-Id': 'request-1'
+             }
+@@ -506,6 +511,7 @@ describe('secure redirect handling', () => {
+         const redirectedHeaders = new Headers(redirectedInit?.headers)
+         expect(redirectedInit?.method).toBe('GET')
+         expect(redirectedInit?.body).toBeUndefined()
++        expect(redirectedHeaders.get('content-encoding')).toBeNull()
+         expect(redirectedHeaders.get('content-length')).toBeNull()
+         expect(redirectedHeaders.get('content-type')).toBeNull()
+         expect(redirectedHeaders.get('x-request-id')).toBe('request-1')
+@@ -520,6 +526,7 @@ describe('secure redirect handling', () => {
+             data: '{"query":"value"}',
+             headers: {
+                 'Content-Length': '17',
++                'Content-Encoding': 'gzip',
+                 'Content-Type': 'application/json',
+                 'X-Request-Id': 'request-1'
+             }
+@@ -529,6 +536,7 @@ describe('secure redirect handling', () => {
+         const redirectedHeaders = new Headers(redirectedConfig.headers as Record<string, string>)
+         expect(redirectedConfig.method).toBe('GET')
+         expect(redirectedConfig.data).toBeUndefined()
++        expect(redirectedHeaders.get('content-encoding')).toBeNull()
+         expect(redirectedHeaders.get('content-length')).toBeNull()
+         expect(redirectedHeaders.get('content-type')).toBeNull()
+         expect(redirectedHeaders.get('x-request-id')).toBe('request-1')
+diff --git a/packages/components/src/httpSecurity.ts b/packages/components/src/httpSecurity.ts
+index 4f290c2655d..6a62cb590ec 100644
+--- a/packages/components/src/httpSecurity.ts
++++ b/packages/components/src/httpSecurity.ts
+@@ -10,12 +10,13 @@ const CROSS_ORIGIN_SENSITIVE_HEADERS = [
+     'proxy-authorization',
+     'cookie',
+     'cookie2',
++    'host',
+     'x-api-key',
+     'x-auth-token',
+     'x-amz-security-token'
+ ]
+ 
+-const ENTITY_HEADERS = ['content-length', 'content-type', 'transfer-encoding']
++const ENTITY_HEADERS = ['content-encoding', 'content-language', 'content-length', 'content-location', 'content-type', 'transfer-encoding']
+ 
+ const DEFAULT_DENY_LIST = [
+     '0.0.0.0',

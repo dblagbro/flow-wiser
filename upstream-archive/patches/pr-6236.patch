@@ -1,0 +1,23 @@
+From 317cdf2c0983de11d2087e6c9c9cfbe388a5b711 Mon Sep 17 00:00:00 2001
+From: a-nprobsdorfer <nprobsdorfer@intelepeer.com>
+Date: Thu, 16 Apr 2026 09:35:33 -0600
+Subject: [PATCH] fix(Jira): update endpoint for issue search to use
+ 'search/jql' instead of 'search'
+
+---
+ packages/components/nodes/tools/Jira/core.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/tools/Jira/core.ts b/packages/components/nodes/tools/Jira/core.ts
+index 904aacf7d87..49d227b39c8 100644
+--- a/packages/components/nodes/tools/Jira/core.ts
++++ b/packages/components/nodes/tools/Jira/core.ts
+@@ -245,7 +245,7 @@ class ListIssuesTool extends BaseJiraTool {
+         if (params.maxResults) queryParams.append('maxResults', params.maxResults.toString())
+         if (params.startAt) queryParams.append('startAt', params.startAt.toString())
+ 
+-        const endpoint = `search?${queryParams.toString()}`
++        const endpoint = `search/jql?${queryParams.toString()}`
+ 
+         try {
+             const response = await this.makeJiraRequest({ endpoint, params })

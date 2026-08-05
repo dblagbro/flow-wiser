@@ -1,0 +1,592 @@
+From a62a7cae4ae0ce168fb4d2198e69ca9aca31e20b Mon Sep 17 00:00:00 2001
+From: Mohit Varikuti <mohit.varikuti@twelvelabs.io>
+Date: Thu, 25 Jun 2026 00:58:43 -0700
+Subject: [PATCH] feat: add TwelveLabs nodes (Pegasus video loader + Marengo
+ embeddings)
+
+Adds two opt-in components backed by the TwelveLabs video AI platform:
+
+- TwelveLabs Video document loader: analyzes a video URL with the Pegasus
+  model and loads the generated text as a Document (with TextSplitter and
+  metadata support, matching the other loaders).
+- TwelveLabs Embedding: exposes Marengo's multimodal 512-dim text embeddings
+  as a standard LangChain embedder for use with vector stores.
+
+Both share a new TwelveLabs API credential and call the public REST API via
+the existing axios dependency (no new deps). Co-located unit tests included.
+---
+ .../credentials/TwelveLabsApi.credential.ts   |  26 +++
+ .../TwelveLabs/TwelveLabs.test.ts             |  73 ++++++
+ .../documentloaders/TwelveLabs/TwelveLabs.ts  | 210 ++++++++++++++++++
+ .../documentloaders/TwelveLabs/twelvelabs.svg |   1 +
+ .../TwelveLabsEmbedding.test.ts               |  59 +++++
+ .../TwelveLabsEmbedding.ts                    |  59 +++++
+ .../embeddings/TwelveLabsEmbedding/core.ts    |  80 +++++++
+ .../TwelveLabsEmbedding/twelvelabs.svg        |   1 +
+ 8 files changed, 509 insertions(+)
+ create mode 100644 packages/components/credentials/TwelveLabsApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.test.ts
+ create mode 100644 packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.ts
+ create mode 100644 packages/components/nodes/documentloaders/TwelveLabs/twelvelabs.svg
+ create mode 100644 packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.test.ts
+ create mode 100644 packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.ts
+ create mode 100644 packages/components/nodes/embeddings/TwelveLabsEmbedding/core.ts
+ create mode 100644 packages/components/nodes/embeddings/TwelveLabsEmbedding/twelvelabs.svg
+
+diff --git a/packages/components/credentials/TwelveLabsApi.credential.ts b/packages/components/credentials/TwelveLabsApi.credential.ts
+new file mode 100644
+index 00000000000..4201c0a17df
+--- /dev/null
++++ b/packages/components/credentials/TwelveLabsApi.credential.ts
+@@ -0,0 +1,26 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class TwelveLabsApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'TwelveLabs API'
++        this.name = 'twelveLabsApi'
++        this.version = 1.0
++        this.description =
++            'Get your API key from the <a target="_blank" href="https://playground.twelvelabs.io/dashboard/api-key">TwelveLabs Dashboard</a>. There is a generous free tier.'
++        this.inputs = [
++            {
++                label: 'TwelveLabs Api Key',
++                name: 'twelveLabsApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: TwelveLabsApi }
+diff --git a/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.test.ts b/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.test.ts
+new file mode 100644
+index 00000000000..6631397e6dc
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.test.ts
+@@ -0,0 +1,73 @@
++const mockPost = jest.fn()
++const mockGet = jest.fn()
++jest.mock('axios', () => ({ post: (...args: any[]) => mockPost(...args), get: (...args: any[]) => mockGet(...args) }))
++
++jest.mock('../../../src/utils', () => ({
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn(),
++    handleEscapeCharacters: jest.fn((input) => input)
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: TwelveLabsVideo } = require('./TwelveLabs')
++
++describe('TwelveLabs Video Document Loader', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ twelveLabsApiKey: 'tl-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, data) => data[key])
++    })
++
++    it('submits an analyze task and returns the generated text as a document', async () => {
++        mockPost.mockResolvedValue({ data: { task_id: 'task-123', status: 'pending' } })
++        mockGet.mockResolvedValue({ data: { task_id: 'task-123', status: 'ready', result: { data: 'A cat plays piano.' } } })
++
++        const node = new TwelveLabsVideo()
++        const docs = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: { videoUrl: 'https://example.com/v.mp4', prompt: 'Describe', modelName: 'pegasus1.5' },
++                outputs: { output: 'document' }
++            },
++            '',
++            {}
++        )
++
++        expect(docs).toHaveLength(1)
++        expect(docs[0].pageContent).toBe('A cat plays piano.')
++        expect(docs[0].metadata.source).toBe('https://example.com/v.mp4')
++        expect(mockPost).toHaveBeenCalledWith(
++            'https://api.twelvelabs.io/v1.3/analyze/tasks',
++            expect.objectContaining({
++                model_name: 'pegasus1.5',
++                video: { type: 'url', url: 'https://example.com/v.mp4' },
++                prompt: 'Describe'
++            }),
++            expect.objectContaining({ headers: { 'x-api-key': 'tl-key' } })
++        )
++    })
++
++    it('throws when the task fails', async () => {
++        mockPost.mockResolvedValue({ data: { task_id: 'task-123', status: 'pending' } })
++        mockGet.mockResolvedValue({ data: { task_id: 'task-123', status: 'failed' } })
++
++        const node = new TwelveLabsVideo()
++        await expect(
++            node.init(
++                {
++                    credential: 'cred-1',
++                    inputs: { videoUrl: 'https://example.com/v.mp4', prompt: 'Describe' },
++                    outputs: { output: 'document' }
++                },
++                '',
++                {}
++            )
++        ).rejects.toThrow('analysis task failed')
++    })
++
++    it('requires a video url', async () => {
++        const node = new TwelveLabsVideo()
++        await expect(node.init({ credential: 'cred-1', inputs: {}, outputs: {} }, '', {})).rejects.toThrow('Video URL is required')
++    })
++})
+diff --git a/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.ts b/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.ts
+new file mode 100644
+index 00000000000..98c56cfe458
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/TwelveLabs/TwelveLabs.ts
+@@ -0,0 +1,210 @@
++import axios from 'axios'
++import { omit } from 'lodash'
++import { Document } from '@langchain/core/documents'
++import { TextSplitter } from '@langchain/textsplitters'
++import { ICommonObject, IDocument, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
++
++const TWELVELABS_API_BASE = 'https://api.twelvelabs.io/v1.3'
++
++interface AnalyzeTask {
++    task_id?: string
++    status?: string
++    result?: { data?: string }
++}
++
++class TwelveLabs_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'TwelveLabs Video'
++        this.name = 'twelveLabsVideo'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'twelvelabs.svg'
++        this.category = 'Document Loaders'
++        this.description = 'Analyze a video with the TwelveLabs Pegasus model and load the generated text as a document'
++        this.baseClasses = [this.type]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['twelveLabsApi']
++        }
++        this.inputs = [
++            {
++                label: 'Video URL',
++                name: 'videoUrl',
++                type: 'string',
++                description: 'Publicly accessible URL of the video to analyze'
++            },
++            {
++                label: 'Prompt',
++                name: 'prompt',
++                type: 'string',
++                rows: 4,
++                default: 'Provide a detailed description of this video.',
++                description: 'Prompt that guides what Pegasus generates from the video'
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                default: 'pegasus1.5',
++                description:
++                    'Refer to <a target="_blank" href="https://docs.twelvelabs.io/v1.3/docs/concepts/models/pegasus">TwelveLabs documentation</a> for available models',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                default: 2048,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Polling Timeout (s)',
++                name: 'timeout',
++                type: 'number',
++                default: 600,
++                description: 'Maximum time to wait for the analysis to complete',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Additional Metadata',
++                name: 'metadata',
++                type: 'json',
++                description: 'Additional metadata to be added to the extracted documents',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Omit Metadata Keys',
++                name: 'omitMetadataKeys',
++                type: 'string',
++                rows: 4,
++                description:
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                placeholder: 'key1, key2, key3.nestedKey1',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const videoUrl = nodeData.inputs?.videoUrl as string
++        const prompt = nodeData.inputs?.prompt as string
++        const modelName = (nodeData.inputs?.modelName as string) || 'pegasus1.5'
++        const maxTokens = nodeData.inputs?.maxTokens ? parseInt(nodeData.inputs?.maxTokens as string, 10) : undefined
++        const timeoutSec = nodeData.inputs?.timeout ? parseInt(nodeData.inputs?.timeout as string, 10) : 600
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const metadata = nodeData.inputs?.metadata
++        const output = nodeData.outputs?.output as string
++        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
++
++        if (!videoUrl) throw new Error('Video URL is required')
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('twelveLabsApiKey', credentialData, nodeData)
++        if (!apiKey) throw new Error('TwelveLabs API key is required')
++
++        const analysis = await this.analyzeVideo(apiKey, { videoUrl, prompt, modelName, maxTokens, timeoutSec })
++
++        let omitMetadataKeys: string[] = []
++        if (_omitMetadataKeys) {
++            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
++        }
++
++        let docs: IDocument[] = []
++        const baseMetadata = { source: videoUrl, model: modelName }
++
++        if (textSplitter) {
++            const splitDocs = await textSplitter.createDocuments([analysis])
++            docs.push(...splitDocs.map((doc) => ({ ...doc, metadata: { ...doc.metadata, ...baseMetadata } })))
++        } else {
++            docs.push(new Document({ pageContent: analysis, metadata: baseMetadata }))
++        }
++
++        const parsedMetadata = metadata ? (typeof metadata === 'object' ? metadata : JSON.parse(metadata)) : {}
++        docs = docs.map((doc) => ({
++            ...doc,
++            metadata: _omitMetadataKeys === '*' ? { ...parsedMetadata } : omit({ ...doc.metadata, ...parsedMetadata }, omitMetadataKeys)
++        }))
++
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++
++    private async analyzeVideo(
++        apiKey: string,
++        params: { videoUrl: string; prompt: string; modelName: string; maxTokens?: number; timeoutSec: number }
++    ): Promise<string> {
++        const headers = { 'x-api-key': apiKey }
++        const body: ICommonObject = {
++            model_name: params.modelName,
++            video: { type: 'url', url: params.videoUrl },
++            prompt: params.prompt
++        }
++        if (params.maxTokens) body.max_tokens = params.maxTokens
++
++        const { data: task } = await axios.post<AnalyzeTask>(`${TWELVELABS_API_BASE}/analyze/tasks`, body, { headers })
++        const taskId = task?.task_id
++        if (!taskId) throw new Error('TwelveLabs did not return an analysis task id')
++
++        const deadline = Date.now() + params.timeoutSec * 1000
++        while (Date.now() < deadline) {
++            const { data: status } = await axios.get<AnalyzeTask>(`${TWELVELABS_API_BASE}/analyze/tasks/${taskId}`, { headers })
++            if (status.status === 'ready') {
++                return status.result?.data ?? ''
++            }
++            if (status.status === 'failed') {
++                throw new Error('TwelveLabs analysis task failed')
++            }
++            await new Promise((resolve) => setTimeout(resolve, 5000))
++        }
++        throw new Error(`TwelveLabs analysis did not complete within ${params.timeoutSec}s`)
++    }
++}
++
++module.exports = { nodeClass: TwelveLabs_DocumentLoaders }
+diff --git a/packages/components/nodes/documentloaders/TwelveLabs/twelvelabs.svg b/packages/components/nodes/documentloaders/TwelveLabs/twelvelabs.svg
+new file mode 100644
+index 00000000000..b3a276edec2
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/TwelveLabs/twelvelabs.svg
+@@ -0,0 +1 @@
++<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="6" fill="#000000"/><path d="M9 11h6v2.2h-1.9V21H11v-7.8H9V11z" fill="#fff"/><path d="M16.4 11h2.05l1.55 6.2L21.55 11H23.6l-2.6 10h-1.9l-2.7-10z" fill="#fff"/></svg>
+diff --git a/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.test.ts b/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.test.ts
+new file mode 100644
+index 00000000000..802cba1fc02
+--- /dev/null
++++ b/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.test.ts
+@@ -0,0 +1,59 @@
++const mockPost = jest.fn()
++jest.mock('axios', () => ({ post: (...args: any[]) => mockPost(...args) }))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['Embeddings']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: TwelveLabsEmbedding } = require('./TwelveLabsEmbedding')
++
++describe('TwelveLabsEmbedding', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('builds a Marengo embedder with the credential api key and default model', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ twelveLabsApiKey: 'tl-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, data) => data[key])
++
++        const node = new TwelveLabsEmbedding()
++        const model = await node.init({ credential: 'cred-1', inputs: { modelName: 'marengo3.0' } }, '', {})
++
++        expect(model.apiKey).toBe('tl-key')
++        expect(model.model).toBe('marengo3.0')
++    })
++
++    it('returns the 512-dim float vector from the /embed response', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ twelveLabsApiKey: 'tl-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, data) => data[key])
++
++        const vector = Array.from({ length: 512 }, (_, i) => i / 512)
++        mockPost.mockResolvedValue({ data: { text_embedding: { segments: [{ float: vector }] } } })
++
++        const node = new TwelveLabsEmbedding()
++        const model = await node.init({ credential: 'cred-1', inputs: {} }, '', {})
++        const result = await model.embedQuery('a man walking on the beach')
++
++        expect(result).toHaveLength(512)
++        expect(mockPost).toHaveBeenCalledWith(
++            'https://api.twelvelabs.io/v1.3/embed',
++            expect.anything(),
++            expect.objectContaining({ headers: { 'x-api-key': 'tl-key' } })
++        )
++    })
++
++    it('throws when the response has no embedding', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ twelveLabsApiKey: 'tl-key' })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, data) => data[key])
++        mockPost.mockResolvedValue({ data: { text_embedding: { segments: [] } } })
++
++        const node = new TwelveLabsEmbedding()
++        const model = await node.init({ credential: 'cred-1', inputs: {} }, '', {})
++
++        await expect(model.embedQuery('hi')).rejects.toThrow('did not return a text embedding')
++    })
++})
+diff --git a/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.ts b/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.ts
+new file mode 100644
+index 00000000000..b7d56562b82
+--- /dev/null
++++ b/packages/components/nodes/embeddings/TwelveLabsEmbedding/TwelveLabsEmbedding.ts
+@@ -0,0 +1,59 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { TwelveLabsEmbeddings, TwelveLabsEmbeddingsParams } from './core'
++
++class TwelveLabsEmbedding_Embeddings implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'TwelveLabs Embedding'
++        this.name = 'twelveLabsEmbeddings'
++        this.version = 1.0
++        this.type = 'TwelveLabsEmbeddings'
++        this.icon = 'twelvelabs.svg'
++        this.category = 'Embeddings'
++        this.description = 'TwelveLabs Marengo API to generate multimodal (512-dim) embeddings for a given text'
++        this.baseClasses = [this.type, ...getBaseClasses(TwelveLabsEmbeddings)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['twelveLabsApi']
++        }
++        this.inputs = [
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                default: 'marengo3.0',
++                description:
++                    'Refer to <a target="_blank" href="https://docs.twelvelabs.io/v1.3/docs/concepts/models/marengo">TwelveLabs documentation</a> for available models'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const modelName = nodeData.inputs?.modelName as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const twelveLabsApiKey = getCredentialParam('twelveLabsApiKey', credentialData, nodeData)
++
++        const obj: Partial<TwelveLabsEmbeddingsParams> = {
++            apiKey: twelveLabsApiKey
++        }
++        if (modelName) obj.model = modelName
++
++        return new TwelveLabsEmbeddings(obj)
++    }
++}
++
++module.exports = { nodeClass: TwelveLabsEmbedding_Embeddings }
+diff --git a/packages/components/nodes/embeddings/TwelveLabsEmbedding/core.ts b/packages/components/nodes/embeddings/TwelveLabsEmbedding/core.ts
+new file mode 100644
+index 00000000000..5ffd6bc5b9d
+--- /dev/null
++++ b/packages/components/nodes/embeddings/TwelveLabsEmbedding/core.ts
+@@ -0,0 +1,80 @@
++import axios from 'axios'
++import { Embeddings, EmbeddingsParams } from '@langchain/core/embeddings'
++
++const TWELVELABS_API_BASE = 'https://api.twelvelabs.io/v1.3'
++
++export interface TwelveLabsEmbeddingsParams extends EmbeddingsParams {
++    apiKey?: string
++    model?: string
++    baseUrl?: string
++}
++
++interface EmbedSegment {
++    float?: number[]
++}
++
++interface EmbedResponse {
++    text_embedding?: {
++        segments?: EmbedSegment[]
++    }
++}
++
++/**
++ * TwelveLabs Marengo embeddings. Marengo generates multimodal embeddings (video,
++ * image, audio and text) in a shared 512-dimensional latent space, which is what
++ * makes any-to-any semantic search across modalities possible. This class exposes
++ * the text side of that model so it can be used as a standard LangChain embedder
++ * (e.g. to embed text queries against video embeddings stored in a vector store).
++ *
++ * Uses the multipart `/embed` REST endpoint directly via axios (already a
++ * dependency) rather than pulling in the full TwelveLabs SDK.
++ */
++export class TwelveLabsEmbeddings extends Embeddings implements TwelveLabsEmbeddingsParams {
++    apiKey?: string
++
++    model: string
++
++    baseUrl: string
++
++    constructor(fields?: TwelveLabsEmbeddingsParams) {
++        super(fields ?? {})
++        this.model = fields?.model ?? 'marengo3.0'
++        this.apiKey = fields?.apiKey
++        this.baseUrl = fields?.baseUrl || TWELVELABS_API_BASE
++    }
++
++    private async embedText(text: string): Promise<number[]> {
++        if (!this.apiKey) {
++            throw new Error('TwelveLabs API key is required')
++        }
++
++        const form = new FormData()
++        form.append('model_name', this.model)
++        form.append('text', text.replace(/\n/g, ' '))
++
++        const response = await this.caller.call(async () => {
++            const res = await axios.post<EmbedResponse>(`${this.baseUrl}/embed`, form, {
++                headers: { 'x-api-key': this.apiKey as string }
++            })
++            return res.data
++        })
++
++        const segments = response?.text_embedding?.segments
++        if (!segments?.length || !segments[0].float?.length) {
++            throw new Error('TwelveLabs did not return a text embedding')
++        }
++        return segments[0].float
++    }
++
++    async embedQuery(document: string): Promise<number[]> {
++        return this.embedText(document)
++    }
++
++    async embedDocuments(documents: string[]): Promise<number[][]> {
++        const embeddings: number[][] = []
++        for (const document of documents) {
++            embeddings.push(await this.embedText(document))
++        }
++        return embeddings
++    }
++}
+diff --git a/packages/components/nodes/embeddings/TwelveLabsEmbedding/twelvelabs.svg b/packages/components/nodes/embeddings/TwelveLabsEmbedding/twelvelabs.svg
+new file mode 100644
+index 00000000000..b3a276edec2
+--- /dev/null
++++ b/packages/components/nodes/embeddings/TwelveLabsEmbedding/twelvelabs.svg
+@@ -0,0 +1 @@
++<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="6" fill="#000000"/><path d="M9 11h6v2.2h-1.9V21H11v-7.8H9V11z" fill="#fff"/><path d="M16.4 11h2.05l1.55 6.2L21.55 11H23.6l-2.6 10h-1.9l-2.7-10z" fill="#fff"/></svg>

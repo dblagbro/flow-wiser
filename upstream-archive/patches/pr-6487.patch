@@ -1,0 +1,464 @@
+From faf7d0f029ad2f8877b96068e4760d83a05b511f Mon Sep 17 00:00:00 2001
+From: Raghavendra Reddy <rkota@g2.com>
+Date: Sat, 6 Jun 2026 23:43:30 +0530
+Subject: [PATCH 1/3] feat(litellm): add team name and user name support to
+ LiteLLM credential
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+LiteLLM proxy supports team-based routing for billing and access control.
+This adds optional Team Name and User Name fields to the LiteLLM credential,
+and passes them as x-litellm-team and x-litellm-user headers in API requests.
+
+This enables organizations using LiteLLM proxy with team-scoped API keys to
+explicitly identify the team and user making requests, which is useful for:
+- Team-based cost tracking and billing
+- Per-team rate limiting
+- Audit logging
+
+Both fields are optional and backward-compatible — existing LiteLLM
+configurations continue to work without changes.
+---
+ .../credentials/LitellmApi.credential.ts           | 14 ++++++++++++++
+ .../nodes/chatmodels/ChatLitellm/ChatLitellm.ts    | 11 +++++++++--
+ 2 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/credentials/LitellmApi.credential.ts b/packages/components/credentials/LitellmApi.credential.ts
+index 6bf866f5cee..6aed315a539 100644
+--- a/packages/components/credentials/LitellmApi.credential.ts
++++ b/packages/components/credentials/LitellmApi.credential.ts
+@@ -15,6 +15,20 @@ class LitellmApi implements INodeCredential {
+                 label: 'API Key',
+                 name: 'litellmApiKey',
+                 type: 'password'
++            },
++            {
++                label: 'Team Name',
++                name: 'litellmTeamName',
++                type: 'string',
++                optional: true,
++                placeholder: 'e.g. Activation'
++            },
++            {
++                label: 'User Name',
++                name: 'litellmUserName',
++                type: 'string',
++                optional: true,
++                placeholder: 'e.g. user@company.com'
+             }
+         ]
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+index a444d1ac79d..388ebfa536a 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+@@ -117,6 +117,8 @@ class ChatLitellm_ChatModels implements INode {
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('litellmApiKey', credentialData, nodeData)
++        const teamName = getCredentialParam('litellmTeamName', credentialData, nodeData)
++        const userName = getCredentialParam('litellmUserName', credentialData, nodeData)
+ 
+         const obj: Partial<OpenAIChatInput> &
+             BaseLLMParams & { openAIApiKey?: string } & { configuration?: { baseURL?: string; defaultHeaders?: ICommonObject } } = {
+@@ -125,9 +127,14 @@ class ChatLitellm_ChatModels implements INode {
+             streaming: streaming ?? true
+         }
+ 
+-        if (basePath) {
++        const defaultHeaders: ICommonObject = {}
++        if (teamName) defaultHeaders['x-litellm-team'] = teamName
++        if (userName) defaultHeaders['x-litellm-user'] = userName
++
++        if (basePath || Object.keys(defaultHeaders).length > 0) {
+             obj.configuration = {
+-                baseURL: basePath
++                ...(basePath ? { baseURL: basePath } : {}),
++                ...(Object.keys(defaultHeaders).length > 0 ? { defaultHeaders } : {})
+             }
+         }
+ 
+
+From 9ab1a663ef2e749c2c894930d2a13767195528e4 Mon Sep 17 00:00:00 2001
+From: Raghavendra Reddy <rkota@g2.com>
+Date: Sat, 6 Jun 2026 23:52:51 +0530
+Subject: [PATCH 2/3] feat(litellm): add custom headers support and tests
+
+Replace team/user-specific fields with a generic Custom Headers field
+that supports any LiteLLM proxy header (x-litellm-tags, x-litellm-customer-id,
+x-litellm-end-user-id, x-litellm-spend-logs-metadata, etc.).
+
+Headers are passed as a JSON string in the credential and sent as
+defaultHeaders in the OpenAI-compatible client configuration.
+Malformed JSON is handled gracefully.
+
+Add comprehensive test suite covering:
+- Basic initialization with API key and model
+- Custom headers passed correctly to the client
+- Malformed JSON headers handled gracefully
+- Backward compatibility without headers
+- Optional parameters (maxTokens, topP, timeout)
+---
+ .../credentials/LitellmApi.credential.ts      |  13 +-
+ .../ChatLitellm/ChatLitellm.test.ts           | 221 ++++++++++++++++++
+ .../chatmodels/ChatLitellm/ChatLitellm.ts     |  14 +-
+ 3 files changed, 233 insertions(+), 15 deletions(-)
+ create mode 100644 packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
+
+diff --git a/packages/components/credentials/LitellmApi.credential.ts b/packages/components/credentials/LitellmApi.credential.ts
+index 6aed315a539..1a7e4559d5d 100644
+--- a/packages/components/credentials/LitellmApi.credential.ts
++++ b/packages/components/credentials/LitellmApi.credential.ts
+@@ -17,18 +17,11 @@ class LitellmApi implements INodeCredential {
+                 type: 'password'
+             },
+             {
+-                label: 'Team Name',
+-                name: 'litellmTeamName',
++                label: 'Custom Headers',
++                name: 'litellmCustomHeaders',
+                 type: 'string',
+                 optional: true,
+-                placeholder: 'e.g. Activation'
+-            },
+-            {
+-                label: 'User Name',
+-                name: 'litellmUserName',
+-                type: 'string',
+-                optional: true,
+-                placeholder: 'e.g. user@company.com'
++                placeholder: '{"x-litellm-tags": "team:activation,env:prod"}'
+             }
+         ]
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
+new file mode 100644
+index 00000000000..026dfcd6de8
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
+@@ -0,0 +1,221 @@
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++jest.mock('../ChatOpenAI/FlowiseChatOpenAI', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((_id, config) => ({
++        config,
++        setMultiModalOption: jest.fn()
++    }))
++}))
++
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++import { ChatOpenAI } from '../ChatOpenAI/FlowiseChatOpenAI'
++
++const { nodeClass: ChatLitellm } = require('./ChatLitellm')
++
++describe('ChatLitellm', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        ;(getCredentialData as jest.Mock).mockResolvedValue({})
++    })
++
++    it('initializes with basic config (API key and model only)', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    basePath: 'https://litellm.example.com',
++                    modelName: 'anthropic/claude-sonnet-4-20250514',
++                    temperature: '0.7',
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            undefined,
++            expect.objectContaining({
++                modelName: 'anthropic/claude-sonnet-4-20250514',
++                temperature: 0.7,
++                streaming: true,
++                openAIApiKey: 'sk-test-key',
++                apiKey: 'sk-test-key',
++                configuration: {
++                    baseURL: 'https://litellm.example.com'
++                }
++            })
++        )
++        expect(model.setMultiModalOption).toHaveBeenCalled()
++    })
++
++    it('passes custom headers from credential when provided', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            if (key === 'litellmCustomHeaders') return '{"x-litellm-tags": "team:activation,env:prod"}'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    basePath: 'https://litellm.example.com',
++                    modelName: 'gpt-4o',
++                    temperature: '0.9',
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            undefined,
++            expect.objectContaining({
++                configuration: {
++                    baseURL: 'https://litellm.example.com',
++                    defaultHeaders: {
++                        'x-litellm-tags': 'team:activation,env:prod'
++                    }
++                }
++            })
++        )
++    })
++
++    it('ignores malformed custom headers JSON gracefully', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            if (key === 'litellmCustomHeaders') return 'not-valid-json'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    basePath: 'https://litellm.example.com',
++                    modelName: 'gpt-4o',
++                    temperature: '0.9',
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            undefined,
++            expect.objectContaining({
++                configuration: {
++                    baseURL: 'https://litellm.example.com'
++                }
++            })
++        )
++    })
++
++    it('works without custom headers (backward compatible)', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    basePath: 'https://litellm.example.com',
++                    modelName: 'gpt-4o',
++                    temperature: '0.9',
++                    streaming: true
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            undefined,
++            expect.objectContaining({
++                configuration: {
++                    baseURL: 'https://litellm.example.com'
++                }
++            })
++        )
++    })
++
++    it('works without basePath or custom headers', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'gpt-4o',
++                    temperature: '0.5',
++                    streaming: false
++                }
++            },
++            '',
++            {}
++        )
++
++        const callArgs = (ChatOpenAI as unknown as jest.Mock).mock.calls[0][1]
++        expect(callArgs.configuration).toBeUndefined()
++    })
++
++    it('passes optional parameters when provided', async () => {
++        ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++            if (key === 'litellmApiKey') return 'sk-test-key'
++            return undefined
++        })
++
++        const node = new ChatLitellm()
++        await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    basePath: 'https://litellm.example.com',
++                    modelName: 'gpt-4o',
++                    temperature: '0.5',
++                    streaming: true,
++                    maxTokens: '4096',
++                    topP: '0.95',
++                    timeout: '30000'
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(ChatOpenAI).toHaveBeenCalledWith(
++            undefined,
++            expect.objectContaining({
++                maxTokens: 4096,
++                topP: 0.95,
++                timeout: 30000
++            })
++        )
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+index 388ebfa536a..18c7a88dae2 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+@@ -117,8 +117,7 @@ class ChatLitellm_ChatModels implements INode {
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('litellmApiKey', credentialData, nodeData)
+-        const teamName = getCredentialParam('litellmTeamName', credentialData, nodeData)
+-        const userName = getCredentialParam('litellmUserName', credentialData, nodeData)
++        const customHeadersRaw = getCredentialParam('litellmCustomHeaders', credentialData, nodeData)
+ 
+         const obj: Partial<OpenAIChatInput> &
+             BaseLLMParams & { openAIApiKey?: string } & { configuration?: { baseURL?: string; defaultHeaders?: ICommonObject } } = {
+@@ -127,9 +126,14 @@ class ChatLitellm_ChatModels implements INode {
+             streaming: streaming ?? true
+         }
+ 
+-        const defaultHeaders: ICommonObject = {}
+-        if (teamName) defaultHeaders['x-litellm-team'] = teamName
+-        if (userName) defaultHeaders['x-litellm-user'] = userName
++        let defaultHeaders: ICommonObject = {}
++        if (customHeadersRaw) {
++            try {
++                defaultHeaders = JSON.parse(customHeadersRaw)
++            } catch {
++                // ignore malformed JSON
++            }
++        }
+ 
+         if (basePath || Object.keys(defaultHeaders).length > 0) {
+             obj.configuration = {
+
+From 04484bc0d1c4e07eed54d624dada23cfaa55c735 Mon Sep 17 00:00:00 2001
+From: Raghavendra Reddy <rkota@g2.com>
+Date: Sun, 7 Jun 2026 00:03:31 +0530
+Subject: [PATCH 3/3] fix: validate parsed headers as plain object, add edge
+ case test
+
+Ensure JSON.parse result is a non-array object before using as headers.
+Rejects arrays, strings, and numbers that would parse but are invalid headers.
+---
+ .../ChatLitellm/ChatLitellm.test.ts           | 30 +++++++++++++++++++
+ .../chatmodels/ChatLitellm/ChatLitellm.ts     |  5 +++-
+ 2 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
+index 026dfcd6de8..c78a6831df2 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.test.ts
+@@ -130,6 +130,36 @@ describe('ChatLitellm', () => {
+         )
+     })
+ 
++    it('ignores non-object JSON values (array, string, number)', async () => {
++        for (const badValue of ['["a","b"]', '"just-a-string"', '42']) {
++            jest.clearAllMocks()
++            ;(getCredentialData as jest.Mock).mockResolvedValue({})
++            ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
++                if (key === 'litellmApiKey') return 'sk-test-key'
++                if (key === 'litellmCustomHeaders') return badValue
++                return undefined
++            })
++
++            const node = new ChatLitellm()
++            await node.init(
++                {
++                    credential: 'cred-1',
++                    inputs: {
++                        basePath: 'https://litellm.example.com',
++                        modelName: 'gpt-4o',
++                        temperature: '0.9',
++                        streaming: true
++                    }
++                },
++                '',
++                {}
++            )
++
++            const callArgs = (ChatOpenAI as unknown as jest.Mock).mock.calls[0][1]
++            expect(callArgs.configuration).toEqual({ baseURL: 'https://litellm.example.com' })
++        }
++    })
++
+     it('works without custom headers (backward compatible)', async () => {
+         ;(getCredentialParam as jest.Mock).mockImplementation((key: string) => {
+             if (key === 'litellmApiKey') return 'sk-test-key'
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+index 18c7a88dae2..f21285af263 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+@@ -129,7 +129,10 @@ class ChatLitellm_ChatModels implements INode {
+         let defaultHeaders: ICommonObject = {}
+         if (customHeadersRaw) {
+             try {
+-                defaultHeaders = JSON.parse(customHeadersRaw)
++                const parsed = JSON.parse(customHeadersRaw)
++                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
++                    defaultHeaders = parsed
++                }
+             } catch {
+                 // ignore malformed JSON
+             }

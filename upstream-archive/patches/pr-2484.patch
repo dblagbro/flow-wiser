@@ -1,0 +1,47 @@
+From acec7e244c0e4d9901a0558bd53bf7417d9fb5f4 Mon Sep 17 00:00:00 2001
+From: mingxinh <houmx0607@outlook.com>
+Date: Fri, 24 May 2024 14:42:23 -0700
+Subject: [PATCH] server-util-logger test
+
+---
+ packages/server/test/utils/logger.test.ts | 30 +++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+ create mode 100644 packages/server/test/utils/logger.test.ts
+
+diff --git a/packages/server/test/utils/logger.test.ts b/packages/server/test/utils/logger.test.ts
+new file mode 100644
+index 00000000000..7a4a5fc19fd
+--- /dev/null
++++ b/packages/server/test/utils/logger.test.ts
+@@ -0,0 +1,30 @@
++import { expressRequestLogger } from '../../src/utils/logger';
++import { Request, Response, NextFunction } from 'express';
++
++function runTest() {
++    const mockReq = {
++        method: 'GET',
++        url: '/api/v1/test-url',
++        body: {},
++        query: {},
++        params: {},
++        headers: {}
++    } as Partial<Request>; // a subset of Request in TypeScript
++
++    const mockRes = {
++        status: (code: number) => { 
++            console.log(`Status set to ${code}`);
++            return mockRes; 
++        },
++        send: (responseBody: any) => {
++            console.log(`Response body: ${responseBody}`);
++        }
++    } as Partial<Response>; // a subset of Response.
++
++    const mockNext: NextFunction = () => console.log('next() called');
++
++    console.log('Running Test: Should call next() for a valid API call');
++    expressRequestLogger(mockReq as Request, mockRes as Response, mockNext);
++}
++
++runTest();
+\ No newline at end of file

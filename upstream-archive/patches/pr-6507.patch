@@ -1,0 +1,534 @@
+From 4e106ff401db262209a45a2d9102489425335317 Mon Sep 17 00:00:00 2001
+From: Al Mahfuz <almahfuz777@gmail.com>
+Date: Sat, 13 Jun 2026 01:47:10 +0600
+Subject: [PATCH 1/2] Preserve MCP tool input schema metadata
+
+---
+ .../components/nodes/tools/MCP/core.test.ts   | 88 ++++++++++++++++++
+ packages/components/nodes/tools/MCP/core.ts   | 91 ++++++++++++++++++-
+ 2 files changed, 178 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/tools/MCP/core.test.ts b/packages/components/nodes/tools/MCP/core.test.ts
+index 3fcf44d31af..b2f9179cf25 100644
+--- a/packages/components/nodes/tools/MCP/core.test.ts
++++ b/packages/components/nodes/tools/MCP/core.test.ts
+@@ -3,10 +3,98 @@ import {
+     validateCommandInjection,
+     validateArgsForLocalFileAccess,
+     validateEnvironmentVariables,
++    MCPTool,
++    mcpInputSchemaToZodObject,
+     validateMCPServerConfig
+ } from './core'
+ 
+ describe('MCP Security Validations', () => {
++    describe('mcpInputSchemaToZodObject', () => {
++        it('should preserve MCP input schema descriptions and required fields', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    location: {
++                        type: 'string',
++                        description: 'The city and country to get weather for.'
++                    },
++                    days: {
++                        type: 'integer',
++                        description: 'Number of forecast days.'
++                    },
++                    unit: {
++                        type: 'string',
++                        enum: ['celsius', 'fahrenheit'],
++                        description: 'Temperature unit.'
++                    }
++                },
++                required: ['location']
++            })
++
++            expect(schema.safeParse({}).success).toBe(false)
++            expect(schema.safeParse({ location: 'Dhaka, Bangladesh', unit: 'kelvin' }).success).toBe(false)
++            expect(schema.safeParse({ location: 'Dhaka, Bangladesh', days: 3, unit: 'celsius' }).success).toBe(true)
++
++            const shape = schema.shape
++            expect(shape.location.description).toBe('The city and country to get weather for.')
++            expect(shape.days.description).toBe('Number of forecast days.')
++            expect(shape.unit.description).toBe('Temperature unit.')
++            expect(shape.location.safeParse(undefined).success).toBe(false)
++            expect(shape.days.safeParse(undefined).success).toBe(true)
++        })
++
++        it('should preserve nested object and array parameter schemas', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    filters: {
++                        type: 'object',
++                        description: 'Search filters.',
++                        properties: {
++                            tags: {
++                                type: 'array',
++                                description: 'Tags to match.',
++                                items: {
++                                    type: 'string',
++                                    description: 'A tag value.'
++                                }
++                            }
++                        },
++                        required: ['tags']
++                    }
++                },
++                required: ['filters']
++            })
++
++            expect(schema.safeParse({ filters: { tags: ['docs', 'api'] } }).success).toBe(true)
++            expect(schema.safeParse({ filters: {} }).success).toBe(false)
++            expect(schema.shape.filters.description).toBe('Search filters.')
++            expect(schema.shape.filters.shape.tags.description).toBe('Tags to match.')
++        })
++
++        it('should create LangChain MCP tools with the original MCP description and converted schema', async () => {
++            const mcpTool = await MCPTool({
++                toolkit: {} as any,
++                name: 'buscar_previsao_tempo',
++                description: 'Retorna a previsão do tempo para os próximos dias.',
++                argsSchema: {
++                    type: 'object',
++                    properties: {
++                        local: {
++                            type: 'string',
++                            description: 'Local para consultar a previsão.'
++                        }
++                    },
++                    required: ['local']
++                }
++            })
++
++            expect(mcpTool.description).toBe('Retorna a previsão do tempo para os próximos dias.')
++            expect((mcpTool.schema as any).shape.local.description).toBe('Local para consultar a previsão.')
++            expect((mcpTool.schema as any).safeParse({}).success).toBe(false)
++        })
++    })
++
+     describe('validateCommandFlags', () => {
+         describe('npx command', () => {
+             it('should block -c flag', () => {
+diff --git a/packages/components/nodes/tools/MCP/core.ts b/packages/components/nodes/tools/MCP/core.ts
+index 82cca4dfcb7..6e36d32cf79 100644
+--- a/packages/components/nodes/tools/MCP/core.ts
++++ b/packages/components/nodes/tools/MCP/core.ts
+@@ -4,6 +4,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+ import { StdioClientTransport, StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js'
+ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+ import { CallToolRequest, CallToolResultSchema, ListToolsResult, ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js'
++import { z, type ZodTypeAny } from 'zod'
+ import { checkDenyList, secureFetch } from '../../../src/httpSecurity'
+ 
+ export class MCPToolkit extends BaseToolkit {
+@@ -173,11 +174,99 @@ export async function MCPTool({
+         {
+             name: name,
+             description: description,
+-            schema: argsSchema
++            schema: mcpInputSchemaToZodObject(argsSchema)
+         }
+     )
+ }
+ 
++const isZodSchema = (schema: unknown): schema is ZodTypeAny => {
++    return typeof schema === 'object' && schema !== null && typeof (schema as ZodTypeAny).safeParse === 'function'
++}
++
++const applyDescription = <T extends ZodTypeAny>(schema: T, description?: string): T => {
++    return description ? (schema.describe(description) as T) : schema
++}
++
++const applyRequired = (schema: ZodTypeAny, required: boolean): ZodTypeAny => {
++    return required ? schema : schema.optional()
++}
++
++const jsonSchemaPropertyToZod = (schema: any, propertyName: string, required: boolean): ZodTypeAny => {
++    if (!schema || typeof schema !== 'object') {
++        return applyRequired(z.any(), required)
++    }
++
++    const description = schema.description ?? schema.title ?? propertyName
++
++    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
++        const enumValues = schema.enum.filter((value: unknown): value is string => typeof value === 'string')
++        if (enumValues.length > 0) {
++            return applyDescription(applyRequired(z.enum(enumValues as [string, ...string[]]), required), description)
++        }
++    }
++
++    if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf)) {
++        const variants = (schema.oneOf ?? schema.anyOf)
++            .map((subSchema: any) => jsonSchemaPropertyToZod(subSchema, propertyName, true))
++            .filter(Boolean)
++
++        if (variants.length === 1) {
++            return applyDescription(applyRequired(variants[0], required), description)
++        }
++        if (variants.length > 1) {
++            return applyDescription(applyRequired(z.union(variants as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]), required), description)
++        }
++    }
++
++    let zodSchema: ZodTypeAny
++    switch (schema.type) {
++        case 'string':
++            zodSchema = z.string()
++            break
++        case 'number':
++            zodSchema = z.number()
++            break
++        case 'integer':
++            zodSchema = z.number().int()
++            break
++        case 'boolean':
++            zodSchema = z.boolean()
++            break
++        case 'array':
++            zodSchema = z.array(jsonSchemaPropertyToZod(schema.items, propertyName, true))
++            break
++        case 'object':
++            zodSchema = mcpInputSchemaToZodObject(schema)
++            break
++        case 'null':
++            zodSchema = z.null()
++            break
++        default:
++            zodSchema = z.any()
++    }
++
++    return applyDescription(applyRequired(zodSchema, required), description)
++}
++
++export const mcpInputSchemaToZodObject = (inputSchema: any): any => {
++    if (isZodSchema(inputSchema)) {
++        return inputSchema
++    }
++
++    const properties = inputSchema?.properties
++    if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
++        return z.object({})
++    }
++
++    const requiredProperties = new Set(Array.isArray(inputSchema.required) ? inputSchema.required : [])
++    const zodShape: Record<string, ZodTypeAny> = {}
++    for (const [propertyName, propertySchema] of Object.entries(properties)) {
++        zodShape[propertyName] = jsonSchemaPropertyToZod(propertySchema, propertyName, requiredProperties.has(propertyName))
++    }
++
++    return z.object(zodShape)
++}
++
+ export const validateArgsForLocalFileAccess = (args: string[]): void => {
+     const dangerousPatterns = [
+         // Absolute paths
+
+From 6e596e01e7e04fc8dba4f2ea96c50a92e6767774 Mon Sep 17 00:00:00 2001
+From: Al Mahfuz <almahfuz777@gmail.com>
+Date: Sat, 13 Jun 2026 03:18:12 +0600
+Subject: [PATCH 2/2] Preserve MCP input schema metadata
+
+---
+ .../components/nodes/tools/MCP/core.test.ts   | 113 +++++++++++++++++
+ packages/components/nodes/tools/MCP/core.ts   | 120 ++++++++++++++----
+ 2 files changed, 211 insertions(+), 22 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/core.test.ts b/packages/components/nodes/tools/MCP/core.test.ts
+index b2f9179cf25..2c2908b5df0 100644
+--- a/packages/components/nodes/tools/MCP/core.test.ts
++++ b/packages/components/nodes/tools/MCP/core.test.ts
+@@ -72,6 +72,119 @@ describe('MCP Security Validations', () => {
+             expect(schema.shape.filters.shape.tags.description).toBe('Tags to match.')
+         })
+ 
++        it('should preserve non-string enum values', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    priority: {
++                        enum: [1, 2, 'urgent', true, null],
++                        description: 'Priority marker.'
++                    }
++                },
++                required: ['priority']
++            })
++
++            expect(schema.safeParse({ priority: 1 }).success).toBe(true)
++            expect(schema.safeParse({ priority: true }).success).toBe(true)
++            expect(schema.safeParse({ priority: null }).success).toBe(true)
++            expect(schema.safeParse({ priority: 'urgent' }).success).toBe(true)
++            expect(schema.safeParse({ priority: 'low' }).success).toBe(false)
++            expect(schema.shape.priority.description).toBe('Priority marker.')
++        })
++
++        it('should support array-based JSON schema types', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    query: {
++                        type: ['string', 'null'],
++                        description: 'Optional query text.'
++                    }
++                },
++                required: ['query']
++            })
++
++            expect(schema.safeParse({ query: 'docs' }).success).toBe(true)
++            expect(schema.safeParse({ query: null }).success).toBe(true)
++            expect(schema.safeParse({ query: 123 }).success).toBe(false)
++            expect(schema.safeParse({}).success).toBe(false)
++            expect(schema.shape.query.description).toBe('Optional query text.')
++        })
++
++        it('should infer object and array schemas from structural fields', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    filters: {
++                        description: 'Search filters.',
++                        properties: {
++                            tags: {
++                                description: 'Tags to match.',
++                                items: {
++                                    type: 'string'
++                                }
++                            }
++                        },
++                        required: ['tags']
++                    }
++                },
++                required: ['filters']
++            })
++
++            expect(schema.safeParse({ filters: { tags: ['docs', 'api'] } }).success).toBe(true)
++            expect(schema.safeParse({ filters: { tags: 'docs' } }).success).toBe(false)
++            expect(schema.safeParse({ filters: {} }).success).toBe(false)
++            expect(schema.shape.filters.description).toBe('Search filters.')
++            expect(schema.shape.filters.shape.tags.description).toBe('Tags to match.')
++        })
++
++        it('should preserve default values', () => {
++            const schema = mcpInputSchemaToZodObject({
++                type: 'object',
++                properties: {
++                    limit: {
++                        type: 'integer',
++                        default: 10,
++                        description: 'Maximum number of results.'
++                    }
++                }
++            })
++
++            const result = schema.safeParse({})
++
++            expect(result.success).toBe(true)
++            expect(result.data.limit).toBe(10)
++            expect(schema.safeParse({ limit: 5 }).success).toBe(true)
++            expect(schema.safeParse({ limit: 1.5 }).success).toBe(false)
++            expect(schema.shape.limit.description).toBe('Maximum number of results.')
++        })
++
++        it('should throw for invalid or unsupported JSON schemas', () => {
++            expect(() => {
++                mcpInputSchemaToZodObject(null)
++            }).toThrow('Invalid MCP input schema')
++
++            expect(() => {
++                mcpInputSchemaToZodObject({
++                    type: 'object',
++                    properties: {
++                        bad: null
++                    }
++                })
++            }).toThrow('Invalid schema definition for property: bad')
++
++            expect(() => {
++                mcpInputSchemaToZodObject({
++                    type: 'object',
++                    properties: {
++                        bad: {
++                            type: 'symbol'
++                        }
++                    }
++                })
++            }).toThrow('Unsupported schema type: symbol for property: bad')
++        })
++
+         it('should create LangChain MCP tools with the original MCP description and converted schema', async () => {
+             const mcpTool = await MCPTool({
+                 toolkit: {} as any,
+diff --git a/packages/components/nodes/tools/MCP/core.ts b/packages/components/nodes/tools/MCP/core.ts
+index 6e36d32cf79..d002376fc86 100644
+--- a/packages/components/nodes/tools/MCP/core.ts
++++ b/packages/components/nodes/tools/MCP/core.ts
+@@ -187,39 +187,95 @@ const applyDescription = <T extends ZodTypeAny>(schema: T, description?: string)
+     return description ? (schema.describe(description) as T) : schema
+ }
+ 
+-const applyRequired = (schema: ZodTypeAny, required: boolean): ZodTypeAny => {
++const applyRequiredAndDefault = (schema: ZodTypeAny, required: boolean, defaultValue: unknown): ZodTypeAny => {
++    if (defaultValue !== undefined) {
++        return schema.default(defaultValue)
++    }
++
+     return required ? schema : schema.optional()
+ }
+ 
+-const jsonSchemaPropertyToZod = (schema: any, propertyName: string, required: boolean): ZodTypeAny => {
+-    if (!schema || typeof schema !== 'object') {
+-        return applyRequired(z.any(), required)
++const createUnionSchema = (variants: ZodTypeAny[], propertyName: string): ZodTypeAny => {
++    if (variants.length === 0) {
++        throw new Error(`No schema variants defined for property: ${propertyName}`)
+     }
+ 
+-    const description = schema.description ?? schema.title ?? propertyName
++    if (variants.length === 1) {
++        return variants[0]
++    }
+ 
+-    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+-        const enumValues = schema.enum.filter((value: unknown): value is string => typeof value === 'string')
+-        if (enumValues.length > 0) {
+-            return applyDescription(applyRequired(z.enum(enumValues as [string, ...string[]]), required), description)
++    return z.union(variants as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]])
++}
++
++const isJsonLiteral = (value: unknown): value is string | number | boolean | null => {
++    return value === null || ['string', 'number', 'boolean'].includes(typeof value)
++}
++
++const getSchemaType = (schema: any, propertyName: string): string | string[] => {
++    if (schema.type === undefined) {
++        if (schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
++            return 'object'
++        }
++        if (schema.items !== undefined) {
++            return 'array'
+         }
++
++        throw new Error(`Schema type could not be inferred for property: ${propertyName}`)
+     }
+ 
+-    if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf)) {
+-        const variants = (schema.oneOf ?? schema.anyOf)
+-            .map((subSchema: any) => jsonSchemaPropertyToZod(subSchema, propertyName, true))
+-            .filter(Boolean)
++    if (Array.isArray(schema.type)) {
++        if (schema.type.length === 0 || !schema.type.every((type: unknown) => typeof type === 'string')) {
++            throw new Error(`Invalid schema type for property: ${propertyName}`)
++        }
++
++        return schema.type
++    }
++
++    if (typeof schema.type !== 'string') {
++        throw new Error(`Invalid schema type for property: ${propertyName}`)
++    }
++
++    return schema.type
++}
++
++const buildJsonSchemaPropertyZod = (schema: any, propertyName: string): ZodTypeAny => {
++    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
++        throw new Error(`Invalid schema definition for property: ${propertyName}`)
++    }
+ 
+-        if (variants.length === 1) {
+-            return applyDescription(applyRequired(variants[0], required), description)
++    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
++        const allStrings = schema.enum.every((value: unknown) => typeof value === 'string')
++        if (allStrings) {
++            return z.enum(schema.enum as [string, ...string[]])
+         }
+-        if (variants.length > 1) {
+-            return applyDescription(applyRequired(z.union(variants as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]), required), description)
++
++        if (!schema.enum.every(isJsonLiteral)) {
++            throw new Error(`Unsupported enum value for property: ${propertyName}`)
+         }
++
++        return createUnionSchema(
++            schema.enum.map((value: string | number | boolean | null) => z.literal(value)),
++            propertyName
++        )
++    }
++
++    if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf)) {
++        return createUnionSchema(
++            (schema.oneOf ?? schema.anyOf).map((subSchema: any) => buildJsonSchemaPropertyZod(subSchema, propertyName)),
++            propertyName
++        )
++    }
++
++    const type = getSchemaType(schema, propertyName)
++    if (Array.isArray(type)) {
++        return createUnionSchema(
++            type.map((schemaType) => buildJsonSchemaPropertyZod({ ...schema, type: schemaType }, propertyName)),
++            propertyName
++        )
+     }
+ 
+     let zodSchema: ZodTypeAny
+-    switch (schema.type) {
++    switch (type) {
+         case 'string':
+             zodSchema = z.string()
+             break
+@@ -233,7 +289,7 @@ const jsonSchemaPropertyToZod = (schema: any, propertyName: string, required: bo
+             zodSchema = z.boolean()
+             break
+         case 'array':
+-            zodSchema = z.array(jsonSchemaPropertyToZod(schema.items, propertyName, true))
++            zodSchema = z.array(schema.items === undefined ? z.any() : buildJsonSchemaPropertyZod(schema.items, propertyName))
+             break
+         case 'object':
+             zodSchema = mcpInputSchemaToZodObject(schema)
+@@ -242,10 +298,17 @@ const jsonSchemaPropertyToZod = (schema: any, propertyName: string, required: bo
+             zodSchema = z.null()
+             break
+         default:
+-            zodSchema = z.any()
++            throw new Error(`Unsupported schema type: ${type} for property: ${propertyName}`)
+     }
+ 
+-    return applyDescription(applyRequired(zodSchema, required), description)
++    return zodSchema
++}
++
++const jsonSchemaPropertyToZod = (schema: any, propertyName: string, required: boolean): ZodTypeAny => {
++    const zodSchema = buildJsonSchemaPropertyZod(schema, propertyName)
++    const description = schema.description ?? schema.title ?? propertyName
++
++    return applyDescription(applyRequiredAndDefault(zodSchema, required, schema.default), description)
+ }
+ 
+ export const mcpInputSchemaToZodObject = (inputSchema: any): any => {
+@@ -253,11 +316,24 @@ export const mcpInputSchemaToZodObject = (inputSchema: any): any => {
+         return inputSchema
+     }
+ 
++    if (!inputSchema || typeof inputSchema !== 'object' || Array.isArray(inputSchema)) {
++        throw new Error('Invalid MCP input schema')
++    }
++
++    const type = inputSchema.type ?? 'object'
++    if (type !== 'object') {
++        throw new Error(`Unsupported MCP input schema type: ${type}`)
++    }
++
+     const properties = inputSchema?.properties
+-    if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
++    if (properties === undefined) {
+         return z.object({})
+     }
+ 
++    if (typeof properties !== 'object' || Array.isArray(properties)) {
++        throw new Error('Invalid MCP input schema properties')
++    }
++
+     const requiredProperties = new Set(Array.isArray(inputSchema.required) ? inputSchema.required : [])
+     const zodShape: Record<string, ZodTypeAny> = {}
+     for (const [propertyName, propertySchema] of Object.entries(properties)) {

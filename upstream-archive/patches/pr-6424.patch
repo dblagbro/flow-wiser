@@ -1,0 +1,282 @@
+From 1af95a8c5cbab2041288ea9f91282e6b7486b61b Mon Sep 17 00:00:00 2001
+From: Dushyant Acharya <dushyantacharya873@gmail.com>
+Date: Sat, 23 May 2026 10:28:59 +0530
+Subject: [PATCH 1/3] feat: support LM Studio embeddings
+
+Adds support for LM Studio embeddings by wrapping the OpenAIEmbeddings provider with defaults tailored for local LM Studio instances.
+
+Resolves FlowiseAI/Flowise#1277
+---
+ .../credentials/LMStudioApi.credential.ts     |  24 ++++++
+ .../LMStudioEmbedding/LMStudioEmbedding.ts    |  71 ++++++++++++++++++
+ .../embeddings/LMStudioEmbedding/lmstudio.png | Bin 0 -> 3171 bytes
+ 3 files changed, 95 insertions(+)
+ create mode 100644 packages/components/credentials/LMStudioApi.credential.ts
+ create mode 100644 packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+ create mode 100644 packages/components/nodes/embeddings/LMStudioEmbedding/lmstudio.png
+
+diff --git a/packages/components/credentials/LMStudioApi.credential.ts b/packages/components/credentials/LMStudioApi.credential.ts
+new file mode 100644
+index 00000000000..4ef4677f211
+--- /dev/null
++++ b/packages/components/credentials/LMStudioApi.credential.ts
+@@ -0,0 +1,24 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class LMStudioApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'LM Studio API'
++        this.name = 'lmstudioApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'LM Studio Api Key',
++                name: 'lmstudioApiKey',
++                type: 'password',
++                description: 'Optional. Most local LM Studio instances do not require an API key.'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: LMStudioApi }
+diff --git a/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+new file mode 100644
+index 00000000000..8bd8f8f3f54
+--- /dev/null
++++ b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+@@ -0,0 +1,71 @@
++import { ClientOptions, OpenAIEmbeddings, OpenAIEmbeddingsParams } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class LMStudioEmbedding_Embeddings implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'LM Studio Embedding'
++        this.name = 'lmStudioEmbeddings'
++        this.version = 1.0
++        this.type = 'LM Studio Embeddings'
++        this.icon = 'lmstudio.png'
++        this.category = 'Embeddings'
++        this.description = 'Use LM Studio local embeddings models'
++        this.baseClasses = [this.type, 'Embeddings']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['lmstudioApi'],
++            optional: true
++        }
++        this.inputs = [
++            {
++                label: 'Base Path',
++                name: 'basePath',
++                type: 'string',
++                default: 'http://localhost:1234/v1'
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                placeholder: 'nomic-embed-text-v1.5'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const modelName = nodeData.inputs?.modelName as string
++        const basePath = nodeData.inputs?.basePath as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const lmstudioApiKey = getCredentialParam('lmstudioApiKey', credentialData, nodeData)
++
++        const obj: Partial<OpenAIEmbeddingsParams> & { openAIApiKey?: string; configuration?: ClientOptions } = {
++            modelName,
++            openAIApiKey: 'not-needed' // LM Studio typically doesn't require an API key
++        }
++
++        if (lmstudioApiKey) obj.openAIApiKey = lmstudioApiKey
++
++        if (basePath) obj.configuration = { baseURL: basePath }
++
++        const model = new OpenAIEmbeddings(obj)
++
++        return model
++    }
++}
++
++module.exports = { nodeClass: LMStudioEmbedding_Embeddings }
+diff --git a/packages/components/nodes/embeddings/LMStudioEmbedding/lmstudio.png b/packages/components/nodes/embeddings/LMStudioEmbedding/lmstudio.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2a7c102ca02d24183147217d65e111ac9a4a550
+GIT binary patch
+literal 3171
+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
+JPDHLkV1g5p)WHA%
+
+literal 0
+HcmV?d00001
+
+
+From f7022fba6922f3410ad1325a3ca579e148749f82 Mon Sep 17 00:00:00 2001
+From: Dushyant Acharya <dushyantacharya873@gmail.com>
+Date: Sat, 23 May 2026 10:33:19 +0530
+Subject: [PATCH 2/3] fix: apply code review suggestions
+
+- Add validation to ensure modelName and basePath are provided to prevent unexpected fallbacks to production OpenAI APIs.
+- Simplify OpenAIEmbeddingsParams typing intersection.
+---
+ .../nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts   | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+index 8bd8f8f3f54..8de75901b87 100644
+--- a/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
++++ b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+@@ -48,12 +48,14 @@ class LMStudioEmbedding_Embeddings implements INode {
+ 
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const modelName = nodeData.inputs?.modelName as string
++        if (!modelName) throw new Error('Model Name is required for LM Studio Embeddings')
+         const basePath = nodeData.inputs?.basePath as string
++        if (!basePath) throw new Error('Base Path is required for LM Studio Embeddings')
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const lmstudioApiKey = getCredentialParam('lmstudioApiKey', credentialData, nodeData)
+ 
+-        const obj: Partial<OpenAIEmbeddingsParams> & { openAIApiKey?: string; configuration?: ClientOptions } = {
++        const obj: OpenAIEmbeddingsParams = {
+             modelName,
+             openAIApiKey: 'not-needed' // LM Studio typically doesn't require an API key
+         }
+
+From 9778a98f227c8ab56f9e30b0d2c88f941b8e2552 Mon Sep 17 00:00:00 2001
+From: Dushyant Acharya <dushyantacharya873@gmail.com>
+Date: Sat, 23 May 2026 10:50:26 +0530
+Subject: [PATCH 3/3] refactor: apply second round of code review suggestions
+
+- Ensure versioning consistency by using integers instead of floats
+- Simplify OpenAIEmebeddingsParams initialization by using inline apiKey and configuration
+---
+ .../components/credentials/LMStudioApi.credential.ts     | 2 +-
+ .../embeddings/LMStudioEmbedding/LMStudioEmbedding.ts    | 9 +++------
+ 2 files changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/packages/components/credentials/LMStudioApi.credential.ts b/packages/components/credentials/LMStudioApi.credential.ts
+index 4ef4677f211..960a2e8dc7a 100644
+--- a/packages/components/credentials/LMStudioApi.credential.ts
++++ b/packages/components/credentials/LMStudioApi.credential.ts
+@@ -9,7 +9,7 @@ class LMStudioApi implements INodeCredential {
+     constructor() {
+         this.label = 'LM Studio API'
+         this.name = 'lmstudioApi'
+-        this.version = 1.0
++        this.version = 1
+         this.inputs = [
+             {
+                 label: 'LM Studio Api Key',
+diff --git a/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+index 8de75901b87..dbdd648b2c5 100644
+--- a/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
++++ b/packages/components/nodes/embeddings/LMStudioEmbedding/LMStudioEmbedding.ts
+@@ -17,7 +17,7 @@ class LMStudioEmbedding_Embeddings implements INode {
+     constructor() {
+         this.label = 'LM Studio Embedding'
+         this.name = 'lmStudioEmbeddings'
+-        this.version = 1.0
++        this.version = 1
+         this.type = 'LM Studio Embeddings'
+         this.icon = 'lmstudio.png'
+         this.category = 'Embeddings'
+@@ -57,13 +57,10 @@ class LMStudioEmbedding_Embeddings implements INode {
+ 
+         const obj: OpenAIEmbeddingsParams = {
+             modelName,
+-            openAIApiKey: 'not-needed' // LM Studio typically doesn't require an API key
++            apiKey: lmstudioApiKey,
++            configuration: { baseURL: basePath }
+         }
+ 
+-        if (lmstudioApiKey) obj.openAIApiKey = lmstudioApiKey
+-
+-        if (basePath) obj.configuration = { baseURL: basePath }
+-
+         const model = new OpenAIEmbeddings(obj)
+ 
+         return model

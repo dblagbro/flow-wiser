@@ -1,0 +1,36 @@
+From fd72f539d5aaa954abf18c7917a8c994bb6b74b9 Mon Sep 17 00:00:00 2001
+From: Osamaali313 <s.osamaali72@gmail.com>
+Date: Sun, 26 Jul 2026 23:31:33 +0300
+Subject: [PATCH] fix: apply min/max modifiers to ZodNumber in secureZodParser
+
+applyModifiers handled .min()/.max() for ZodString and ZodArray but not
+ZodNumber, so numeric bounds in a user schema (e.g. z.number().min(0).max(100))
+were silently discarded and out-of-range values passed validation. The sibling
+`int` case already branches on ZodNumber, confirming numeric modifiers are
+meant to apply. Add the missing ZodNumber branch to both min and max.
+---
+ packages/components/src/secureZodParser.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/components/src/secureZodParser.ts b/packages/components/src/secureZodParser.ts
+index 4f8a94ee16c..3b4ff4a2063 100644
+--- a/packages/components/src/secureZodParser.ts
++++ b/packages/components/src/secureZodParser.ts
+@@ -640,6 +640,8 @@ export class SecureZodSchemaParser {
+                             zodType = (zodType as z.ZodString).max(modifier.args[0])
+                         } else if (zodType._def?.typeName === 'ZodArray') {
+                             zodType = (zodType as z.ZodArray<any>).max(modifier.args[0])
++                        } else if (zodType._def?.typeName === 'ZodNumber') {
++                            zodType = (zodType as z.ZodNumber).max(modifier.args[0])
+                         }
+                     }
+                     break
+@@ -649,6 +651,8 @@ export class SecureZodSchemaParser {
+                             zodType = (zodType as z.ZodString).min(modifier.args[0])
+                         } else if (zodType._def?.typeName === 'ZodArray') {
+                             zodType = (zodType as z.ZodArray<any>).min(modifier.args[0])
++                        } else if (zodType._def?.typeName === 'ZodNumber') {
++                            zodType = (zodType as z.ZodNumber).min(modifier.args[0])
+                         }
+                     }
+                     break

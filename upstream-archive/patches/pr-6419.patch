@@ -1,0 +1,363 @@
+From 62cca6761027d82daf57a4c0aac6792dbd2a7584 Mon Sep 17 00:00:00 2001
+From: Puneet Dixit <rvit23bcs086.rvitm@rvei.edu.in>
+Date: Thu, 21 May 2026 17:40:50 +0530
+Subject: [PATCH 1/2] fix: preserve chatflow id on API create
+
+---
+ .../src/controllers/chatflows/index.test.ts   | 102 ++++++++++++++++++
+ .../server/src/controllers/chatflows/index.ts |   4 +
+ .../src/services/chatflows/index.test.ts      |  48 ++++++++-
+ .../server/src/services/chatflows/index.ts    |  23 +++-
+ 4 files changed, 167 insertions(+), 10 deletions(-)
+ create mode 100644 packages/server/src/controllers/chatflows/index.test.ts
+
+diff --git a/packages/server/src/controllers/chatflows/index.test.ts b/packages/server/src/controllers/chatflows/index.test.ts
+new file mode 100644
+index 00000000000..9774102bb29
+--- /dev/null
++++ b/packages/server/src/controllers/chatflows/index.test.ts
+@@ -0,0 +1,102 @@
++jest.mock('../../database/entities/ChatFlow', () => ({
++    ChatFlow: class ChatFlow {}
++}))
++
++jest.mock('../../enterprise/services/workspace-user.service', () => ({
++    WorkspaceUserErrorMessage: {
++        WORKSPACE_USER_NOT_FOUND: 'Workspace user not found'
++    },
++    WorkspaceUserService: jest.fn()
++}))
++
++jest.mock('../../services/chatflows', () => ({
++    __esModule: true,
++    default: {
++        getAllChatflowsCountByOrganization: jest.fn(),
++        saveChatflow: jest.fn()
++    }
++}))
++
++jest.mock('../../utils/getRunningExpressApp', () => ({
++    getRunningExpressApp: jest.fn().mockReturnValue({ usageCacheManager: {} })
++}))
++
++jest.mock('../../utils/quotaUsage', () => ({
++    checkUsageLimit: jest.fn().mockResolvedValue(undefined)
++}))
++
++jest.mock('../../utils/rateLimit', () => ({
++    RateLimiterManager: {
++        getInstance: jest.fn().mockReturnValue({ updateRateLimiter: jest.fn() })
++    }
++}))
++
++jest.mock('../../utils/sanitizeFlowData', () => ({
++    sanitizeFlowDataForPublicEndpoint: jest.fn()
++}))
++
++jest.mock('../../services/apikey', () => ({
++    __esModule: true,
++    default: {}
++}))
++
++jest.mock('../../services/schedule', () => ({
++    __esModule: true,
++    default: {}
++}))
++
++jest.mock('../../schedule/ScheduleBeat', () => ({
++    ScheduleBeat: {
++        getInstance: jest.fn().mockReturnValue({ onScheduleChanged: jest.fn() })
++    }
++}))
++
++import chatflowsController from './index'
++import chatflowsService from '../../services/chatflows'
++import { checkUsageLimit } from '../../utils/quotaUsage'
++
++const mockChatflowsService = chatflowsService as jest.Mocked<typeof chatflowsService>
++const mockCheckUsageLimit = checkUsageLimit as jest.Mock
++
++describe('chatflowsController.saveChatflow', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++        mockChatflowsService.getAllChatflowsCountByOrganization.mockResolvedValue(0)
++        mockChatflowsService.saveChatflow.mockImplementation(async (chatflow) => chatflow)
++        mockCheckUsageLimit.mockResolvedValue(undefined)
++    })
++
++    it('preserves a caller-provided chatflow id when creating a chatflow', async () => {
++        const chatflowId = '11111111-1111-4111-8111-111111111111'
++        const req = {
++            body: {
++                id: chatflowId,
++                name: 'Restored flow',
++                flowData: JSON.stringify({ nodes: [], edges: [] }),
++                type: 'CHATFLOW'
++            },
++            user: {
++                activeOrganizationId: 'org-1',
++                activeWorkspaceId: 'ws-1',
++                activeOrganizationSubscriptionId: 'sub-1'
++            }
++        }
++        const res = { json: jest.fn() }
++        const next = jest.fn()
++
++        await chatflowsController.saveChatflow(req as any, res as any, next)
++
++        expect(next).not.toHaveBeenCalled()
++        expect(mockChatflowsService.saveChatflow).toHaveBeenCalledWith(
++            expect.objectContaining({
++                id: chatflowId,
++                workspaceId: 'ws-1'
++            }),
++            'org-1',
++            'ws-1',
++            'sub-1',
++            {}
++        )
++        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: chatflowId }))
++    })
++})
+diff --git a/packages/server/src/controllers/chatflows/index.ts b/packages/server/src/controllers/chatflows/index.ts
+index dcc0c152d88..7b6a7687983 100644
+--- a/packages/server/src/controllers/chatflows/index.ts
++++ b/packages/server/src/controllers/chatflows/index.ts
+@@ -156,6 +156,10 @@ const saveChatflow = async (req: Request, res: Response, next: NextFunction) =>
+ 
+         const newChatFlow = new ChatFlow()
+         Object.assign(newChatFlow, stripProtectedFields(body))
++        // Imported flows rely on the create API accepting the exported chatflow id.
++        if (Object.prototype.hasOwnProperty.call(body, 'id')) {
++            newChatFlow.id = body.id
++        }
+ 
+         newChatFlow.workspaceId = workspaceId
+         const apiResponse = await chatflowsService.saveChatflow(
+diff --git a/packages/server/src/services/chatflows/index.test.ts b/packages/server/src/services/chatflows/index.test.ts
+index 7d64b13f8c6..a5723d93d00 100644
+--- a/packages/server/src/services/chatflows/index.test.ts
++++ b/packages/server/src/services/chatflows/index.test.ts
+@@ -107,7 +107,7 @@ jest.mock('../../schedule/ScheduleBeat', () => ({
+ jest.mock('flowise-components', () => ({ removeFolderFromStorage: jest.fn().mockResolvedValue({ totalSize: 0 }) }), { virtual: true })
+ jest.mock('uuid', () => ({ validate: jest.fn().mockReturnValue(true) }))
+ jest.mock('http-status-codes', () => ({
+-    StatusCodes: { OK: 200, BAD_REQUEST: 400, NOT_FOUND: 404, INTERNAL_SERVER_ERROR: 500 }
++    StatusCodes: { OK: 200, BAD_REQUEST: 400, CONFLICT: 409, NOT_FOUND: 404, INTERNAL_SERVER_ERROR: 500 }
+ }))
+ 
+ // ─── Imports (after mocks) ────────────────────────────────────────────────────
+@@ -118,12 +118,14 @@ import { ScheduleBeat } from '../../schedule/ScheduleBeat'
+ import { containsBase64File } from '../../utils/fileRepository'
+ import { EnumChatflowType } from '../../database/entities/ChatFlow'
+ import { ScheduleTriggerType } from '../../database/entities/ScheduleRecord'
++import { validate as isValidUUID } from 'uuid'
+ 
+ const mockContainsBase64File = containsBase64File as jest.Mock
+ const mockCreateOrUpdateSchedule = scheduleService.createOrUpdateSchedule as jest.Mock
+ const mockDeleteScheduleForTarget = scheduleService.deleteScheduleForTarget as jest.Mock
+ const mockResolveScheduleCron = scheduleService.resolveScheduleCron as jest.Mock
+ const mockCanScheduleEnable = scheduleService.canScheduleEnable as jest.Mock
++const mockIsValidUUID = isValidUUID as jest.Mock
+ 
+ // ─── Helpers ──────────────────────────────────────────────────────────────────
+ 
+@@ -159,8 +161,10 @@ const makeChatInputFlowData = () =>
+ /** Build a plain (non-agentflow) flowData JSON */
+ const makePlainFlowData = () => JSON.stringify({ nodes: [], edges: [] })
+ 
++const FLOW_ID = '11111111-1111-4111-8111-111111111111'
++
+ const makeChatflow = (overrides: Record<string, unknown> = {}) => ({
+-    id: 'flow-1',
++    id: FLOW_ID,
+     type: EnumChatflowType.AGENTFLOW,
+     flowData: makeScheduleFlowData(),
+     workspaceId: 'ws-1',
+@@ -178,10 +182,12 @@ const SAVE_ARGS = {
+ beforeEach(() => {
+     jest.clearAllMocks()
+     mockAppServer.AppDataSource.getRepository.mockReturnValue(mockRepo)
++    mockRepo.findOne.mockResolvedValue(undefined)
+     mockRepo.create.mockImplementation((x: unknown) => x)
+     mockRepo.save.mockResolvedValue(makeChatflow())
+     mockRepo.merge.mockImplementation((_existing: any, updates: any) => ({ ...makeChatflow(), ...updates }))
+     mockContainsBase64File.mockReturnValue(false)
++    mockIsValidUUID.mockReturnValue(true)
+     mockCreateOrUpdateSchedule.mockResolvedValue({ id: 'sched-1', enabled: true })
+     mockDeleteScheduleForTarget.mockResolvedValue(undefined)
+     mockResolveScheduleCron.mockReturnValue({ valid: true, cronExpression: '* * * * *' })
+@@ -225,6 +231,38 @@ describe('saveChatflow', () => {
+         ).rejects.toMatchObject({ statusCode: 400 })
+     })
+ 
++    it('throws BAD_REQUEST for an invalid caller-provided chatflow id', async () => {
++        mockIsValidUUID.mockReturnValue(false)
++        const badFlow = makeChatflow({ id: 'not-a-uuid', type: EnumChatflowType.CHATFLOW, flowData: makePlainFlowData() })
++
++        await expect(
++            chatflowsService.saveChatflow(
++                badFlow as any,
++                SAVE_ARGS.orgId,
++                SAVE_ARGS.workspaceId,
++                SAVE_ARGS.subscriptionId,
++                SAVE_ARGS.usageCacheManager
++            )
++        ).rejects.toMatchObject({ statusCode: 400 })
++        expect(mockRepo.save).not.toHaveBeenCalled()
++    })
++
++    it('throws CONFLICT when the caller-provided chatflow id already exists', async () => {
++        const newFlow = makeChatflow({ type: EnumChatflowType.CHATFLOW, flowData: makePlainFlowData() })
++        mockRepo.findOne.mockResolvedValueOnce({ id: FLOW_ID })
++
++        await expect(
++            chatflowsService.saveChatflow(
++                newFlow as any,
++                SAVE_ARGS.orgId,
++                SAVE_ARGS.workspaceId,
++                SAVE_ARGS.subscriptionId,
++                SAVE_ARGS.usageCacheManager
++            )
++        ).rejects.toMatchObject({ statusCode: 409 })
++        expect(mockRepo.save).not.toHaveBeenCalled()
++    })
++
+     // ── schedule sync (AGENTFLOW + scheduleInput) ────────────────────────────
+ 
+     it('creates or updates the schedule when the start node is scheduleInput', async () => {
+@@ -242,7 +280,7 @@ describe('saveChatflow', () => {
+         expect(mockCreateOrUpdateSchedule).toHaveBeenCalledWith(
+             expect.objectContaining({
+                 triggerType: ScheduleTriggerType.AGENTFLOW,
+-                targetId: 'flow-1',
++                targetId: FLOW_ID,
+                 workspaceId: 'ws-1'
+             })
+         )
+@@ -475,7 +513,7 @@ describe('updateChatflow', () => {
+         await chatflowsService.updateChatflow(existingFlow as any, updates as any, 'org-1', 'ws-1', 'sub-1')
+ 
+         expect(mockCreateOrUpdateSchedule).toHaveBeenCalledWith(
+-            expect.objectContaining({ triggerType: ScheduleTriggerType.AGENTFLOW, targetId: 'flow-1', workspaceId: 'ws-1' })
++            expect.objectContaining({ triggerType: ScheduleTriggerType.AGENTFLOW, targetId: FLOW_ID, workspaceId: 'ws-1' })
+         )
+     })
+ 
+@@ -543,7 +581,7 @@ describe('updateChatflow', () => {
+             'sub-1'
+         )
+ 
+-        expect(mockDeleteScheduleForTarget).toHaveBeenCalledWith('flow-1', ScheduleTriggerType.AGENTFLOW, 'ws-1')
++        expect(mockDeleteScheduleForTarget).toHaveBeenCalledWith(FLOW_ID, ScheduleTriggerType.AGENTFLOW, 'ws-1')
+     })
+ 
+     it('calls onScheduleChanged delete after deleting the existing schedule record', async () => {
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index e301ac4ec7b..54818cd0adb 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -38,6 +38,7 @@ import { ScheduleBeat } from '../../schedule/ScheduleBeat'
+ export const enum ChatflowErrorMessage {
+     INVALID_CHATFLOW_TYPE = 'Invalid Chatflow Type',
+     INVALID_CHATFLOW_ID = 'Invalid Chatflow ID',
++    CHATFLOW_ID_ALREADY_EXISTS = 'Chatflow ID already exists',
+     WORKSPACE_ID_REQUIRED = 'Workspace ID is required'
+ }
+ 
+@@ -346,6 +347,18 @@ const saveChatflow = async (
+ ): Promise<any> => {
+     validateChatflowType(newChatFlow.type)
+     const appServer = getRunningExpressApp()
++    const chatFlowRepository = appServer.AppDataSource.getRepository(ChatFlow)
++
++    if (Object.prototype.hasOwnProperty.call(newChatFlow, 'id')) {
++        const chatflowId = newChatFlow.id
++        if (typeof chatflowId !== 'string' || !isValidUUID(chatflowId)) {
++            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, ChatflowErrorMessage.INVALID_CHATFLOW_ID)
++        }
++        const existingChatflow = await chatFlowRepository.findOne({ where: { id: chatflowId }, select: ['id'] })
++        if (existingChatflow) {
++            throw new InternalFlowiseError(StatusCodes.CONFLICT, ChatflowErrorMessage.CHATFLOW_ID_ALREADY_EXISTS)
++        }
++    }
+ 
+     let dbResponse: ChatFlow
+     if (containsBase64File(newChatFlow)) {
+@@ -355,8 +368,8 @@ const saveChatflow = async (
+         // step 1 - save with empty flowData
+         const incomingFlowData = newChatFlow.flowData
+         newChatFlow.flowData = JSON.stringify({})
+-        const chatflow = appServer.AppDataSource.getRepository(ChatFlow).create(newChatFlow)
+-        const step1Results = await appServer.AppDataSource.getRepository(ChatFlow).save(chatflow)
++        const chatflow = chatFlowRepository.create(newChatFlow)
++        const step1Results = await chatFlowRepository.save(chatflow)
+ 
+         // step 2 - convert base64 to file paths and update the chatflow
+         step1Results.flowData = await updateFlowDataWithFilePaths(
+@@ -368,10 +381,10 @@ const saveChatflow = async (
+             usageCacheManager
+         )
+         await _checkAndUpdateDocumentStoreUsage(step1Results, newChatFlow.workspaceId)
+-        dbResponse = await appServer.AppDataSource.getRepository(ChatFlow).save(step1Results)
++        dbResponse = await chatFlowRepository.save(step1Results)
+     } else {
+-        const chatflow = appServer.AppDataSource.getRepository(ChatFlow).create(newChatFlow)
+-        dbResponse = await appServer.AppDataSource.getRepository(ChatFlow).save(chatflow)
++        const chatflow = chatFlowRepository.create(newChatFlow)
++        dbResponse = await chatFlowRepository.save(chatflow)
+     }
+ 
+     // Check if the flow is agentflow and if it has a schedule node, if yes then notify the beat to sync the schedule
+
+From fedbfab5383ad2ce7b2800cc11dce259d5c8b9c9 Mon Sep 17 00:00:00 2001
+From: Puneet Dixit <236133619+puneetdixit200@users.noreply.github.com>
+Date: Sat, 23 May 2026 20:34:43 +0530
+Subject: [PATCH 2/2] fix: allow undefined chatflow ids
+
+---
+ .../server/src/services/chatflows/index.test.ts | 17 +++++++++++++++++
+ packages/server/src/services/chatflows/index.ts |  2 +-
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/services/chatflows/index.test.ts b/packages/server/src/services/chatflows/index.test.ts
+index a5723d93d00..4c6c9e4e52d 100644
+--- a/packages/server/src/services/chatflows/index.test.ts
++++ b/packages/server/src/services/chatflows/index.test.ts
+@@ -247,6 +247,23 @@ describe('saveChatflow', () => {
+         expect(mockRepo.save).not.toHaveBeenCalled()
+     })
+ 
++    it('allows chatflow creation when id is undefined', async () => {
++        mockIsValidUUID.mockReturnValue(false)
++        const newFlow = makeChatflow({ id: undefined, type: EnumChatflowType.CHATFLOW, flowData: makePlainFlowData() })
++
++        await chatflowsService.saveChatflow(
++            newFlow as any,
++            SAVE_ARGS.orgId,
++            SAVE_ARGS.workspaceId,
++            SAVE_ARGS.subscriptionId,
++            SAVE_ARGS.usageCacheManager
++        )
++
++        expect(mockIsValidUUID).not.toHaveBeenCalled()
++        expect(mockRepo.findOne).not.toHaveBeenCalled()
++        expect(mockRepo.save).toHaveBeenCalled()
++    })
++
+     it('throws CONFLICT when the caller-provided chatflow id already exists', async () => {
+         const newFlow = makeChatflow({ type: EnumChatflowType.CHATFLOW, flowData: makePlainFlowData() })
+         mockRepo.findOne.mockResolvedValueOnce({ id: FLOW_ID })
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 54818cd0adb..4d55b4e1177 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -349,7 +349,7 @@ const saveChatflow = async (
+     const appServer = getRunningExpressApp()
+     const chatFlowRepository = appServer.AppDataSource.getRepository(ChatFlow)
+ 
+-    if (Object.prototype.hasOwnProperty.call(newChatFlow, 'id')) {
++    if (newChatFlow.id != null) {
+         const chatflowId = newChatFlow.id
+         if (typeof chatflowId !== 'string' || !isValidUUID(chatflowId)) {
+             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, ChatflowErrorMessage.INVALID_CHATFLOW_ID)

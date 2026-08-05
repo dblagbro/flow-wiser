@@ -1,0 +1,25 @@
+From c51456b1808c5c3adf8ad02756defb9ef1c136fa Mon Sep 17 00:00:00 2001
+From: KindaBrazy <kindofbrazy@gmail.com>
+Date: Sun, 26 Jul 2026 15:11:39 +0330
+Subject: [PATCH] docs(readme): add third-party installers section
+
+- add LynxHub as third-party installer
+---
+ README.md | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/README.md b/README.md
+index 72e4081c6b6..32cf03d3233 100644
+--- a/README.md
++++ b/README.md
+@@ -81,6 +81,10 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 20.0.0
+     docker stop flowise
+     ```
+ 
++## 📦 Third-Party Installers
++
++- [LynxHub](https://github.com/KindaBrazy/LynxHub): Cross-platform visual management dashboard and terminal/browser for installing, configuring, and launching Flowise.
++
+ ## 👨‍💻 Developers
+ 
+ Flowise has 3 different modules in a single mono repository.

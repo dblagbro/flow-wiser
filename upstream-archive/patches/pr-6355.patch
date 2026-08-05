@@ -1,0 +1,86 @@
+From 3c672bcde4cd71479235f1ce8433fc90481ec32b Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Thu, 7 May 2026 01:12:12 +0530
+Subject: [PATCH 1/2] feat: add Cohere Aya multilingual models to ChatCohere
+
+Adds the currently-Live Cohere Aya models to the ChatCohere selector,
+addressing issue #3112. Aya models are optimized for multilingual use
+across 23 languages and complement the existing Command R family.
+
+- `packages/components/models.json` - append two entries to
+  `chat[].chatCohere.models[]`:
+  - `c4ai-aya-expanse-32b` - 32B text model, 128k context, 23 languages
+  - `c4ai-aya-vision-32b` - 32B multimodal (text + image), 23 languages
+
+Pricing matches Cohere's published $0.50/1M input and $1.50/1M output for
+Aya models, normalized to the repo's $/1K-token convention used by
+`packages/server/src/services/evaluations/CostCalculator.ts`.
+
+- The ChatCohere node reads its model list dynamically via
+  `loadMethod: 'listModels'` -> `getModels(MODEL_TYPE.CHAT, 'chatCohere')`,
+  so no code change in `ChatCohere.ts` is required.
+- The originally-requested `c4ai-aya-expanse-8b` and `c4ai-aya-vision-8b`
+  variants were retired by Cohere on Apr 4, 2026 per their model catalog
+  (docs.cohere.com/v2/docs/models) and are therefore intentionally not
+  added - selecting a retired model ID in the UI would surface a broken
+  endpoint to users. The Live 32B variants cover the multilingual use
+  case requested in the issue.
+---
+ packages/components/models.json | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..370085ec3be 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1708,6 +1708,20 @@
+                     "description": "Command R+ – complex RAG, multi-step tool use",
+                     "input_cost": 0.0000025,
+                     "output_cost": 0.00001
++                },
++                {
++                    "label": "c4ai-aya-expanse-32b",
++                    "name": "c4ai-aya-expanse-32b",
++                    "description": "Aya Expanse 32B – multilingual across 23 languages, 128k context",
++                    "input_cost": 0.0000005,
++                    "output_cost": 0.0000015
++                },
++                {
++                    "label": "c4ai-aya-vision-32b",
++                    "name": "c4ai-aya-vision-32b",
++                    "description": "Aya Vision 32B – multimodal (text + image), multilingual across 23 languages",
++                    "input_cost": 0.0000005,
++                    "output_cost": 0.0000015
+                 }
+             ]
+         },
+
+From 074783fd972ff733867e656dce336e5aacea4697 Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Wed, 10 Jun 2026 09:24:01 +0530
+Subject: [PATCH 2/2] fix(models): clarify Aya Vision 32B description re image
+ input
+
+The ChatCohere node does not yet expose `allowImageUpload` or wire image
+attachments through `init`, so describing this model as "multimodal (text
++ image)" in the model picker would mislead users into expecting an
+image upload control that isn't rendered. Reword the description to be
+accurate for the current node capabilities; full multimodal wiring will
+be a follow-up.
+---
+ packages/components/models.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 370085ec3be..29c9020006f 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1719,7 +1719,7 @@
+                 {
+                     "label": "c4ai-aya-vision-32b",
+                     "name": "c4ai-aya-vision-32b",
+-                    "description": "Aya Vision 32B – multimodal (text + image), multilingual across 23 languages",
++                    "description": "Aya Vision 32B – multilingual across 23 languages (image input not yet wired in ChatCohere node)",
+                     "input_cost": 0.0000005,
+                     "output_cost": 0.0000015
+                 }

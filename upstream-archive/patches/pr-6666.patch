@@ -1,0 +1,927 @@
+From 0d0716ef757eb1e3575b26ad635763336ecfd71e Mon Sep 17 00:00:00 2001
+From: Jessie <jessie@Jessies-MacBook-Pro.local>
+Date: Thu, 23 Jul 2026 21:29:29 +0800
+Subject: [PATCH 1/3] feat: add Code Interpreter by Tenki tool node
+
+---
+ .../credentials/Tenki.credential.ts           |  23 +++
+ .../CodeInterpreterTenki.ts                   | 153 +++++++++++++++
+ .../tools/CodeInterpreterTenki/tenki.svg      |   5 +
+ packages/components/package.json              |   1 +
+ pnpm-lock.yaml                                | 185 +++++++-----------
+ 5 files changed, 250 insertions(+), 117 deletions(-)
+ create mode 100644 packages/components/credentials/Tenki.credential.ts
+ create mode 100644 packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+ create mode 100644 packages/components/nodes/tools/CodeInterpreterTenki/tenki.svg
+
+diff --git a/packages/components/credentials/Tenki.credential.ts b/packages/components/credentials/Tenki.credential.ts
+new file mode 100644
+index 00000000000..5c5d631704a
+--- /dev/null
++++ b/packages/components/credentials/Tenki.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class TenkiApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Tenki API'
++        this.name = 'tenkiApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'Tenki API Key',
++                name: 'tenkiApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: TenkiApi }
+\ No newline at end of file
+diff --git a/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+new file mode 100644
+index 00000000000..9344a87b4df
+--- /dev/null
++++ b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+@@ -0,0 +1,153 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { StructuredTool, ToolParams } from '@langchain/core/tools'
++import { TenkiSandbox, Session } from '@tenkicloud/sandbox'
++import { z } from 'zod/v3'
++
++const DESC = `Evaluates python code in a sandbox environment. \
++You must send the whole self-contained script every time and print your outputs. \
++Script should be pure python code that can be evaluated. \
++It should be in python format NOT markdown. \
++The code should NOT be wrapped in backticks.`
++const NAME = 'code_interpreter'
++
++class Code_Interpreter_Tenki_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++
++    constructor() {
++        this.label = 'Code Interpreter by Tenki'
++        this.name = 'codeInterpreterTenki'
++        this.version = 1.0
++        this.type = 'CodeInterpreter'
++        this.icon = 'tenki.svg'
++        this.category = 'Tools'
++        this.description = 'Execute code in a Tenki sandbox environment'
++        this.baseClasses = [this.type, 'Tool', ...getBaseClasses(TenkiTool)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['tenkiApi']
++        }
++        this.inputs = [
++            {
++                label: 'Tool Name',
++                name: 'toolName',
++                type: 'string',
++                description: 'Specify the name of the tool',
++                default: 'code_interpreter'
++            },
++            {
++                label: 'Tool Description',
++                name: 'toolDesc',
++                type: 'string',
++                rows: 4,
++                description: 'Specify the description of the tool',
++                default: DESC
++            },
++            {
++                label: 'Project ID',
++                name: 'projectId',
++                type: 'string',
++                description: 'The Tenki project ID the sandbox session is created under'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const toolDesc = nodeData.inputs?.toolDesc as string
++        const toolName = nodeData.inputs?.toolName as string
++        const projectId = nodeData.inputs?.projectId as string
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const tenkiApiKey = getCredentialParam('tenkiApiKey', credentialData, nodeData)
++
++        return await TenkiTool.initialize({
++            description: toolDesc ?? DESC,
++            name: toolName ?? NAME,
++            apiKey: tenkiApiKey,
++            projectId,
++            schema: z.object({
++                input: z.string().describe('Python code to be executed in the sandbox environment')
++            })
++        })
++    }
++}
++
++type TenkiToolParams = ToolParams
++type TenkiToolInput = {
++    name: string
++    description: string
++    apiKey: string
++    projectId: string
++    schema: any
++}
++
++export class TenkiTool extends StructuredTool {
++    static lc_name() {
++        return 'TenkiTool'
++    }
++
++    name = NAME
++    description = DESC
++    apiKey: string
++    projectId: string
++    schema
++
++    constructor(options: TenkiToolParams & TenkiToolInput) {
++        super(options)
++        this.description = options.description
++        this.name = options.name
++        this.apiKey = options.apiKey
++        this.projectId = options.projectId
++        this.schema = options.schema
++    }
++
++    static async initialize(options: Partial<TenkiToolParams> & TenkiToolInput) {
++        return new this({
++            name: options.name,
++            description: options.description,
++            apiKey: options.apiKey,
++            projectId: options.projectId,
++            schema: options.schema
++        })
++    }
++
++    // @ts-ignore
++    protected async _call(arg: z.infer<typeof this.schema>): Promise<string> {
++        if (!arg || !('input' in arg)) {
++            return 'No input provided'
++        }
++
++        let session: Session | undefined
++        try {
++            const sandbox = new TenkiSandbox({ authToken: this.apiKey })
++            session = await sandbox.create({ projectId: this.projectId, cpuCores: 1, memoryMb: 2048 })
++
++            const result = await session.run(['python3', '-c', arg.input as string])
++
++            const stdout = new TextDecoder().decode(result.stdout).trim()
++            const stderr = new TextDecoder().decode(result.stderr).trim()
++
++            if (result.exitCode !== 0) {
++                return stderr || stdout || `Execution failed with exit code ${result.exitCode}`
++            }
++            return stdout || stderr || '(no output)'
++        } catch (e) {
++            return typeof e === 'string' ? e : JSON.stringify(e, null, 2)
++        } finally {
++            if (session) await session.close()
++        }
++    }
++}
++
++module.exports = { nodeClass: Code_Interpreter_Tenki_Tools }
+\ No newline at end of file
+diff --git a/packages/components/nodes/tools/CodeInterpreterTenki/tenki.svg b/packages/components/nodes/tools/CodeInterpreterTenki/tenki.svg
+new file mode 100644
+index 00000000000..9690fcce600
+--- /dev/null
++++ b/packages/components/nodes/tools/CodeInterpreterTenki/tenki.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -5 172 178" fill="none">
++  <path d="M121.079 52.9158L77.5002 24.3368C73.1671 21.4951 73.4379 15.04 77.9937 12.5735L99.6985 0.822258C101.904 -0.371657 104.584 -0.258565 106.681 1.11692L156.459 33.761C158.392 35.0289 159.555 37.1909 159.551 39.5077L159.444 99.16C159.44 101.674 158.063 103.983 155.858 105.177L134.153 116.928C129.597 119.394 124.069 116.079 124.078 110.887L124.172 58.6625C124.176 56.3457 123.013 54.1837 121.079 52.9158Z" fill="#047BFF"/>
++  <path d="M64.0127 91.828L63.8881 161.127C63.8787 166.319 69.4075 169.635 73.9633 167.168L104.625 150.568C106.83 149.374 108.206 147.064 108.211 144.551L108.349 67.8238C108.353 65.507 107.19 63.345 105.256 62.0772L41.2304 20.089C39.133 18.7136 36.4531 18.6005 34.2479 19.7944L3.5862 36.3949C-0.969559 38.8615 -1.24034 45.3166 3.09275 48.1582L60.92 86.0813C62.8534 87.3491 64.0168 89.5111 64.0127 91.828Z" fill="#047BFF"/>
++  <path d="M24.4509 108.439C24.4472 110.466 25.4753 112.358 27.183 113.468L48.4633 127.29C49.3718 127.88 49.9185 128.886 49.9166 129.964L49.8771 151.477C49.8725 154.009 47.0436 155.526 44.911 154.14L2.8026 126.788C1.09473 125.679 0.0667493 123.787 0.0704284 121.76L0.161047 68.9713C0.165658 66.44 2.99458 64.923 5.12715 66.3082L23.0427 77.9452C23.9512 78.5353 24.4979 79.5416 24.496 80.6199L24.4509 108.439Z" fill="#047BFF"/>
++</svg>
+diff --git a/packages/components/package.json b/packages/components/package.json
+index 37b3ec1e8a4..5f2fb32ce1f 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -111,6 +111,7 @@
+         "@qdrant/js-client-rest": "^1.18.0",
+         "@stripe/agent-toolkit": "^0.1.20",
+         "@supabase/supabase-js": "^2.29.0",
++        "@tenkicloud/sandbox": "^0.4.0",
+         "@types/js-yaml": "^4.0.5",
+         "@types/jsdom": "^21.1.1",
+         "@upstash/redis": "1.22.1",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 2386babb5bd..0c24b0cd7e2 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -237,7 +237,7 @@ importers:
+         version: 8.55.0(eslint@8.57.0)(typescript@5.5.2)
+       '@vitejs/plugin-react':
+         specifier: ^4.2.0
+-        version: 4.2.1(vite@5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1))
++        version: 4.2.1(vite@5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1))
+       eslint-import-resolver-typescript:
+         specifier: 4.4.4
+         version: 4.4.4(eslint-plugin-import@2.29.1)(eslint@8.57.0)
+@@ -249,7 +249,7 @@ importers:
+         version: 12.1.1(eslint@8.57.0)
+       jest:
+         specifier: ^29.7.0
+-        version: 29.7.0(@types/node@22.16.3)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
++        version: 29.7.0(@types/node@24.13.2)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
+       jest-environment-jsdom:
+         specifier: ^29.7.0
+         version: 29.7.0(bufferutil@4.0.8)(canvas@2.11.2(encoding@0.1.13))(utf-8-validate@6.0.4)
+@@ -258,16 +258,16 @@ importers:
+         version: 5.0.5
+       ts-jest:
+         specifier: ^29.3.2
+-        version: 29.3.2(@babel/core@7.24.0)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.24.0))(jest@29.7.0(@types/node@22.16.3)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)))(typescript@5.5.2)
++        version: 29.3.2(@babel/core@7.24.0)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.24.0))(jest@29.7.0(@types/node@24.13.2)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)))(typescript@5.5.2)
+       typescript:
+         specifier: ^5.4.5
+         version: 5.5.2
+       vite:
+         specifier: ^5.0.2
+-        version: 5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1)
++        version: 5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1)
+       vite-plugin-dts:
+         specifier: ^3.7.0
+-        version: 3.9.1(@types/node@22.16.3)(rollup@4.45.0)(typescript@5.5.2)(vite@5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1))
++        version: 3.9.1(@types/node@24.13.2)(rollup@4.45.0)(typescript@5.5.2)(vite@5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1))
+ 
+   packages/api-documentation:
+     dependencies:
+@@ -385,7 +385,7 @@ importers:
+         version: 1.0.1(@babel/core@7.24.0)(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(encoding@0.1.13)
+       '@langchain/classic':
+         specifier: 1.0.15
+-        version: 1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
++        version: 1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       '@langchain/cloudflare':
+         specifier: 1.0.1
+         version: 1.0.1(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))
+@@ -394,7 +394,7 @@ importers:
+         version: 1.0.2(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))
+       '@langchain/community':
+         specifier: 1.1.12
+-        version: 1.1.12(fee0900c64646d98441c2d8f8a404421)
++        version: 1.1.12(07b4060fc4a1d37b52c668d45d70c69b)
+       '@langchain/core':
+         specifier: 1.1.20
+         version: 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+@@ -451,7 +451,7 @@ importers:
+         version: 1.3.1(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       '@mem0/community':
+         specifier: ^0.0.1
+-        version: 0.0.1(7b32f0a0845715a63ac9ac4180d5108c)
++        version: 0.0.1(0ed0f1df6f814de7ad6ddfd751a6c5ef)
+       '@mendable/firecrawl-js':
+         specifier: ^1.18.2
+         version: 1.25.1
+@@ -530,6 +530,9 @@ importers:
+       '@supabase/supabase-js':
+         specifier: ^2.29.0
+         version: 2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4)
++      '@tenkicloud/sandbox':
++        specifier: ^0.4.0
++        version: 0.4.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+       '@types/js-yaml':
+         specifier: ^4.0.5
+         version: 4.0.9
+@@ -733,7 +736,7 @@ importers:
+         version: 3.0.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+       typeorm:
+         specifier: ^0.3.28
+-        version: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++        version: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+       uuid:
+         specifier: ^10.0.0
+         version: 10.0.0
+@@ -794,13 +797,13 @@ importers:
+         version: 4.0.2
+       jest:
+         specifier: ^29.7.0
+-        version: 29.7.0(@types/node@24.13.2)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++        version: 29.7.0(@types/node@22.16.3)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+       rimraf:
+         specifier: ^5.0.5
+         version: 5.0.5
+       ts-jest:
+         specifier: ^29.3.2
+-        version: 29.3.2(@babel/core@7.24.0)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.24.0))(jest@29.7.0(@types/node@24.13.2)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)))(typescript@5.5.2)
++        version: 29.3.2(@babel/core@7.24.0)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.24.0))(jest@29.7.0(@types/node@22.16.3)(babel-plugin-macros@3.1.0)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)))(typescript@5.5.2)
+       tsc-watch:
+         specifier: ^6.0.4
+         version: 6.0.4(typescript@5.5.2)
+@@ -3439,6 +3442,9 @@ packages:
+       openai: 6.19.0
+       zod: ^3.23.8
+ 
++  '@bufbuild/protobuf@2.12.1':
++    resolution: {integrity: sha512-BvAMfS6LrgZiryOAZ4pBYucu4wG/Ei/9o9DZ9akbREnMLbPJiom2i8b9C8IsKErQoiKqVhrerzt3kOT/RrzLHg==}
++
+   '@bufbuild/protobuf@2.6.1':
+     resolution: {integrity: sha512-DaG6XlyKpz08bmHY5SGX2gfIllaqtDJ/KwVoxsmP22COOLYwDBe7yD3DZGwXem/Xq7QOc9cuR7R3MpAv5CFfDw==}
+ 
+@@ -3576,6 +3582,13 @@ packages:
+     resolution: {integrity: sha512-IpbfST0SSs/CEv+PIf6+EL0feNuJhQyUrOHJLPge8NhyLLrCyVqvujRIPyRUUjy0NDsked/Mm5VpJmYM6OACbg==}
+     hasBin: true
+ 
++  '@connectrpc/connect-node@2.1.2':
++    resolution: {integrity: sha512-+i/aAOpsI8sIx1mbYp6d99zvxaUSF6t/jP9Ux9maAmjsZPgmIQ3JuIeYi0zJIP9zlCnBlJjkpPosshCgdRuThQ==}
++    engines: {node: '>=20'}
++    peerDependencies:
++      '@bufbuild/protobuf': ^2.7.0
++      '@connectrpc/connect': 2.1.2
++
+   '@connectrpc/connect-web@2.0.0-rc.3':
+     resolution: {integrity: sha512-w88P8Lsn5CCsA7MFRl2e6oLY4J/5toiNtJns/YJrlyQaWOy3RO8pDgkz+iIkG98RPMhj2thuBvsd3Cn4DKKCkw==}
+     peerDependencies:
+@@ -3587,6 +3600,11 @@ packages:
+     peerDependencies:
+       '@bufbuild/protobuf': ^2.2.0
+ 
++  '@connectrpc/connect@2.1.2':
++    resolution: {integrity: sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA==}
++    peerDependencies:
++      '@bufbuild/protobuf': ^2.7.0
++
+   '@couchbase/couchbase-darwin-arm64-napi@4.4.1':
+     resolution: {integrity: sha512-YHS0TDrXe+S3nKywjZ/11Ia+25l5DypXYdyeOf4/le+zsJomnR5E3w4h1RaZ669/gvR8ltyOJn6TG//VDSp6qg==}
+     engines: {node: '>=16'}
+@@ -7887,6 +7905,10 @@ packages:
+   '@tabler/icons@3.31.0':
+     resolution: {integrity: sha512-dblAdeKY3+GA1U+Q9eziZ0ooVlZMHsE8dqP0RkwvRtEsAULoKOYaCUOcJ4oW1DjWegdxk++UAt2SlQVnmeHv+g==}
+ 
++  '@tenkicloud/sandbox@0.4.0':
++    resolution: {integrity: sha512-p9GiQutfqEhEEAQlEOph/wuP2Vk0kDof4GjhIvnV96TbvzoqPFp1pD6iEjUcJMri6sJsEXBGf0Grsyl+X52GiA==}
++    engines: {node: '>=18'}
++
+   '@testing-library/dom@9.3.4':
+     resolution: {integrity: sha512-FlS4ZWlp97iiNWig0Muq8p+3rVDjRiYE+YKGbAqXOu9nwJFFOdL00kFpz42M+4huzYi86vAK1sOOfyOG45muIQ==}
+     engines: {node: '>=14'}
+@@ -23919,6 +23941,8 @@ snapshots:
+       - encoding
+       - utf-8-validate
+ 
++  '@bufbuild/protobuf@2.12.1': {}
++
+   '@bufbuild/protobuf@2.6.1': {}
+ 
+   '@bull-board/api@6.11.0(@bull-board/ui@6.11.0)':
+@@ -24207,6 +24231,11 @@ snapshots:
+ 
+   '@composio/mcp@1.0.3-0': {}
+ 
++  '@connectrpc/connect-node@2.1.2(@bufbuild/protobuf@2.12.1)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.12.1))':
++    dependencies:
++      '@bufbuild/protobuf': 2.12.1
++      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.12.1)
++
+   '@connectrpc/connect-web@2.0.0-rc.3(@bufbuild/protobuf@2.6.1)(@connectrpc/connect@2.0.0-rc.3(@bufbuild/protobuf@2.6.1))':
+     dependencies:
+       '@bufbuild/protobuf': 2.6.1
+@@ -24216,6 +24245,10 @@ snapshots:
+     dependencies:
+       '@bufbuild/protobuf': 2.6.1
+ 
++  '@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.12.1)':
++    dependencies:
++      '@bufbuild/protobuf': 2.12.1
++
+   '@couchbase/couchbase-darwin-arm64-napi@4.4.1':
+     optional: true
+ 
+@@ -25773,7 +25806,7 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  '@langchain/classic@1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))':
++  '@langchain/classic@1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))':
+     dependencies:
+       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       '@langchain/openai': 1.2.5(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+@@ -25788,7 +25821,7 @@ snapshots:
+     optionalDependencies:
+       cheerio: 1.0.0-rc.12
+       langsmith: 0.4.12(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+-      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+     transitivePeerDependencies:
+       - '@opentelemetry/api'
+       - '@opentelemetry/exporter-trace-otlp-proto'
+@@ -25809,7 +25842,7 @@ snapshots:
+     transitivePeerDependencies:
+       - aws-crt
+ 
+-  '@langchain/community@0.3.49(8519c8ad9c1eae73197ab79e3cd34dc9)':
++  '@langchain/community@0.3.49(f9d3f7df5381806e12a54da1d5b2df87)':
+     dependencies:
+       '@browserbasehq/stagehand': 1.9.0(@playwright/test@1.49.1)(bufferutil@4.0.8)(deepmerge@4.3.1)(dotenv@16.4.5)(encoding@0.1.13)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(utf-8-validate@6.0.4)(zod@4.3.6)
+       '@ibm-cloud/watsonx-ai': 1.7.7
+@@ -25821,7 +25854,7 @@ snapshots:
+       flat: 5.0.2
+       ibm-cloud-sdk-core: 5.4.8
+       js-yaml: 4.1.1
+-      langchain: 0.3.6(9b22e4c41ace8801af713c5bc73b1c9d)
++      langchain: 0.3.6(59d28242dd8842b1ad9be638a3603b2c)
+       langsmith: 0.3.34(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       openai: 6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)
+       uuid: 10.0.0
+@@ -25891,7 +25924,7 @@ snapshots:
+       redis: 4.6.13
+       replicate: 0.31.1
+       srt-parser-2: 1.2.3
+-      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+       weaviate-client: 3.12.0(encoding@0.1.13)
+       ws: 8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+     transitivePeerDependencies:
+@@ -25911,11 +25944,11 @@ snapshots:
+       - handlebars
+       - peggy
+ 
+-  '@langchain/community@1.1.12(fee0900c64646d98441c2d8f8a404421)':
++  '@langchain/community@1.1.12(07b4060fc4a1d37b52c668d45d70c69b)':
+     dependencies:
+       '@browserbasehq/stagehand': 1.9.0(@playwright/test@1.49.1)(bufferutil@4.0.8)(deepmerge@4.3.1)(dotenv@16.4.5)(encoding@0.1.13)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(utf-8-validate@6.0.4)(zod@4.3.6)
+       '@ibm-cloud/watsonx-ai': 1.7.7
+-      '@langchain/classic': 1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
++      '@langchain/classic': 1.0.15(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(cheerio@1.0.0-rc.12)(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))(typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       '@langchain/openai': 1.2.5(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+       binary-extensions: 2.2.0
+@@ -25988,7 +26021,7 @@ snapshots:
+       redis: 4.6.13
+       replicate: 0.31.1
+       srt-parser-2: 1.2.3
+-      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+       weaviate-client: 3.12.0(encoding@0.1.13)
+       ws: 8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+     transitivePeerDependencies:
+@@ -26335,9 +26368,9 @@ snapshots:
+       - encoding
+       - supports-color
+ 
+-  '@mem0/community@0.0.1(7b32f0a0845715a63ac9ac4180d5108c)':
++  '@mem0/community@0.0.1(0ed0f1df6f814de7ad6ddfd751a6c5ef)':
+     dependencies:
+-      '@langchain/community': 0.3.49(8519c8ad9c1eae73197ab79e3cd34dc9)
++      '@langchain/community': 0.3.49(f9d3f7df5381806e12a54da1d5b2df87)
+       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       axios: 1.15.0(debug@4.3.4)
+       mem0ai: 2.1.16(@anthropic-ai/sdk@0.73.0(zod@4.3.6))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@1.14.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@qdrant/js-client-rest@1.18.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(groq-sdk@1.1.2)(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+@@ -26505,14 +26538,6 @@ snapshots:
+     transitivePeerDependencies:
+       - debug
+ 
+-  '@microsoft/api-extractor-model@7.28.13(@types/node@22.16.3)':
+-    dependencies:
+-      '@microsoft/tsdoc': 0.14.2
+-      '@microsoft/tsdoc-config': 0.16.2
+-      '@rushstack/node-core-library': 4.0.2(@types/node@22.16.3)
+-    transitivePeerDependencies:
+-      - '@types/node'
+-
+   '@microsoft/api-extractor-model@7.28.13(@types/node@24.13.2)':
+     dependencies:
+       '@microsoft/tsdoc': 0.14.2
+@@ -26521,24 +26546,6 @@ snapshots:
+     transitivePeerDependencies:
+       - '@types/node'
+ 
+-  '@microsoft/api-extractor@7.43.0(@types/node@22.16.3)':
+-    dependencies:
+-      '@microsoft/api-extractor-model': 7.28.13(@types/node@22.16.3)
+-      '@microsoft/tsdoc': 0.14.2
+-      '@microsoft/tsdoc-config': 0.16.2
+-      '@rushstack/node-core-library': 4.0.2(@types/node@22.16.3)
+-      '@rushstack/rig-package': 0.5.2
+-      '@rushstack/terminal': 0.10.0(@types/node@22.16.3)
+-      '@rushstack/ts-command-line': 4.19.1(@types/node@22.16.3)
+-      lodash: 4.17.21
+-      minimatch: 3.0.8
+-      resolve: 1.22.8
+-      semver: 7.7.1
+-      source-map: 0.6.1
+-      typescript: 5.4.2
+-    transitivePeerDependencies:
+-      - '@types/node'
+-
+   '@microsoft/api-extractor@7.43.0(@types/node@24.13.2)':
+     dependencies:
+       '@microsoft/api-extractor-model': 7.28.13(@types/node@24.13.2)
+@@ -28226,17 +28233,6 @@ snapshots:
+ 
+   '@rushstack/eslint-patch@1.7.2': {}
+ 
+-  '@rushstack/node-core-library@4.0.2(@types/node@22.16.3)':
+-    dependencies:
+-      fs-extra: 7.0.1
+-      import-lazy: 4.0.0
+-      jju: 1.4.0
+-      resolve: 1.22.8
+-      semver: 7.7.1
+-      z-schema: 5.0.5
+-    optionalDependencies:
+-      '@types/node': 22.16.3
+-
+   '@rushstack/node-core-library@4.0.2(@types/node@24.13.2)':
+     dependencies:
+       fs-extra: 7.0.1
+@@ -28253,13 +28249,6 @@ snapshots:
+       resolve: 1.22.8
+       strip-json-comments: 3.1.1
+ 
+-  '@rushstack/terminal@0.10.0(@types/node@22.16.3)':
+-    dependencies:
+-      '@rushstack/node-core-library': 4.0.2(@types/node@22.16.3)
+-      supports-color: 8.1.1
+-    optionalDependencies:
+-      '@types/node': 22.16.3
+-
+   '@rushstack/terminal@0.10.0(@types/node@24.13.2)':
+     dependencies:
+       '@rushstack/node-core-library': 4.0.2(@types/node@24.13.2)
+@@ -28267,15 +28256,6 @@ snapshots:
+     optionalDependencies:
+       '@types/node': 24.13.2
+ 
+-  '@rushstack/ts-command-line@4.19.1(@types/node@22.16.3)':
+-    dependencies:
+-      '@rushstack/terminal': 0.10.0(@types/node@22.16.3)
+-      '@types/argparse': 1.0.38
+-      argparse: 1.0.10
+-      string-argv: 0.3.2
+-    transitivePeerDependencies:
+-      - '@types/node'
+-
+   '@rushstack/ts-command-line@4.19.1(@types/node@24.13.2)':
+     dependencies:
+       '@rushstack/terminal': 0.10.0(@types/node@24.13.2)
+@@ -29099,6 +29079,16 @@ snapshots:
+ 
+   '@tabler/icons@3.31.0': {}
+ 
++  '@tenkicloud/sandbox@0.4.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
++    dependencies:
++      '@bufbuild/protobuf': 2.12.1
++      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.12.1)
++      '@connectrpc/connect-node': 2.1.2(@bufbuild/protobuf@2.12.1)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.12.1))
++      ws: 8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4)
++    transitivePeerDependencies:
++      - bufferutil
++      - utf-8-validate
++
+   '@testing-library/dom@9.3.4':
+     dependencies:
+       '@babel/code-frame': 7.26.2
+@@ -30430,17 +30420,6 @@ snapshots:
+     transitivePeerDependencies:
+       - supports-color
+ 
+-  '@vitejs/plugin-react@4.2.1(vite@5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1))':
+-    dependencies:
+-      '@babel/core': 7.24.0
+-      '@babel/plugin-transform-react-jsx-self': 7.23.3(@babel/core@7.24.0)
+-      '@babel/plugin-transform-react-jsx-source': 7.23.3(@babel/core@7.24.0)
+-      '@types/babel__core': 7.20.5
+-      react-refresh: 0.14.0
+-      vite: 5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1)
+-    transitivePeerDependencies:
+-      - supports-color
+-
+   '@vitejs/plugin-react@4.2.1(vite@5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1))':
+     dependencies:
+       '@babel/core': 7.24.0
+@@ -37549,7 +37528,7 @@ snapshots:
+ 
+   kuler@2.0.0: {}
+ 
+-  langchain@0.3.6(9b22e4c41ace8801af713c5bc73b1c9d):
++  langchain@0.3.6(59d28242dd8842b1ad9be638a3603b2c):
+     dependencies:
+       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
+       '@langchain/openai': 0.3.13(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
+@@ -37576,7 +37555,7 @@ snapshots:
+       axios: 1.15.0(debug@4.3.4)
+       cheerio: 1.0.0-rc.12
+       handlebars: 4.7.8
+-      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
++      typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2))
+     transitivePeerDependencies:
+       - '@opentelemetry/api'
+       - '@opentelemetry/exporter-trace-otlp-proto'
+@@ -43810,7 +43789,7 @@ snapshots:
+ 
+   typedarray@0.0.6: {}
+ 
+-  typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)):
++  typeorm@0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)):
+     dependencies:
+       '@sqltools/formatter': 1.2.5
+       ansis: 4.3.1
+@@ -43834,7 +43813,7 @@ snapshots:
+       pg: 8.11.3
+       redis: 4.6.13
+       sqlite3: 5.1.7
+-      ts-node: 10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2)
++      ts-node: 10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@22.16.3)(typescript@5.5.2)
+     transitivePeerDependencies:
+       - babel-plugin-macros
+       - supports-color
+@@ -44334,23 +44313,6 @@ snapshots:
+       remove-trailing-separator: 1.1.0
+       replace-ext: 1.0.1
+ 
+-  vite-plugin-dts@3.9.1(@types/node@22.16.3)(rollup@4.45.0)(typescript@5.5.2)(vite@5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1)):
+-    dependencies:
+-      '@microsoft/api-extractor': 7.43.0(@types/node@22.16.3)
+-      '@rollup/pluginutils': 5.1.3(rollup@4.45.0)
+-      '@vue/language-core': 1.8.27(typescript@5.5.2)
+-      debug: 4.4.3(supports-color@8.1.1)
+-      kolorist: 1.8.0
+-      magic-string: 0.30.10
+-      typescript: 5.5.2
+-      vue-tsc: 1.8.27(typescript@5.5.2)
+-    optionalDependencies:
+-      vite: 5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1)
+-    transitivePeerDependencies:
+-      - '@types/node'
+-      - rollup
+-      - supports-color
+-
+   vite-plugin-dts@3.9.1(@types/node@24.13.2)(rollup@4.45.0)(typescript@5.5.2)(vite@5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1)):
+     dependencies:
+       '@microsoft/api-extractor': 7.43.0(@types/node@24.13.2)
+@@ -44408,17 +44370,6 @@ snapshots:
+       sass: 1.71.1
+       terser: 5.29.1
+ 
+-  vite@5.1.6(@types/node@22.16.3)(sass@1.71.1)(terser@5.29.1):
+-    dependencies:
+-      esbuild: 0.19.12
+-      postcss: 8.4.49
+-      rollup: 4.45.0
+-    optionalDependencies:
+-      '@types/node': 22.16.3
+-      fsevents: 2.3.3
+-      sass: 1.71.1
+-      terser: 5.29.1
+-
+   vite@5.1.6(@types/node@24.13.2)(sass@1.71.1)(terser@5.29.1):
+     dependencies:
+       esbuild: 0.19.12
+
+From 73cc187b25bd4dbf3bf0b39c9a5d1878dca53dc2 Mon Sep 17 00:00:00 2001
+From: Jessie <jessie@Jessies-MacBook-Pro.local>
+Date: Thu, 23 Jul 2026 21:34:31 +0800
+Subject: [PATCH 2/3] remove project id
+
+---
+ .../CodeInterpreterTenki/CodeInterpreterTenki.ts | 16 ++--------------
+ 1 file changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+index 9344a87b4df..f9739a83532 100644
+--- a/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
++++ b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+@@ -53,12 +53,6 @@ class Code_Interpreter_Tenki_Tools implements INode {
+                 rows: 4,
+                 description: 'Specify the description of the tool',
+                 default: DESC
+-            },
+-            {
+-                label: 'Project ID',
+-                name: 'projectId',
+-                type: 'string',
+-                description: 'The Tenki project ID the sandbox session is created under'
+             }
+         ]
+     }
+@@ -66,7 +60,6 @@ class Code_Interpreter_Tenki_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const toolDesc = nodeData.inputs?.toolDesc as string
+         const toolName = nodeData.inputs?.toolName as string
+-        const projectId = nodeData.inputs?.projectId as string
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const tenkiApiKey = getCredentialParam('tenkiApiKey', credentialData, nodeData)
+@@ -75,7 +68,6 @@ class Code_Interpreter_Tenki_Tools implements INode {
+             description: toolDesc ?? DESC,
+             name: toolName ?? NAME,
+             apiKey: tenkiApiKey,
+-            projectId,
+             schema: z.object({
+                 input: z.string().describe('Python code to be executed in the sandbox environment')
+             })
+@@ -88,7 +80,6 @@ type TenkiToolInput = {
+     name: string
+     description: string
+     apiKey: string
+-    projectId: string
+     schema: any
+ }
+ 
+@@ -100,7 +91,6 @@ export class TenkiTool extends StructuredTool {
+     name = NAME
+     description = DESC
+     apiKey: string
+-    projectId: string
+     schema
+ 
+     constructor(options: TenkiToolParams & TenkiToolInput) {
+@@ -108,7 +98,6 @@ export class TenkiTool extends StructuredTool {
+         this.description = options.description
+         this.name = options.name
+         this.apiKey = options.apiKey
+-        this.projectId = options.projectId
+         this.schema = options.schema
+     }
+ 
+@@ -117,7 +106,6 @@ export class TenkiTool extends StructuredTool {
+             name: options.name,
+             description: options.description,
+             apiKey: options.apiKey,
+-            projectId: options.projectId,
+             schema: options.schema
+         })
+     }
+@@ -131,7 +119,7 @@ export class TenkiTool extends StructuredTool {
+         let session: Session | undefined
+         try {
+             const sandbox = new TenkiSandbox({ authToken: this.apiKey })
+-            session = await sandbox.create({ projectId: this.projectId, cpuCores: 1, memoryMb: 2048 })
++            session = await sandbox.create({ cpuCores: 1, memoryMb: 2048 })
+ 
+             const result = await session.run(['python3', '-c', arg.input as string])
+ 
+@@ -150,4 +138,4 @@ export class TenkiTool extends StructuredTool {
+     }
+ }
+ 
+-module.exports = { nodeClass: Code_Interpreter_Tenki_Tools }
+\ No newline at end of file
++module.exports = { nodeClass: Code_Interpreter_Tenki_Tools }
+
+From cddf3ab2c5c29373b703a5257c2c313d0bccc0e1 Mon Sep 17 00:00:00 2001
+From: Jessie <jessie@Jessies-MacBook-Pro.local>
+Date: Fri, 24 Jul 2026 18:43:15 +0800
+Subject: [PATCH 3/3] addressed feedbacks
+
+---
+ .../credentials/Tenki.credential.ts           |  2 +-
+ .../CodeInterpreterTenki.ts                   | 45 +++++++++++++++++--
+ 2 files changed, 42 insertions(+), 5 deletions(-)
+
+diff --git a/packages/components/credentials/Tenki.credential.ts b/packages/components/credentials/Tenki.credential.ts
+index 5c5d631704a..c01b2e06326 100644
+--- a/packages/components/credentials/Tenki.credential.ts
++++ b/packages/components/credentials/Tenki.credential.ts
+@@ -20,4 +20,4 @@ class TenkiApi implements INodeCredential {
+     }
+ }
+ 
+-module.exports = { credClass: TenkiApi }
+\ No newline at end of file
++module.exports = { credClass: TenkiApi }
+diff --git a/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+index f9739a83532..1cfdcf006de 100644
+--- a/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
++++ b/packages/components/nodes/tools/CodeInterpreterTenki/CodeInterpreterTenki.ts
+@@ -11,6 +11,12 @@ It should be in python format NOT markdown. \
+ The code should NOT be wrapped in backticks.`
+ const NAME = 'code_interpreter'
+ 
++// Kill a single execution after this long, and cap the sandbox lifetime so an
++// orphaned session (e.g. the Flowise process exiting mid-run) can't linger to
++// Tenki's default expiry.
++const RUN_TIMEOUT_MS = 120_000
++const MAX_SANDBOX_DURATION_MS = 5 * 60 * 1000
++
+ class Code_Interpreter_Tenki_Tools implements INode {
+     label: string
+     name: string
+@@ -53,6 +59,12 @@ class Code_Interpreter_Tenki_Tools implements INode {
+                 rows: 4,
+                 description: 'Specify the description of the tool',
+                 default: DESC
++            },
++            {
++                label: 'Project ID',
++                name: 'projectId',
++                type: 'string',
++                description: 'The Tenki project ID the sandbox session is created under'
+             }
+         ]
+     }
+@@ -60,6 +72,7 @@ class Code_Interpreter_Tenki_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const toolDesc = nodeData.inputs?.toolDesc as string
+         const toolName = nodeData.inputs?.toolName as string
++        const projectId = nodeData.inputs?.projectId as string
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const tenkiApiKey = getCredentialParam('tenkiApiKey', credentialData, nodeData)
+@@ -68,6 +81,7 @@ class Code_Interpreter_Tenki_Tools implements INode {
+             description: toolDesc ?? DESC,
+             name: toolName ?? NAME,
+             apiKey: tenkiApiKey,
++            projectId,
+             schema: z.object({
+                 input: z.string().describe('Python code to be executed in the sandbox environment')
+             })
+@@ -80,6 +94,7 @@ type TenkiToolInput = {
+     name: string
+     description: string
+     apiKey: string
++    projectId: string
+     schema: any
+ }
+ 
+@@ -91,6 +106,7 @@ export class TenkiTool extends StructuredTool {
+     name = NAME
+     description = DESC
+     apiKey: string
++    projectId: string
+     schema
+ 
+     constructor(options: TenkiToolParams & TenkiToolInput) {
+@@ -98,6 +114,7 @@ export class TenkiTool extends StructuredTool {
+         this.description = options.description
+         this.name = options.name
+         this.apiKey = options.apiKey
++        this.projectId = options.projectId
+         this.schema = options.schema
+     }
+ 
+@@ -106,6 +123,7 @@ export class TenkiTool extends StructuredTool {
+             name: options.name,
+             description: options.description,
+             apiKey: options.apiKey,
++            projectId: options.projectId,
+             schema: options.schema
+         })
+     }
+@@ -119,9 +137,25 @@ export class TenkiTool extends StructuredTool {
+         let session: Session | undefined
+         try {
+             const sandbox = new TenkiSandbox({ authToken: this.apiKey })
+-            session = await sandbox.create({ cpuCores: 1, memoryMb: 2048 })
++            session = await sandbox.create({
++                projectId: this.projectId,
++                cpuCores: 1,
++                memoryMb: 2048,
++                maxDurationMs: MAX_SANDBOX_DURATION_MS
++            })
+ 
+-            const result = await session.run(['python3', '-c', arg.input as string])
++            const handle = session.run(['python3', '-c', arg.input as string])
++            let timeoutId: ReturnType<typeof setTimeout> | undefined
++            const result = await Promise.race([
++                handle,
++                new Promise<never>((_, reject) => {
++                    timeoutId = setTimeout(() => {
++                        void handle.kill().catch(() => {})
++                        reject(new Error(`Execution timed out after ${RUN_TIMEOUT_MS / 1000}s and was killed`))
++                    }, RUN_TIMEOUT_MS)
++                })
++            ])
++            clearTimeout(timeoutId)
+ 
+             const stdout = new TextDecoder().decode(result.stdout).trim()
+             const stderr = new TextDecoder().decode(result.stderr).trim()
+@@ -131,9 +165,12 @@ export class TenkiTool extends StructuredTool {
+             }
+             return stdout || stderr || '(no output)'
+         } catch (e) {
+-            return typeof e === 'string' ? e : JSON.stringify(e, null, 2)
++            const message = e instanceof Error ? e.message : typeof e === 'string' ? e : String(e)
++            return `Error executing code in Tenki sandbox: ${message}`
+         } finally {
+-            if (session) await session.close()
++            if (session) {
++                await session.close().catch(() => {})
++            }
+         }
+     }
+ }

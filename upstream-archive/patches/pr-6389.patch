@@ -1,0 +1,2105 @@
+From 869ad101d06e42f687aa36a2216e65a4dff3be22 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Fri, 15 May 2026 08:33:14 +0800
+Subject: [PATCH 1/6] feat: add x402 payment node for paid API calls
+
+Add support for the x402 HTTP 402 payment protocol to Flowise:
+- X402Wallet credential type for storing wallet private keys (Solana/Base)
+- X402Payment tool that automatically handles 402 Payment Required responses
+- Supports Solana USDC payments via TransferChecked instruction
+- Supports Base (Ethereum L2) USDC payments
+- Includes proper error handling, max price validation, and payment retries
+- Added dependencies: @solana/web3.js, @solana/spl-token, ethers
+
+The node enables AI agent workflows to call paid external APIs that
+require payment via the x402 protocol.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ CLAUDE.md                                     |  48 +++
+ .../credentials/X402Wallet.credential.ts      |  46 +++
+ .../nodes/tools/x402Payment/X402Payment.ts    | 136 ++++++++
+ .../nodes/tools/x402Payment/core.ts           | 295 ++++++++++++++++++
+ .../nodes/tools/x402Payment/payment.svg       |   7 +
+ packages/components/package.json              |   3 +
+ 6 files changed, 535 insertions(+)
+ create mode 100644 CLAUDE.md
+ create mode 100644 packages/components/credentials/X402Wallet.credential.ts
+ create mode 100644 packages/components/nodes/tools/x402Payment/X402Payment.ts
+ create mode 100644 packages/components/nodes/tools/x402Payment/core.ts
+ create mode 100644 packages/components/nodes/tools/x402Payment/payment.svg
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 00000000000..9894311dfe4
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,48 @@
++# x402 Payment Node for Flowise
++
++## Task
++Add an x402 payment node to Flowise (https://github.com/FlowiseAI/Flowise) that enables AI agent workflows to call paid external APIs using the x402 HTTP 402 payment protocol.
++
++## What to Build
++A new Flowise node that:
++1. Takes an endpoint URL, max price, and optional parameters as input
++2. Calls the endpoint
++3. Handles HTTP 402 Payment Required responses
++4. Signs and sends USDC payment via x402 protocol
++5. Retries the request with X-Payment header
++6. Returns the paid API response + transaction metadata
++
++## Technical Approach
++- Flowise uses a custom node system (see packages/server/src/nodes/)
++- Nodes extend `INode` interface with `init()` and `run()` methods
++- Study existing nodes in packages/server/src/nodes/ for patterns
++- Use `@acedatacloud/x402-client` for payment signing (it handles Solana + EVM)
++- Wallet credentials stored in Flowise credential system
++
++## Key Files to Study
++- packages/server/src/nodes/ /* existing node implementations */
++- packages/server/src/Interface.ts /* INode interface */
++- packages/server/src/Credentials.ts /* credential system */
++- packages/server/src/utils/ /* utility functions */
++
++## x402 Protocol Flow
++```
++1. Agent calls endpoint → Server returns 402 + payment requirements
++2. Node parses 402 response: price, currency, chain, payTo address, accepts[]
++3. Node signs payment envelope (Solana TransferChecked or EVM TransferWithAuthorization)
++4. Node retries request with X-Payment header
++5. Server returns 200 with response + x402_tx hash
++```
++
++## Code Quality
++- TypeScript, follow Flowise code style
++- Add proper TypeScript types
++- Handle errors gracefully (insufficient funds, invalid response, network errors)
++- Support both Solana and Base networks
++- No Chinese in code
++
++## Important
++- This is for the x402 foundation bounty ecosystem
++- Fork FlowiseAI/Flowise, create a feature branch
++- Write clear commit messages
++- The node should be self-contained and well-documented
+diff --git a/packages/components/credentials/X402Wallet.credential.ts b/packages/components/credentials/X402Wallet.credential.ts
+new file mode 100644
+index 00000000000..be6ad02bd66
+--- /dev/null
++++ b/packages/components/credentials/X402Wallet.credential.ts
+@@ -0,0 +1,46 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class X402Wallet implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    optional: boolean
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'x402 Wallet'
++        this.name = 'x402Wallet'
++        this.version = 1.0
++        this.description = 'Wallet credentials for x402 payment protocol. Supports Solana and Base networks.'
++        this.optional = false
++        this.inputs = [
++            {
++                label: 'Network',
++                name: 'network',
++                type: 'options',
++                description: 'Select the blockchain network for payments',
++                options: [
++                    {
++                        label: 'Solana',
++                        name: 'solana'
++                    },
++                    {
++                        label: 'Base (Ethereum L2)',
++                        name: 'base'
++                    }
++                ],
++                default: 'solana'
++            },
++            {
++                label: 'Private Key',
++                name: 'privateKey',
++                type: 'password',
++                description: 'Wallet private key for signing payments (never shared with API servers)',
++                placeholder: 'Enter private key'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: X402Wallet }
+diff --git a/packages/components/nodes/tools/x402Payment/X402Payment.ts b/packages/components/nodes/tools/x402Payment/X402Payment.ts
+new file mode 100644
+index 00000000000..8a619ed3521
+--- /dev/null
++++ b/packages/components/nodes/tools/x402Payment/X402Payment.ts
+@@ -0,0 +1,136 @@
++import { INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, stripHTMLFromToolInput, getCredentialParam, getCredentialData } from '../../../src/utils'
++import { desc, X402PaymentTool, X402PaymentParameters } from './core'
++
++class X402Payment_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'x402 Payment'
++        this.name = 'x402Payment'
++        this.version = 1.0
++        this.type = 'X402Payment'
++        this.icon = 'payment.svg'
++        this.category = 'Tools'
++        this.description = 'Call paid APIs using x402 HTTP 402 payment protocol'
++        this.baseClasses = [this.type, ...getBaseClasses(X402PaymentTool), 'Tool']
++        this.credential = {
++            label: 'Connect Wallet',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['x402Wallet']
++        }
++        this.inputs = [
++            {
++                label: 'API Endpoint URL',
++                name: 'endpointUrl',
++                type: 'string',
++                acceptVariable: true,
++                description: 'The API endpoint URL to call'
++            },
++            {
++                label: 'Name',
++                name: 'toolName',
++                type: 'string',
++                default: 'x402_payment',
++                description: 'Name of the tool',
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Description',
++                name: 'toolDescription',
++                type: 'string',
++                rows: 4,
++                default: desc,
++                description: 'Describe to LLM when it should use this tool',
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Maximum Price',
++                name: 'maxPrice',
++                type: 'number',
++                default: 10,
++                description: 'Maximum price in USDC to pay for API calls',
++                step: 0.01,
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Headers',
++                name: 'headers',
++                type: 'string',
++                rows: 4,
++                acceptVariable: true,
++                additionalParams: true,
++                optional: true,
++                placeholder: `{
++    "Authorization": "Bearer <token>"
++}`
++            },
++            {
++                label: 'Max Output Length',
++                name: 'maxOutputLength',
++                type: 'number',
++                description: 'Max length of the output. Remove this if you want to return the entire response',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: any): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++
++        const network = getCredentialParam('network', credentialData, nodeData) as 'solana' | 'base' || 'solana'
++        const privateKey = getCredentialParam('privateKey', credentialData, nodeData) as string
++
++        if (!privateKey) {
++            throw new Error('Private key is required for x402 payment')
++        }
++
++        const inputUrl = (nodeData.inputs?.endpointUrl as string) || ''
++        const toolName = (nodeData.inputs?.toolName as string) || 'x402_payment'
++        const toolDescription = (nodeData.inputs?.toolDescription as string) || desc
++        const maxPrice = (nodeData.inputs?.maxPrice as number) || 10
++        const headers = (nodeData.inputs?.headers as string) || '{}'
++        const maxOutputLength = (nodeData.inputs?.maxOutputLength as number) || Infinity
++
++        const obj: X402PaymentParameters = {
++            url: stripHTMLFromToolInput(inputUrl),
++            name: toolName
++                .toLowerCase()
++                .replace(/ /g, '_')
++                .replace(/[^a-z0-9_-]/g, ''),
++            description: toolDescription,
++            maxPrice: maxPrice,
++            network: network,
++            privateKey: privateKey,
++            maxOutputLength: maxOutputLength
++        }
++
++        if (headers) {
++            try {
++                const parsedHeaders = typeof headers === 'object' ? headers : JSON.parse(stripHTMLFromToolInput(headers))
++                obj.headers = parsedHeaders
++            } catch (e) {
++                throw new Error('Invalid headers JSON format')
++            }
++        }
++
++        return new X402PaymentTool(obj)
++    }
++}
++
++module.exports = { nodeClass: X402Payment_Tools }
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+new file mode 100644
+index 00000000000..e883ba63b2c
+--- /dev/null
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -0,0 +1,295 @@
++import { z } from 'zod/v3'
++import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
++import { secureFetch } from '../../../src/httpSecurity'
++
++export const desc = `Use this when you need to call a paid API endpoint that requires x402 payment protocol. This tool automatically handles HTTP 402 Payment Required responses.`
++
++export interface X402PaymentParameters {
++    headers?: Record<string, string>
++    url: string
++    name?: string
++    description?: string
++    maxPrice?: number
++    network?: 'solana' | 'base'
++    privateKey?: string
++    maxOutputLength?: number
++}
++
++export interface X402PaymentResponse {
++    success: boolean
++    data?: string
++    error?: string
++    txHash?: string
++    payment?: {
++        amount: number
++        currency: string
++        chain: string
++        txHash: string
++    }
++}
++
++export interface X402PaymentRequired {
++    price: number
++    currency: string
++    chain: string
++    payTo: string
++    accepts: string[]
++    memo?: string
++}
++
++export class X402PaymentTool extends DynamicStructuredTool {
++    url = ''
++    maxPrice = 10
++    network: 'solana' | 'base' = 'solana'
++    privateKey = ''
++    maxOutputLength = Infinity
++    headers: Record<string, string> = {}
++
++    constructor(args?: X402PaymentParameters) {
++        const schema = z.object({
++            body: z.record(z.any()).optional().describe('Request body for POST requests'),
++            method: z.string().optional().default('GET').describe('HTTP method (GET, POST, etc.)'),
++            queryParams: z.record(z.string()).optional().describe('Query parameters for the request')
++        })
++
++        const toolInput = {
++            name: args?.name || 'x402_payment',
++            description: args?.description || desc,
++            schema: schema,
++            baseUrl: '',
++            method: 'POST',
++            headers: args?.headers || {}
++        }
++        super(toolInput)
++        this.url = args?.url ?? this.url
++        this.headers = args?.headers ?? this.headers
++        this.maxPrice = args?.maxPrice ?? this.maxPrice
++        this.network = args?.network ?? this.network
++        this.privateKey = args?.privateKey ?? this.privateKey
++        this.maxOutputLength = args?.maxOutputLength ?? this.maxOutputLength
++    }
++
++    private parsePaymentRequired(headers: Record<string, string>): X402PaymentRequired {
++        const payToHeader = headers['x-pay-to'] || headers['X-Pay-To']
++        const priceHeader = headers['x-price'] || headers['X-Price']
++        const currencyHeader = headers['x-currency'] || headers['X-Currency']
++        const chainHeader = headers['x-chain'] || headers['X-Chain']
++        const acceptsHeader = headers['x-accepts'] || headers['X-Accepts']
++        const memoHeader = headers['x-memo'] || headers['X-Memo']
++
++        if (!payToHeader || !priceHeader || !currencyHeader || !chainHeader) {
++            throw new Error('Invalid 402 response: missing required payment headers')
++        }
++
++        const price = parseFloat(priceHeader)
++        if (isNaN(price)) {
++            throw new Error('Invalid price in 402 response')
++        }
++
++        const accepts = acceptsHeader ? acceptsHeader.split(',').map(s => s.trim()) : ['usdc']
++
++        return {
++            price,
++            currency: currencyHeader.toLowerCase(),
++            chain: chainHeader.toLowerCase(),
++            payTo: payToHeader,
++            accepts,
++            memo: memoHeader
++        }
++    }
++
++    private async signSolanaPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
++        const { Keypair, Connection, PublicKey, Transaction } = require('@solana/web3.js')
++        const { createTransferCheckedInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token')
++
++        if (paymentReq.chain !== 'solana') {
++            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++        }
++
++        if (paymentReq.currency !== 'usdc') {
++            throw new Error(`Unsupported currency: ${paymentReq.currency}`)
++        }
++
++        const keypair = Keypair.fromSecretKey(Buffer.from(this.privateKey, 'base64'))
++        const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
++
++        const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
++        const fromAddress = keypair.publicKey
++        const toAddress = new PublicKey(paymentReq.payTo)
++        const amount = Math.floor(paymentReq.price * 1e6)
++
++        const fromATA = await getAssociatedTokenAddress(usdcMint, fromAddress)
++        const toATA = await getAssociatedTokenAddress(usdcMint, toAddress)
++
++        const instruction = createTransferCheckedInstruction(
++            fromATA,
++            usdcMint,
++            toATA,
++            fromAddress,
++            amount,
++            6,
++            [],
++            TOKEN_PROGRAM_ID
++        )
++
++        const transaction = new Transaction().add(instruction)
++        const signature = await connection.sendTransaction(transaction, [keypair])
++
++        await connection.confirmTransaction(signature, 'confirmed')
++
++        const envelope = JSON.stringify({
++            version: '1.0',
++            chain: 'solana',
++            currency: 'usdc',
++            amount: paymentReq.price,
++            to: paymentReq.payTo,
++            signature: signature,
++            memo: paymentReq.memo
++        })
++
++        return { signature, envelope }
++    }
++
++    private async signBasePayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
++        if (paymentReq.chain !== 'base') {
++            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++        }
++
++        if (paymentReq.currency !== 'usdc') {
++            throw new Error(`Unsupported currency: ${paymentReq.currency}`)
++        }
++
++        const { ethers } = require('ethers')
++
++        const wallet = new ethers.Wallet(this.privateKey)
++        const provider = new ethers.JsonRpcProvider('https://mainnet.base.org')
++        const signer = wallet.connect(provider)
++
++        const usdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
++        const amount = ethers.parseUnits(paymentReq.price.toString(), 6)
++
++        const abi = ['function transfer(address to, uint256 amount) returns (bool)']
++        const contract = new ethers.Contract(usdcAddress, abi, signer)
++
++        const tx = await contract.transfer(paymentReq.payTo, amount)
++        const receipt = await tx.wait()
++
++        const envelope = JSON.stringify({
++            version: '1.0',
++            chain: 'base',
++            currency: 'usdc',
++            amount: paymentReq.price,
++            to: paymentReq.payTo,
++            txHash: receipt.hash,
++            memo: paymentReq.memo
++        })
++
++        return { signature: receipt.hash, envelope }
++    }
++
++    private async signPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
++        if (paymentReq.price > this.maxPrice) {
++            throw new Error(`Price ${paymentReq.price} ${paymentReq.currency} exceeds maximum allowed price of ${this.maxPrice}`)
++        }
++
++        if (paymentReq.chain === 'solana') {
++            return this.signSolanaPayment(paymentReq)
++        } else if (paymentReq.chain === 'base') {
++            return this.signBasePayment(paymentReq)
++        } else {
++            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++        }
++    }
++
++    /** @ignore */
++    async _call(arg: any): Promise<string> {
++        const inputUrl = this.url
++        if (!inputUrl) {
++            throw new Error('URL is required for x402 payment')
++        }
++
++        if (!this.privateKey) {
++            throw new Error('Private key is required for signing payments')
++        }
++
++        let finalUrl = inputUrl
++        if (arg.queryParams && Object.keys(arg.queryParams).length > 0) {
++            const url = new URL(finalUrl)
++            Object.entries(arg.queryParams).forEach(([key, value]) => {
++                url.searchParams.append(key, String(value))
++            })
++            finalUrl = url.toString()
++        }
++
++        const requestHeaders = {
++            ...(this.headers || {}),
++            'Content-Type': 'application/json'
++        }
++
++        const method = arg.method || 'GET'
++        const body = arg.body ? JSON.stringify(arg.body) : undefined
++
++        try {
++            let res = await secureFetch(finalUrl, {
++                method,
++                headers: requestHeaders,
++                body
++            })
++
++            if (res.status === 402) {
++                const paymentReq = this.parsePaymentRequired(Object.fromEntries(res.headers.entries()))
++                const { signature, envelope } = await this.signPayment(paymentReq)
++
++                const paymentHeaders = {
++                    ...requestHeaders,
++                    'X-Payment': envelope
++                }
++
++                res = await secureFetch(finalUrl, {
++                    method,
++                    headers: paymentHeaders,
++                    body
++                })
++
++                if (!res.ok) {
++                    throw new Error(`Payment sent but request failed: HTTP ${res.status}`)
++                }
++
++                const text = await res.text()
++                const response: X402PaymentResponse = {
++                    success: true,
++                    data: text,
++                    txHash: signature,
++                    payment: {
++                        amount: paymentReq.price,
++                        currency: paymentReq.currency,
++                        chain: paymentReq.chain,
++                        txHash: signature
++                    }
++                }
++
++                return JSON.stringify(response)
++            }
++
++            if (!res.ok) {
++                throw new Error(`HTTP Error ${res.status}: ${res.statusText}`)
++            }
++
++            const text = await res.text()
++            return text.slice(0, this.maxOutputLength)
++        } catch (error) {
++            if (error instanceof Error) {
++                const errorResponse: X402PaymentResponse = {
++                    success: false,
++                    error: error.message
++                }
++                return JSON.stringify(errorResponse)
++            }
++            const errorResponse: X402PaymentResponse = {
++                success: false,
++                error: 'Unknown error occurred'
++            }
++            return JSON.stringify(errorResponse)
++        }
++    }
++}
+diff --git a/packages/components/nodes/tools/x402Payment/payment.svg b/packages/components/nodes/tools/x402Payment/payment.svg
+new file mode 100644
+index 00000000000..f925b37b5e9
+--- /dev/null
++++ b/packages/components/nodes/tools/x402Payment/payment.svg
+@@ -0,0 +1,7 @@
++<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <rect width="40" height="40" rx="8" fill="#4F46E5"/>
++  <path d="M12 14C12 11.7909 13.7909 10 16 10H24C26.2091 10 28 11.7909 28 14V26C28 28.2091 26.2091 30 24 30H16C13.7909 30 12 28.2091 12 26V14Z" stroke="white" stroke-width="2"/>
++  <path d="M17 18L20 21L23 18" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++  <path d="M17 22L20 25L23 22" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
++  <circle cx="20" cy="14" r="2" fill="white"/>
++</svg>
+diff --git a/packages/components/package.json b/packages/components/package.json
+index bebf3c06f3e..e106c075f2d 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -32,6 +32,8 @@
+     "license": "SEE LICENSE IN LICENSE.md",
+     "dependencies": {
+         "@anthropic-ai/sdk": "^0.73.0",
++        "@solana/spl-token": "^0.4.0",
++        "@solana/web3.js": "^1.87.0",
+         "@apidevtools/json-schema-ref-parser": "^11.7.0",
+         "@arizeai/openinference-instrumentation-langchain": "^2.0.0",
+         "@aws-sdk/client-bedrock": "3.966.0",
+@@ -130,6 +132,7 @@
+         "dotenv": "^16.0.0",
+         "epub2": "^3.0.2",
+         "exa-js": "^1.0.12",
++        "ethers": "^6.9.0",
+         "express": "^4.17.3",
+         "faiss-node": "^0.5.1",
+         "fast-json-patch": "^3.1.1",
+
+From 45c470e55c644358388634bce2e49cedc6a425b7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Fri, 15 May 2026 16:14:56 +0800
+Subject: [PATCH 2/6] fix: sign-only payment envelope, do not broadcast before
+ server verification
+
+- Remove connection.sendTransaction() from signSolanaPayment
+- Remove contract.transfer() call from signBasePayment
+- Both methods now only sign and serialize transactions locally
+- Server receives signed transaction in X-Payment header for verification
+- Prevents spending funds before API validates payment proof
+- Remove CLAUDE.md from git tracking (accidentally committed)
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ CLAUDE.md                                     | 48 -------------------
+ .../nodes/tools/x402Payment/core.ts           | 42 +++++++++++-----
+ 2 files changed, 31 insertions(+), 59 deletions(-)
+ delete mode 100644 CLAUDE.md
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+deleted file mode 100644
+index 9894311dfe4..00000000000
+--- a/CLAUDE.md
++++ /dev/null
+@@ -1,48 +0,0 @@
+-# x402 Payment Node for Flowise
+-
+-## Task
+-Add an x402 payment node to Flowise (https://github.com/FlowiseAI/Flowise) that enables AI agent workflows to call paid external APIs using the x402 HTTP 402 payment protocol.
+-
+-## What to Build
+-A new Flowise node that:
+-1. Takes an endpoint URL, max price, and optional parameters as input
+-2. Calls the endpoint
+-3. Handles HTTP 402 Payment Required responses
+-4. Signs and sends USDC payment via x402 protocol
+-5. Retries the request with X-Payment header
+-6. Returns the paid API response + transaction metadata
+-
+-## Technical Approach
+-- Flowise uses a custom node system (see packages/server/src/nodes/)
+-- Nodes extend `INode` interface with `init()` and `run()` methods
+-- Study existing nodes in packages/server/src/nodes/ for patterns
+-- Use `@acedatacloud/x402-client` for payment signing (it handles Solana + EVM)
+-- Wallet credentials stored in Flowise credential system
+-
+-## Key Files to Study
+-- packages/server/src/nodes/ /* existing node implementations */
+-- packages/server/src/Interface.ts /* INode interface */
+-- packages/server/src/Credentials.ts /* credential system */
+-- packages/server/src/utils/ /* utility functions */
+-
+-## x402 Protocol Flow
+-```
+-1. Agent calls endpoint → Server returns 402 + payment requirements
+-2. Node parses 402 response: price, currency, chain, payTo address, accepts[]
+-3. Node signs payment envelope (Solana TransferChecked or EVM TransferWithAuthorization)
+-4. Node retries request with X-Payment header
+-5. Server returns 200 with response + x402_tx hash
+-```
+-
+-## Code Quality
+-- TypeScript, follow Flowise code style
+-- Add proper TypeScript types
+-- Handle errors gracefully (insufficient funds, invalid response, network errors)
+-- Support both Solana and Base networks
+-- No Chinese in code
+-
+-## Important
+-- This is for the x402 foundation bounty ecosystem
+-- Fork FlowiseAI/Flowise, create a feature branch
+-- Write clear commit messages
+-- The node should be self-contained and well-documented
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+index e883ba63b2c..59b770bb3c1 100644
+--- a/packages/components/nodes/tools/x402Payment/core.ts
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -99,7 +99,7 @@ export class X402PaymentTool extends DynamicStructuredTool {
+     }
+ 
+     private async signSolanaPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+-        const { Keypair, Connection, PublicKey, Transaction } = require('@solana/web3.js')
++        const { Keypair, Connection, PublicKey, Transaction, SystemProgram } = require('@solana/web3.js')
+         const { createTransferCheckedInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token')
+ 
+         if (paymentReq.chain !== 'solana') {
+@@ -133,9 +133,14 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         )
+ 
+         const transaction = new Transaction().add(instruction)
+-        const signature = await connection.sendTransaction(transaction, [keypair])
+ 
+-        await connection.confirmTransaction(signature, 'confirmed')
++        const { blockhash } = await connection.getLatestBlockhash()
++        transaction.recentBlockhash = blockhash
++        transaction.feePayer = fromAddress
++
++        transaction.sign(keypair)
++
++        const serializedTransaction = transaction.serialize().toString('base64')
+ 
+         const envelope = JSON.stringify({
+             version: '1.0',
+@@ -143,11 +148,11 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             currency: 'usdc',
+             amount: paymentReq.price,
+             to: paymentReq.payTo,
+-            signature: signature,
++            transaction: serializedTransaction,
+             memo: paymentReq.memo
+         })
+ 
+-        return { signature, envelope }
++        return { signature: serializedTransaction, envelope }
+     }
+ 
+     private async signBasePayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+@@ -163,16 +168,31 @@ export class X402PaymentTool extends DynamicStructuredTool {
+ 
+         const wallet = new ethers.Wallet(this.privateKey)
+         const provider = new ethers.JsonRpcProvider('https://mainnet.base.org')
+-        const signer = wallet.connect(provider)
+ 
+         const usdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+         const amount = ethers.parseUnits(paymentReq.price.toString(), 6)
+ 
+         const abi = ['function transfer(address to, uint256 amount) returns (bool)']
+-        const contract = new ethers.Contract(usdcAddress, abi, signer)
++        const contract = new ethers.Contract(usdcAddress, abi, wallet)
++
++        const nonce = await provider.getTransactionCount(wallet.address, 'pending')
++        const gasLimit = await contract.transfer.estimateGas(paymentReq.payTo, amount)
++        const feeData = await provider.getFeeData()
++
++        const unsignedTx = await contract.transfer.populateTransaction(paymentReq.payTo, amount)
++
++        const transaction = {
++            to: usdcAddress,
++            from: wallet.address,
++            data: unsignedTx.data,
++            nonce: nonce,
++            gasLimit: gasLimit,
++            maxFeePerGas: feeData.maxFeePerGas,
++            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
++            chainId: 8453
++        }
+ 
+-        const tx = await contract.transfer(paymentReq.payTo, amount)
+-        const receipt = await tx.wait()
++        const signedTx = await wallet.signTransaction(transaction)
+ 
+         const envelope = JSON.stringify({
+             version: '1.0',
+@@ -180,11 +200,11 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             currency: 'usdc',
+             amount: paymentReq.price,
+             to: paymentReq.payTo,
+-            txHash: receipt.hash,
++            transaction: signedTx,
+             memo: paymentReq.memo
+         })
+ 
+-        return { signature: receipt.hash, envelope }
++        return { signature: signedTx, envelope }
+     }
+ 
+     private async signPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+
+From abfe70a140a121b93090955074347f8e6305c715 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Sat, 16 May 2026 02:12:34 +0800
+Subject: [PATCH 3/6] fix: align with x402 protocol - parse from body, BigInt
+ amounts, maxPrice check
+
+- Fixed Solana amount calculation to use BigInt instead of Math.floor for precision
+- Changed 402 response parsing from HTTP headers to JSON body per x402 protocol
+- Updated X402PaymentRequired interface to match x402 spec (maxAmountRequired, asset, network, scheme, extra)
+- Fixed maxPrice validation to check maxAmountRequired instead of price
+- Used getAssociatedTokenAddressSync to avoid unnecessary async RPC calls
+- Removed memo field as it's not in x402 protocol spec
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ .../nodes/tools/x402Payment/core.ts           | 103 ++++++++----------
+ 1 file changed, 48 insertions(+), 55 deletions(-)
+
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+index 59b770bb3c1..64d8d62d034 100644
+--- a/packages/components/nodes/tools/x402Payment/core.ts
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -29,12 +29,15 @@ export interface X402PaymentResponse {
+ }
+ 
+ export interface X402PaymentRequired {
+-    price: number
+-    currency: string
+-    chain: string
++    maxAmountRequired: number
++    asset: string
+     payTo: string
+-    accepts: string[]
+-    memo?: string
++    network: string
++    scheme: string
++    extra?: {
++        decimals: number
++        mint: string
++    }
+ }
+ 
+ export class X402PaymentTool extends DynamicStructuredTool {
+@@ -69,45 +72,36 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         this.maxOutputLength = args?.maxOutputLength ?? this.maxOutputLength
+     }
+ 
+-    private parsePaymentRequired(headers: Record<string, string>): X402PaymentRequired {
+-        const payToHeader = headers['x-pay-to'] || headers['X-Pay-To']
+-        const priceHeader = headers['x-price'] || headers['X-Price']
+-        const currencyHeader = headers['x-currency'] || headers['X-Currency']
+-        const chainHeader = headers['x-chain'] || headers['X-Chain']
+-        const acceptsHeader = headers['x-accepts'] || headers['X-Accepts']
+-        const memoHeader = headers['x-memo'] || headers['X-Memo']
+-
+-        if (!payToHeader || !priceHeader || !currencyHeader || !chainHeader) {
+-            throw new Error('Invalid 402 response: missing required payment headers')
++    private parsePaymentRequired(body: any): X402PaymentRequired {
++        if (!body.maxAmountRequired || !body.asset || !body.payTo || !body.network || !body.scheme) {
++            throw new Error('Invalid 402 response: missing required fields in response body')
+         }
+ 
+-        const price = parseFloat(priceHeader)
+-        if (isNaN(price)) {
+-            throw new Error('Invalid price in 402 response')
++        const maxAmountRequired = parseFloat(body.maxAmountRequired)
++        if (isNaN(maxAmountRequired)) {
++            throw new Error('Invalid maxAmountRequired in 402 response')
+         }
+ 
+-        const accepts = acceptsHeader ? acceptsHeader.split(',').map(s => s.trim()) : ['usdc']
+-
+         return {
+-            price,
+-            currency: currencyHeader.toLowerCase(),
+-            chain: chainHeader.toLowerCase(),
+-            payTo: payToHeader,
+-            accepts,
+-            memo: memoHeader
++            maxAmountRequired,
++            asset: body.asset.toLowerCase(),
++            payTo: body.payTo,
++            network: body.network.toLowerCase(),
++            scheme: body.scheme,
++            extra: body.extra
+         }
+     }
+ 
+     private async signSolanaPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+         const { Keypair, Connection, PublicKey, Transaction, SystemProgram } = require('@solana/web3.js')
+-        const { createTransferCheckedInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token')
++        const { createTransferCheckedInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } = require('@solana/spl-token')
+ 
+-        if (paymentReq.chain !== 'solana') {
+-            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++        if (paymentReq.network !== 'solana') {
++            throw new Error(`Unsupported network: ${paymentReq.network}`)
+         }
+ 
+-        if (paymentReq.currency !== 'usdc') {
+-            throw new Error(`Unsupported currency: ${paymentReq.currency}`)
++        if (paymentReq.asset !== 'usdc') {
++            throw new Error(`Unsupported asset: ${paymentReq.asset}`)
+         }
+ 
+         const keypair = Keypair.fromSecretKey(Buffer.from(this.privateKey, 'base64'))
+@@ -116,17 +110,18 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+         const fromAddress = keypair.publicKey
+         const toAddress = new PublicKey(paymentReq.payTo)
+-        const amount = Math.floor(paymentReq.price * 1e6)
+ 
+-        const fromATA = await getAssociatedTokenAddress(usdcMint, fromAddress)
+-        const toATA = await getAssociatedTokenAddress(usdcMint, toAddress)
++        const rawAmount = BigInt(Math.round(paymentReq.maxAmountRequired * 1e6))
++
++        const fromATA = getAssociatedTokenAddressSync(usdcMint, fromAddress)
++        const toATA = getAssociatedTokenAddressSync(usdcMint, toAddress)
+ 
+         const instruction = createTransferCheckedInstruction(
+             fromATA,
+             usdcMint,
+             toATA,
+             fromAddress,
+-            amount,
++            rawAmount,
+             6,
+             [],
+             TOKEN_PROGRAM_ID
+@@ -146,22 +141,21 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             version: '1.0',
+             chain: 'solana',
+             currency: 'usdc',
+-            amount: paymentReq.price,
++            amount: paymentReq.maxAmountRequired,
+             to: paymentReq.payTo,
+-            transaction: serializedTransaction,
+-            memo: paymentReq.memo
++            transaction: serializedTransaction
+         })
+ 
+         return { signature: serializedTransaction, envelope }
+     }
+ 
+     private async signBasePayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+-        if (paymentReq.chain !== 'base') {
+-            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++        if (paymentReq.network !== 'base') {
++            throw new Error(`Unsupported network: ${paymentReq.network}`)
+         }
+ 
+-        if (paymentReq.currency !== 'usdc') {
+-            throw new Error(`Unsupported currency: ${paymentReq.currency}`)
++        if (paymentReq.asset !== 'usdc') {
++            throw new Error(`Unsupported asset: ${paymentReq.asset}`)
+         }
+ 
+         const { ethers } = require('ethers')
+@@ -170,7 +164,7 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         const provider = new ethers.JsonRpcProvider('https://mainnet.base.org')
+ 
+         const usdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+-        const amount = ethers.parseUnits(paymentReq.price.toString(), 6)
++        const amount = ethers.parseUnits(paymentReq.maxAmountRequired.toString(), 6)
+ 
+         const abi = ['function transfer(address to, uint256 amount) returns (bool)']
+         const contract = new ethers.Contract(usdcAddress, abi, wallet)
+@@ -198,26 +192,25 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             version: '1.0',
+             chain: 'base',
+             currency: 'usdc',
+-            amount: paymentReq.price,
++            amount: paymentReq.maxAmountRequired,
+             to: paymentReq.payTo,
+-            transaction: signedTx,
+-            memo: paymentReq.memo
++            transaction: signedTx
+         })
+ 
+         return { signature: signedTx, envelope }
+     }
+ 
+     private async signPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+-        if (paymentReq.price > this.maxPrice) {
+-            throw new Error(`Price ${paymentReq.price} ${paymentReq.currency} exceeds maximum allowed price of ${this.maxPrice}`)
++        if (paymentReq.maxAmountRequired > this.maxPrice) {
++            throw new Error(`Max amount ${paymentReq.maxAmountRequired} ${paymentReq.asset} exceeds maximum allowed price of ${this.maxPrice}`)
+         }
+ 
+-        if (paymentReq.chain === 'solana') {
++        if (paymentReq.network === 'solana') {
+             return this.signSolanaPayment(paymentReq)
+-        } else if (paymentReq.chain === 'base') {
++        } else if (paymentReq.network === 'base') {
+             return this.signBasePayment(paymentReq)
+         } else {
+-            throw new Error(`Unsupported chain: ${paymentReq.chain}`)
++            throw new Error(`Unsupported network: ${paymentReq.network}`)
+         }
+     }
+ 
+@@ -257,7 +250,7 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             })
+ 
+             if (res.status === 402) {
+-                const paymentReq = this.parsePaymentRequired(Object.fromEntries(res.headers.entries()))
++                const paymentReq = this.parsePaymentRequired(await res.json())
+                 const { signature, envelope } = await this.signPayment(paymentReq)
+ 
+                 const paymentHeaders = {
+@@ -281,9 +274,9 @@ export class X402PaymentTool extends DynamicStructuredTool {
+                     data: text,
+                     txHash: signature,
+                     payment: {
+-                        amount: paymentReq.price,
+-                        currency: paymentReq.currency,
+-                        chain: paymentReq.chain,
++                        amount: paymentReq.maxAmountRequired,
++                        currency: paymentReq.asset,
++                        chain: paymentReq.network,
+                         txHash: signature
+                     }
+                 }
+
+From 2717e6b46c3a98b88fb2d86a198417f3d8178165 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Sun, 17 May 2026 14:04:54 +0800
+Subject: [PATCH 4/6] fix: address x402 protocol review feedback (accepts[],
+ atomic units, EIP-3009, asset validation)
+
+- Parse accepts[] array from 402 response with V1 fallback compatibility
+- Keep maxAmountRequired as atomic units (string/bigint) throughout
+- Implement EIP-3009 transferWithAuthorization for Base payments
+- Validate USDC mint addresses instead of string comparison
+- Apply maxOutputLength truncation to paid responses
+- Support multiple private key formats (base64, base58, JSON array)
+- Make Solana and Base RPC URLs configurable
+- Ensure consistent JSON return format for all responses
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ .../nodes/tools/x402Payment/core.ts           | 274 ++++++++++++++----
+ 1 file changed, 225 insertions(+), 49 deletions(-)
+
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+index 64d8d62d034..b9fe5cf9d89 100644
+--- a/packages/components/nodes/tools/x402Payment/core.ts
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -13,6 +13,8 @@ export interface X402PaymentParameters {
+     network?: 'solana' | 'base'
+     privateKey?: string
+     maxOutputLength?: number
++    solanaRpcUrl?: string
++    baseRpcUrl?: string
+ }
+ 
+ export interface X402PaymentResponse {
+@@ -21,23 +23,33 @@ export interface X402PaymentResponse {
+     error?: string
+     txHash?: string
+     payment?: {
+-        amount: number
++        amount: string
+         currency: string
+         chain: string
+         txHash: string
+     }
+ }
+ 
++export interface X402PaymentAccept {
++    scheme: string
++    price: string
++    network: string
++    payTo: string
++    asset?: string
++    extra?: {
++        decimals?: number
++        mint?: string
++    }
++}
++
+ export interface X402PaymentRequired {
+-    maxAmountRequired: number
++    maxAmountRequired: string
+     asset: string
+     payTo: string
+     network: string
+     scheme: string
+-    extra?: {
+-        decimals: number
+-        mint: string
+-    }
++    decimals: number
++    mint?: string
+ }
+ 
+ export class X402PaymentTool extends DynamicStructuredTool {
+@@ -47,6 +59,8 @@ export class X402PaymentTool extends DynamicStructuredTool {
+     privateKey = ''
+     maxOutputLength = Infinity
+     headers: Record<string, string> = {}
++    solanaRpcUrl = 'https://api.mainnet-beta.solana.com'
++    baseRpcUrl = 'https://mainnet.base.org'
+ 
+     constructor(args?: X402PaymentParameters) {
+         const schema = z.object({
+@@ -70,25 +84,126 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         this.network = args?.network ?? this.network
+         this.privateKey = args?.privateKey ?? this.privateKey
+         this.maxOutputLength = args?.maxOutputLength ?? this.maxOutputLength
++        this.solanaRpcUrl = args?.solanaRpcUrl ?? this.solanaRpcUrl
++        this.baseRpcUrl = args?.baseRpcUrl ?? this.baseRpcUrl
+     }
+ 
+-    private parsePaymentRequired(body: any): X402PaymentRequired {
++    private parsePaymentRequired(body: any, userNetwork: string): X402PaymentRequired {
++        // Known USDC mint addresses for validation
++        const knownUsdcMints = {
++            'solana-mainnet': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
++            'solana-devnet': '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
++            'base-mainnet': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
++        }
++
++        // V2 format: accepts[] array
++        if (body.accepts && Array.isArray(body.accepts) && body.accepts.length > 0) {
++            // Find a compatible requirement (matching user's preferred network or USDC asset)
++            const compatibleReq = body.accepts.find((req: X402PaymentAccept) => {
++                const reqNetwork = req.network.toLowerCase()
++                const userNet = userNetwork.toLowerCase()
++
++                // Match by network (support CAIP-2 format like "solana:mainnet" or "eip155:8453")
++                if (reqNetwork === userNet || reqNetwork.includes(userNet) || userNet.includes(reqNetwork)) {
++                    return true
++                }
++
++                // Or match by known USDC mint
++                if (req.extra?.mint) {
++                    return Object.values(knownUsdcMints).includes(req.extra.mint)
++                }
++
++                return false
++            })
++
++            if (!compatibleReq) {
++                throw new Error(`No compatible payment option found in accepts[] array for network: ${userNetwork}`)
++            }
++
++            // Extract decimals from extra or default to 6 (USDC)
++            const decimals = compatibleReq.extra?.decimals ?? 6
++
++            // Determine asset (use mint if available, otherwise asset field)
++            const asset = compatibleReq.extra?.mint || compatibleReq.asset || 'usdc'
++
++            return {
++                maxAmountRequired: compatibleReq.price,
++                asset: asset.toLowerCase(),
++                payTo: compatibleReq.payTo,
++                network: compatibleReq.network.toLowerCase(),
++                scheme: compatibleReq.scheme.toLowerCase(),
++                decimals: decimals,
++                mint: compatibleReq.extra?.mint
++            }
++        }
++
++        // V1 format: top-level fields (fallback for backward compatibility)
+         if (!body.maxAmountRequired || !body.asset || !body.payTo || !body.network || !body.scheme) {
+-            throw new Error('Invalid 402 response: missing required fields in response body')
++            throw new Error('Invalid 402 response: missing required fields in response body (expected accepts[] or top-level fields)')
+         }
+ 
+-        const maxAmountRequired = parseFloat(body.maxAmountRequired)
+-        if (isNaN(maxAmountRequired)) {
++        // For V1, maxAmountRequired might be a decimal string, convert to atomic units
++        // Default to 6 decimals (USDC) if not specified
++        const decimals = body.extra?.decimals ?? 6
++        const maxAmountDecimal = parseFloat(body.maxAmountRequired)
++
++        if (isNaN(maxAmountDecimal)) {
+             throw new Error('Invalid maxAmountRequired in 402 response')
+         }
+ 
++        // Convert decimal to atomic units
++        const atomicAmount = (BigInt(Math.round(maxAmountDecimal * 1e6))).toString()
++
+         return {
+-            maxAmountRequired,
+-            asset: body.asset.toLowerCase(),
++            maxAmountRequired: atomicAmount,
++            asset: (body.extra?.mint || body.asset).toLowerCase(),
+             payTo: body.payTo,
+             network: body.network.toLowerCase(),
+-            scheme: body.scheme,
+-            extra: body.extra
++            scheme: body.scheme.toLowerCase(),
++            decimals: decimals,
++            mint: body.extra?.mint
++        }
++    }
++
++    private parseSolanaPrivateKey(): Buffer {
++        // Try base64 format (original)
++        try {
++            return Buffer.from(this.privateKey, 'base64')
++        } catch {}
++
++        // Try base58 format
++        try {
++            const bs58 = require('bs58')
++            return bs58.decode(this.privateKey)
++        } catch {}
++
++        // Try JSON array format
++        try {
++            const keyArray = JSON.parse(this.privateKey)
++            if (Array.isArray(keyArray) && keyArray.length === 64) {
++                return Buffer.from(keyArray)
++            }
++        } catch {}
++
++        throw new Error('Unsupported private key format. Supported formats: base64, base58, JSON array of 64 bytes')
++    }
++
++    private validateUsdcMint(mint: string, network: string): void {
++        const knownUsdcMints = {
++            'solana': new Set([
++                'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // mainnet
++                '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'  // devnet
++            ]),
++            'base': new Set([
++                '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' // mainnet
++            ])
++        }
++
++        const normalizedMint = mint.toLowerCase()
++        const networkMints = knownUsdcMints[network as keyof typeof knownUsdcMints]
++
++        if (!networkMints || !networkMints.has(normalizedMint)) {
++            throw new Error(`Unsupported USDC mint address: ${mint} for network: ${network}`)
+         }
+     }
+ 
+@@ -100,18 +215,20 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             throw new Error(`Unsupported network: ${paymentReq.network}`)
+         }
+ 
+-        if (paymentReq.asset !== 'usdc') {
+-            throw new Error(`Unsupported asset: ${paymentReq.asset}`)
++        // Validate USDC mint address (V2 format) or asset string (V1 format)
++        if (paymentReq.mint) {
++            this.validateUsdcMint(paymentReq.mint, 'solana')
+         }
+ 
+-        const keypair = Keypair.fromSecretKey(Buffer.from(this.privateKey, 'base64'))
+-        const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed')
++        const keypair = Keypair.fromSecretKey(this.parseSolanaPrivateKey())
++        const connection = new Connection(this.solanaRpcUrl, 'confirmed')
+ 
+-        const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
++        const usdcMint = new PublicKey(paymentReq.mint || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+         const fromAddress = keypair.publicKey
+         const toAddress = new PublicKey(paymentReq.payTo)
+ 
+-        const rawAmount = BigInt(Math.round(paymentReq.maxAmountRequired * 1e6))
++        // maxAmountRequired is already in atomic units (string or bigint)
++        const rawAmount = BigInt(paymentReq.maxAmountRequired)
+ 
+         const fromATA = getAssociatedTokenAddressSync(usdcMint, fromAddress)
+         const toATA = getAssociatedTokenAddressSync(usdcMint, toAddress)
+@@ -122,7 +239,7 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             toATA,
+             fromAddress,
+             rawAmount,
+-            6,
++            paymentReq.decimals,
+             [],
+             TOKEN_PROGRAM_ID
+         )
+@@ -154,39 +271,80 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             throw new Error(`Unsupported network: ${paymentReq.network}`)
+         }
+ 
+-        if (paymentReq.asset !== 'usdc') {
+-            throw new Error(`Unsupported asset: ${paymentReq.asset}`)
++        // Validate USDC mint address (V2 format) or asset string (V1 format)
++        if (paymentReq.mint) {
++            this.validateUsdcMint(paymentReq.mint, 'base')
+         }
+ 
+         const { ethers } = require('ethers')
+ 
+         const wallet = new ethers.Wallet(this.privateKey)
+-        const provider = new ethers.JsonRpcProvider('https://mainnet.base.org')
+ 
+-        const usdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+-        const amount = ethers.parseUnits(paymentReq.maxAmountRequired.toString(), 6)
++        const usdcAddress = paymentReq.mint || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
++
++        // maxAmountRequired is already in atomic units
++        const amount = BigInt(paymentReq.maxAmountRequired)
+ 
+-        const abi = ['function transfer(address to, uint256 amount) returns (bool)']
+-        const contract = new ethers.Contract(usdcAddress, abi, wallet)
++        // EIP-3009 transferWithAuthorization parameters
++        const now = Math.floor(Date.now() / 1000)
++        const validAfter = now
++        const validBefore = now + 3600 // 1 hour from now
+ 
+-        const nonce = await provider.getTransactionCount(wallet.address, 'pending')
+-        const gasLimit = await contract.transfer.estimateGas(paymentReq.payTo, amount)
+-        const feeData = await provider.getFeeData()
++        // Generate a unique nonce
++        const nonce = ethers.hexlify(ethers.randomBytes(32))
+ 
+-        const unsignedTx = await contract.transfer.populateTransaction(paymentReq.payTo, amount)
++        // EIP-712 typed data for EIP-3009
++        const domain = {
++            name: 'USD Coin',
++            version: '2',
++            chainId: 8453,
++            verifyingContract: usdcAddress
++        }
+ 
+-        const transaction = {
+-            to: usdcAddress,
++        const types = {
++            TransferWithAuthorization: [
++                { name: 'from', type: 'address' },
++                { name: 'to', type: 'address' },
++                { name: 'value', type: 'uint256' },
++                { name: 'validAfter', type: 'uint256' },
++                { name: 'validBefore', type: 'uint256' },
++                { name: 'nonce', type: 'bytes32' }
++            ]
++        }
++
++        const values = {
+             from: wallet.address,
+-            data: unsignedTx.data,
+-            nonce: nonce,
+-            gasLimit: gasLimit,
+-            maxFeePerGas: feeData.maxFeePerGas,
+-            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+-            chainId: 8453
++            to: paymentReq.payTo,
++            value: amount,
++            validAfter: validAfter,
++            validBefore: validBefore,
++            nonce: nonce
+         }
+ 
+-        const signedTx = await wallet.signTransaction(transaction)
++        // Sign the EIP-712 typed data
++        const signature = await wallet.signTypedData(domain, types, values)
++
++        // Split signature into v, r, s components
++        const ethSignature = ethers.Signature.from(signature)
++        const v = ethSignature.v
++        const r = ethSignature.r
++        const s = ethSignature.s
++
++        // Create EIP-3009 authorization object
++        const authorization = {
++            from: values.from,
++            to: values.to,
++            value: values.value.toString(),
++            validAfter: values.validAfter,
++            validBefore: values.validBefore,
++            nonce: values.nonce,
++            v: v,
++            r: r,
++            s: s
++        }
++
++        // Encode authorization as base64 for envelope
++        const authorizationBase64 = Buffer.from(JSON.stringify(authorization)).toString('base64')
+ 
+         const envelope = JSON.stringify({
+             version: '1.0',
+@@ -194,15 +352,20 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             currency: 'usdc',
+             amount: paymentReq.maxAmountRequired,
+             to: paymentReq.payTo,
+-            transaction: signedTx
++            authorization: authorizationBase64
+         })
+ 
+-        return { signature: signedTx, envelope }
++        return { signature: authorizationBase64, envelope }
+     }
+ 
+     private async signPayment(paymentReq: X402PaymentRequired): Promise<{ signature: string; envelope: string }> {
+-        if (paymentReq.maxAmountRequired > this.maxPrice) {
+-            throw new Error(`Max amount ${paymentReq.maxAmountRequired} ${paymentReq.asset} exceeds maximum allowed price of ${this.maxPrice}`)
++        // Convert maxPrice from decimal to atomic units for comparison
++        const maxPriceAtomic = BigInt(Math.round(this.maxPrice * (10 ** paymentReq.decimals)))
++        const requiredAmount = BigInt(paymentReq.maxAmountRequired)
++
++        if (requiredAmount > maxPriceAtomic) {
++            const decimalAmount = Number(requiredAmount) / (10 ** paymentReq.decimals)
++            throw new Error(`Max amount ${decimalAmount} ${paymentReq.asset} exceeds maximum allowed price of ${this.maxPrice}`)
+         }
+ 
+         if (paymentReq.network === 'solana') {
+@@ -250,12 +413,14 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             })
+ 
+             if (res.status === 402) {
+-                const paymentReq = this.parsePaymentRequired(await res.json())
++                // Parse payment requirements, passing user's network preference for accepts[] selection
++                const paymentReq = this.parsePaymentRequired(await res.json(), this.network)
+                 const { signature, envelope } = await this.signPayment(paymentReq)
+ 
++                // Use PAYMENT-SIGNATURE header for V2 compliance (server will verify, not broadcast)
+                 const paymentHeaders = {
+                     ...requestHeaders,
+-                    'X-Payment': envelope
++                    'PAYMENT-SIGNATURE': envelope
+                 }
+ 
+                 res = await secureFetch(finalUrl, {
+@@ -269,9 +434,12 @@ export class X402PaymentTool extends DynamicStructuredTool {
+                 }
+ 
+                 const text = await res.text()
++                // Apply maxOutputLength truncation to paid responses
++                const truncatedText = text.slice(0, this.maxOutputLength)
++
+                 const response: X402PaymentResponse = {
+                     success: true,
+-                    data: text,
++                    data: truncatedText,
+                     txHash: signature,
+                     payment: {
+                         amount: paymentReq.maxAmountRequired,
+@@ -288,8 +456,16 @@ export class X402PaymentTool extends DynamicStructuredTool {
+                 throw new Error(`HTTP Error ${res.status}: ${res.statusText}`)
+             }
+ 
++            // For non-payment responses, return JSON format for consistency
+             const text = await res.text()
+-            return text.slice(0, this.maxOutputLength)
++            const truncatedText = text.slice(0, this.maxOutputLength)
++
++            const response: X402PaymentResponse = {
++                success: true,
++                data: truncatedText
++            }
++
++            return JSON.stringify(response)
+         } catch (error) {
+             if (error instanceof Error) {
+                 const errorResponse: X402PaymentResponse = {
+
+From 24ba9802b7392bf5f419c533f61146272b0670b2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Sun, 17 May 2026 14:05:56 +0800
+Subject: [PATCH 5/6] fix: normalize CAIP-2 network IDs to base names for
+ routing
+
+---
+ .../nodes/tools/x402Payment/core.ts           | 21 +++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+index b9fe5cf9d89..9c5960bc700 100644
+--- a/packages/components/nodes/tools/x402Payment/core.ts
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -126,11 +126,20 @@ export class X402PaymentTool extends DynamicStructuredTool {
+             // Determine asset (use mint if available, otherwise asset field)
+             const asset = compatibleReq.extra?.mint || compatibleReq.asset || 'usdc'
+ 
++            // Normalize network to base name for routing (strip CAIP-2 prefix)
++            const normalizedNetwork = (() => {
++                const net = compatibleReq.network.toLowerCase()
++                if (net.startsWith('solana')) return 'solana'
++                if (net.startsWith('eip155')) return 'base'
++                if (net.startsWith('base')) return 'base'
++                return net
++            })()
++
+             return {
+                 maxAmountRequired: compatibleReq.price,
+                 asset: asset.toLowerCase(),
+                 payTo: compatibleReq.payTo,
+-                network: compatibleReq.network.toLowerCase(),
++                network: normalizedNetwork,
+                 scheme: compatibleReq.scheme.toLowerCase(),
+                 decimals: decimals,
+                 mint: compatibleReq.extra?.mint
+@@ -154,11 +163,19 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         // Convert decimal to atomic units
+         const atomicAmount = (BigInt(Math.round(maxAmountDecimal * 1e6))).toString()
+ 
++        // For V1, normalize network to base name
++        const v1Network = body.network.toLowerCase()
++        const normalizedNetwork = (() => {
++            if (v1Network.startsWith('solana')) return 'solana'
++            if (v1Network.startsWith('eip155') || v1Network.startsWith('base')) return 'base'
++            return v1Network
++        })()
++
+         return {
+             maxAmountRequired: atomicAmount,
+             asset: (body.extra?.mint || body.asset).toLowerCase(),
+             payTo: body.payTo,
+-            network: body.network.toLowerCase(),
++            network: normalizedNetwork,
+             scheme: body.scheme.toLowerCase(),
+             decimals: decimals,
+             mint: body.extra?.mint
+
+From e7173eb88ff0af0ac917c1673d53ad496207cfc6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E5=AD=99=E5=A4=87?= <sunbei@sunbeideMac-mini.local>
+Date: Tue, 26 May 2026 15:52:29 +0800
+Subject: [PATCH 6/6] fix: normalize accepts[] amount fields
+ (maxAmountRequired, amount, price)
+
+This addresses TateLyman's review feedback about incompatible amount parsing:
+
+- Normalize amount field using fallback chain: maxAmountRequired ?? amount ?? price
+- Handle field semantics correctly:
+  - maxAmountRequired: decimal style ("0.001"), convert by decimals
+  - amount: atomic style ("1000"), keep as-is
+  - price: legacy decimal style, convert for backward compatibility
+- Add comprehensive tests covering both decimal and atomic shapes
+- Improve error messages for missing/invalid amount fields
+
+The live x402 services use different field names for the same concept:
+- Decimal style: { "maxAmountRequired": "0.001" }
+- Atomic style: { "amount": "1000" }
+- Legacy style: { "price": "0.001" }
+
+All three formats are now properly supported and converted to atomic units.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+---
+ .../nodes/tools/x402Payment/core.test.ts      | 523 ++++++++++++++++++
+ .../nodes/tools/x402Payment/core.ts           |  31 +-
+ 2 files changed, 552 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/nodes/tools/x402Payment/core.test.ts
+
+diff --git a/packages/components/nodes/tools/x402Payment/core.test.ts b/packages/components/nodes/tools/x402Payment/core.test.ts
+new file mode 100644
+index 00000000000..2cc8568b4eb
+--- /dev/null
++++ b/packages/components/nodes/tools/x402Payment/core.test.ts
+@@ -0,0 +1,523 @@
++import { X402PaymentTool } from './core'
++
++describe('X402PaymentTool - accepts[] Parser', () => {
++    describe('parsePaymentRequired - V2 format with accepts[]', () => {
++        it('should parse decimal-style maxAmountRequired correctly', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        maxAmountRequired: '0.001',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('1000') // 0.001 * 10^6 = 1000 atomic units
++            expect(result.decimals).toBe(6)
++            expect(result.network).toBe('solana')
++            expect(result.asset).toBe('epjfwwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v')
++            expect(result.payTo).toBe('TestRecipientAddress')
++            expect(result.scheme).toBe('solana')
++        })
++
++        it('should parse atomic-style amount correctly (no conversion)', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '1000',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('1000') // Already atomic, no conversion
++            expect(result.decimals).toBe(6)
++            expect(result.network).toBe('solana')
++        })
++
++        it('should parse legacy price field correctly (treated as decimal)', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'base',
++                privateKey: 'privatekey'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'eip3009',
++                        price: '0.000001',
++                        network: 'eip155:8453',
++                        payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
++                        extra: {
++                            decimals: 6,
++                            mint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'base')
++
++            expect(result.maxAmountRequired).toBe('1') // 0.000001 * 10^6 = 1 atomic unit
++            expect(result.decimals).toBe(6)
++            expect(result.network).toBe('base')
++        })
++
++        it('should prioritize maxAmountRequired over amount and price', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        maxAmountRequired: '0.001',
++                        amount: '9999',
++                        price: '0.002',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('1000') // Should use maxAmountRequired (0.001 * 10^6)
++        })
++
++        it('should prioritize amount over price when maxAmountRequired is missing', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '5000',
++                        price: '0.002',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('5000') // Should use amount directly
++        })
++
++        it('should fall back to price when both maxAmountRequired and amount are missing', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        price: '0.000005',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('5') // Should use price (0.000005 * 10^6)
++        })
++
++        it('should throw error when no amount field is present', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            expect(() => {
++                tool['parsePaymentRequired'](body, 'solana')
++            }).toThrow('No amount field found in accepts[] entry')
++        })
++
++        it('should handle different decimal values correctly', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const testCases = [
++                { maxAmountRequired: '1.0', expected: '1000000' },
++                { maxAmountRequired: '0.1', expected: '100000' },
++                { maxAmountRequired: '0.01', expected: '10000' },
++                { maxAmountRequired: '0.000001', expected: '1' },
++                { maxAmountRequired: '123.456789', expected: '123456789' }
++            ]
++
++            testCases.forEach(({ maxAmountRequired, expected }) => {
++                const body = {
++                    accepts: [
++                        {
++                            scheme: 'solana',
++                            maxAmountRequired,
++                            network: 'solana:mainnet',
++                            payTo: 'TestRecipientAddress',
++                            extra: { decimals: 6 }
++                        }
++                    ]
++                }
++
++                const result = tool['parsePaymentRequired'](body, 'solana')
++                expect(result.maxAmountRequired).toBe(expected)
++            })
++        })
++
++        it('should support Base network with CAIP-2 format', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'base',
++                privateKey: 'privatekey'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'eip3009',
++                        maxAmountRequired: '0.00001',
++                        network: 'eip155:8453',
++                        payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
++                        extra: {
++                            decimals: 6,
++                            mint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'base')
++
++            expect(result.maxAmountRequired).toBe('10') // 0.00001 * 10^6 = 10
++            expect(result.network).toBe('base')
++            expect(result.scheme).toBe('eip3009')
++        })
++
++        it('should handle default decimals when not specified', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        maxAmountRequired: '0.001',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress'
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('1000') // 0.001 * 10^6 (default decimals)
++            expect(result.decimals).toBe(6) // Should default to 6 for USDC
++        })
++
++        it('should match network by substring for CAIP-2 compatibility', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '1000',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: { decimals: 6 }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++            expect(result.network).toBe('solana')
++        })
++
++        it('should throw error for invalid maxAmountRequired value', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        maxAmountRequired: 'invalid',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: { decimals: 6 }
++                    }
++                ]
++            }
++
++            expect(() => {
++                tool['parsePaymentRequired'](body, 'solana')
++            }).toThrow('Invalid maxAmountRequired value')
++        })
++
++        it('should throw error for invalid price value', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        price: 'not_a_number',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: { decimals: 6 }
++                    }
++                ]
++            }
++
++            expect(() => {
++                tool['parsePaymentRequired'](body, 'solana')
++            }).toThrow('Invalid price value')
++        })
++
++        it('should handle both decimal and atomic formats in the same accepts array', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'eip3009',
++                        amount: '10000',
++                        network: 'eip155:8453',
++                        payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
++                        extra: { decimals: 6 }
++                    },
++                    {
++                        scheme: 'solana',
++                        maxAmountRequired: '0.002',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: { decimals: 6 }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            // Should select the solana entry and convert maxAmountRequired correctly
++            expect(result.maxAmountRequired).toBe('2000') // 0.002 * 10^6 = 2000
++            expect(result.network).toBe('solana')
++        })
++    })
++
++    describe('parsePaymentRequired - V1 format (backward compatibility)', () => {
++        it('should parse V1 top-level fields correctly', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                maxAmountRequired: '0.001',
++                asset: 'usdc',
++                payTo: 'TestRecipientAddress',
++                network: 'solana:mainnet',
++                scheme: 'solana'
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.maxAmountRequired).toBe('1000') // V1 converts decimal to atomic
++            expect(result.asset).toBe('usdc')
++            expect(result.network).toBe('solana')
++        })
++
++        it('should throw error when V1 fields are missing', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                maxAmountRequired: '0.001',
++                asset: 'usdc'
++                // Missing payTo, network, scheme
++            }
++
++            expect(() => {
++                tool['parsePaymentRequired'](body, 'solana')
++            }).toThrow('Invalid 402 response: missing required fields')
++        })
++    })
++
++    describe('Network and asset validation', () => {
++        it('should select compatible network from accepts array', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'base',
++                privateKey: 'privatekey'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '1000',
++                        network: 'solana:mainnet',
++                        payTo: 'SolanaAddress',
++                        extra: { decimals: 6 }
++                    },
++                    {
++                        scheme: 'eip3009',
++                        maxAmountRequired: '0.00001',
++                        network: 'eip155:8453',
++                        payTo: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
++                        extra: { decimals: 6, mint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'base')
++
++            expect(result.network).toBe('base')
++            expect(result.scheme).toBe('eip3009')
++            expect(result.maxAmountRequired).toBe('10')
++        })
++
++        it('should normalize asset addresses to lowercase', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '1000',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: {
++                            decimals: 6,
++                            mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
++                        }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.asset).toBe('epjfwwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v')
++        })
++
++        it('should use default asset when mint is not specified', () => {
++            const tool = new X402PaymentTool({
++                url: 'https://api.example.com/endpoint',
++                network: 'solana',
++                privateKey: 'base64key'
++            })
++
++            const body = {
++                accepts: [
++                    {
++                        scheme: 'solana',
++                        amount: '1000',
++                        network: 'solana:mainnet',
++                        payTo: 'TestRecipientAddress',
++                        extra: { decimals: 6 }
++                    }
++                ]
++            }
++
++            const result = tool['parsePaymentRequired'](body, 'solana')
++
++            expect(result.asset).toBe('usdc')
++        })
++    })
++})
+\ No newline at end of file
+diff --git a/packages/components/nodes/tools/x402Payment/core.ts b/packages/components/nodes/tools/x402Payment/core.ts
+index 9c5960bc700..538fa897573 100644
+--- a/packages/components/nodes/tools/x402Payment/core.ts
++++ b/packages/components/nodes/tools/x402Payment/core.ts
+@@ -99,7 +99,7 @@ export class X402PaymentTool extends DynamicStructuredTool {
+         // V2 format: accepts[] array
+         if (body.accepts && Array.isArray(body.accepts) && body.accepts.length > 0) {
+             // Find a compatible requirement (matching user's preferred network or USDC asset)
+-            const compatibleReq = body.accepts.find((req: X402PaymentAccept) => {
++            const compatibleReq = body.accepts.find((req: any) => {
+                 const reqNetwork = req.network.toLowerCase()
+                 const userNet = userNetwork.toLowerCase()
+ 
+@@ -135,8 +135,35 @@ export class X402PaymentTool extends DynamicStructuredTool {
+                 return net
+             })()
+ 
++            // Normalize amount field: handle maxAmountRequired (decimal), amount (atomic), or price (legacy)
++            const rawAmount = compatibleReq.maxAmountRequired ?? compatibleReq.amount ?? compatibleReq.price
++            if (!rawAmount) {
++                throw new Error('No amount field found in accepts[] entry (expected maxAmountRequired, amount, or price)')
++            }
++
++            // Convert to atomic units based on field semantics
++            let atomicAmount: string
++            if (compatibleReq.maxAmountRequired) {
++                // maxAmountRequired is decimal-style (e.g., "0.001"), convert by decimals
++                const decimalAmount = parseFloat(String(compatibleReq.maxAmountRequired))
++                if (isNaN(decimalAmount)) {
++                    throw new Error('Invalid maxAmountRequired value in accepts[] entry')
++                }
++                atomicAmount = (BigInt(Math.round(decimalAmount * (10 ** decimals)))).toString()
++            } else if (compatibleReq.amount) {
++                // amount is atomic-style (e.g., "1000"), keep as-is
++                atomicAmount = String(compatibleReq.amount)
++            } else {
++                // price is treated as decimal-style for backward compatibility
++                const decimalAmount = parseFloat(String(compatibleReq.price))
++                if (isNaN(decimalAmount)) {
++                    throw new Error('Invalid price value in accepts[] entry')
++                }
++                atomicAmount = (BigInt(Math.round(decimalAmount * (10 ** decimals)))).toString()
++            }
++
+             return {
+-                maxAmountRequired: compatibleReq.price,
++                maxAmountRequired: atomicAmount,
+                 asset: asset.toLowerCase(),
+                 payTo: compatibleReq.payTo,
+                 network: normalizedNetwork,

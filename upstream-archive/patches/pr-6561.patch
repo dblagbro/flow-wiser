@@ -1,0 +1,66 @@
+From c6ed5f4c109fbfe65b7214274128f91ceadca0fa Mon Sep 17 00:00:00 2001
+From: ZeroIce <zeroicework@163.com>
+Date: Wed, 24 Jun 2026 00:45:57 +0800
+Subject: [PATCH] Skip S3 directory markers in directory loader
+
+---
+ .../S3Directory/S3Directory.test.ts           | 20 +++++++++++++++++++
+ .../S3Directory/S3Directory.ts                |  7 +++++--
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+
+diff --git a/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts b/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+new file mode 100644
+index 00000000000..a55bdb29ed2
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+@@ -0,0 +1,20 @@
++const { isS3FileKey } = require('./S3Directory')
++
++describe('S3Directory', () => {
++    describe('isS3FileKey', () => {
++        it('skips S3 directory marker keys', () => {
++            expect(isS3FileKey('docs/')).toBe(false)
++            expect(isS3FileKey('docs/nested/')).toBe(false)
++        })
++
++        it('keeps regular file keys, including empty file keys with extensions', () => {
++            expect(isS3FileKey('docs/readme.txt')).toBe(true)
++            expect(isS3FileKey('empty-file.txt')).toBe(true)
++        })
++
++        it('skips missing keys', () => {
++            expect(isS3FileKey()).toBe(false)
++            expect(isS3FileKey('')).toBe(false)
++        })
++    })
++})
+diff --git a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+index 10680aa9876..ee1900c4c9b 100644
+--- a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
++++ b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+@@ -17,6 +17,9 @@ import { TextSplitter } from '@langchain/textsplitters'
+ import { CSVLoader } from '../Csv/CsvLoader'
+ import { LoadOfSheet } from '../MicrosoftExcel/ExcelLoader'
+ import { PowerpointLoader } from '../MicrosoftPowerpoint/PowerpointLoader'
++
++const isS3FileKey = (key?: string): key is string => Boolean(key && !key.endsWith('/'))
++
+ class S3_DocumentLoaders implements INode {
+     label: string
+     name: string
+@@ -184,7 +187,7 @@ class S3_DocumentLoaders implements INode {
+                 })
+             )
+ 
+-            const keys: string[] = (listObjectsOutput?.Contents ?? []).filter((item) => item.Key && item.ETag).map((item) => item.Key!)
++            const keys: string[] = (listObjectsOutput?.Contents ?? []).filter((item) => isS3FileKey(item.Key) && item.ETag).map((item) => item.Key!)
+ 
+             await Promise.all(
+                 keys.map(async (key) => {
+@@ -290,4 +293,4 @@ class S3_DocumentLoaders implements INode {
+         }
+     }
+ }
+-module.exports = { nodeClass: S3_DocumentLoaders }
++module.exports = { nodeClass: S3_DocumentLoaders, isS3FileKey }

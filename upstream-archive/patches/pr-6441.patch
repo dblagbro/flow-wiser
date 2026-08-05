@@ -1,0 +1,312 @@
+From dad1d136b1453092d18918fc766509b4c3532b2f Mon Sep 17 00:00:00 2001
+From: Matt Van Horn <455140+mvanhorn@users.noreply.github.com>
+Date: Wed, 27 May 2026 08:33:53 -0700
+Subject: [PATCH 1/2] fix: preserve markdown tables and inline-code escaping in
+ RichInput Source/Edit roundtrip
+
+---
+ packages/ui/package.json                      |  1 +
+ .../dialog/ExpandRichInputDialog.jsx          | 47 ++++++++++++++++++-
+ .../ui/src/ui-component/input/RichInput.jsx   | 47 ++++++++++++++++++-
+ pnpm-lock.yaml                                | 14 ++++++
+ 4 files changed, 107 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/package.json b/packages/ui/package.json
+index 330cf2344c7..d15d8603def 100644
+--- a/packages/ui/package.json
++++ b/packages/ui/package.json
+@@ -30,6 +30,7 @@
+         "@tiptap/extension-code-block-lowlight": "^3.20.4",
+         "@tiptap/extension-mention": "^3.20.4",
+         "@tiptap/extension-placeholder": "^3.20.4",
++        "@tiptap/extension-table": "^3.20.4",
+         "@tiptap/markdown": "^3.20.4",
+         "@tiptap/pm": "^3.20.4",
+         "@tiptap/react": "^3.20.4",
+diff --git a/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx b/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
+index 444bfb3503c..160a135a735 100644
+--- a/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
+@@ -18,6 +18,7 @@ import Placeholder from '@tiptap/extension-placeholder'
+ import { mergeAttributes } from '@tiptap/core'
+ import StarterKit from '@tiptap/starter-kit'
+ import { Markdown } from '@tiptap/markdown'
++import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+ import { common, createLowlight } from 'lowlight'
+ import { suggestionOptions } from '@/ui-component/input/suggestionOption'
+@@ -27,6 +28,41 @@ import { isHtmlContent, escapeXmlTags, unescapeXmlEntities, unescapeXmlTags } fr
+ 
+ const lowlight = createLowlight(common)
+ 
++const MarkdownTable = Table.extend({
++    renderMarkdown: (node, h) => {
++        const rows =
++            node.content?.map((rowNode) =>
++                (rowNode.content || []).map((cellNode) => {
++                    const text = (cellNode.content || [])
++                        .map((childNode) => h.renderChildren(childNode))
++                        .join(' ')
++                        .replace(/\s+/g, ' ')
++                        .trim()
++                    return { text, isHeader: cellNode.type === 'tableHeader' }
++                })
++            ) || []
++        const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0)
++
++        if (!columnCount) return ''
++
++        const renderRow = (row = []) =>
++            `| ${new Array(columnCount)
++                .fill(0)
++                .map((_, index) => row[index]?.text || '')
++                .join(' | ')} |`
++
++        const headerRow = rows[0] || []
++        const hasHeader = headerRow.some((cell) => cell.isHeader)
++        const bodyRows = hasHeader ? rows.slice(1) : rows
++
++        return [
++            renderRow(hasHeader ? headerRow : []),
++            `| ${new Array(columnCount).fill('---').join(' | ')} |`,
++            ...bodyRows.map(renderRow)
++        ].join('\n')
++    }
++})
++
+ // Store
+ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ 
+@@ -115,7 +151,16 @@ const extensions = (availableNodesForVariable, availableState, acceptNodeOutputA
+     StarterKit.configure({
+         codeBlock: false
+     }),
+-    Markdown,
++    MarkdownTable,
++    TableRow,
++    TableHeader,
++    TableCell,
++    Markdown.configure({
++        markedOptions: {
++            gfm: true,
++            breaks: false
++        }
++    }),
+     CustomMention.configure({
+         HTMLAttributes: {
+             class: 'variable'
+diff --git a/packages/ui/src/ui-component/input/RichInput.jsx b/packages/ui/src/ui-component/input/RichInput.jsx
+index 69060ca0a2f..83b3db83994 100644
+--- a/packages/ui/src/ui-component/input/RichInput.jsx
++++ b/packages/ui/src/ui-component/input/RichInput.jsx
+@@ -6,6 +6,7 @@ import Placeholder from '@tiptap/extension-placeholder'
+ import { mergeAttributes } from '@tiptap/core'
+ import StarterKit from '@tiptap/starter-kit'
+ import { Markdown } from '@tiptap/markdown'
++import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+ import { styled } from '@mui/material/styles'
+ import { Box } from '@mui/material'
+ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+@@ -17,6 +18,41 @@ import { isHtmlContent, escapeXmlTags, unescapeXmlEntities, unescapeXmlTags } fr
+ 
+ const lowlight = createLowlight(common)
+ 
++const MarkdownTable = Table.extend({
++    renderMarkdown: (node, h) => {
++        const rows =
++            node.content?.map((rowNode) =>
++                (rowNode.content || []).map((cellNode) => {
++                    const text = (cellNode.content || [])
++                        .map((childNode) => h.renderChildren(childNode))
++                        .join(' ')
++                        .replace(/\s+/g, ' ')
++                        .trim()
++                    return { text, isHeader: cellNode.type === 'tableHeader' }
++                })
++            ) || []
++        const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0)
++
++        if (!columnCount) return ''
++
++        const renderRow = (row = []) =>
++            `| ${new Array(columnCount)
++                .fill(0)
++                .map((_, index) => row[index]?.text || '')
++                .join(' | ')} |`
++
++        const headerRow = rows[0] || []
++        const hasHeader = headerRow.some((cell) => cell.isHeader)
++        const bodyRows = hasHeader ? rows.slice(1) : rows
++
++        return [
++            renderRow(hasHeader ? headerRow : []),
++            `| ${new Array(columnCount).fill('---').join(' | ')} |`,
++            ...bodyRows.map(renderRow)
++        ].join('\n')
++    }
++})
++
+ // define your extension array
+ const extensions = (
+     availableNodesForVariable,
+@@ -27,11 +63,20 @@ const extensions = (
+     isNodeInsideInteration,
+     useMarkdown
+ ) => [
+-    Markdown,
+     StarterKit.configure({
+         codeBlock: false,
+         ...(!useMarkdown && { link: false })
+     }),
++    MarkdownTable,
++    TableRow,
++    TableHeader,
++    TableCell,
++    Markdown.configure({
++        markedOptions: {
++            gfm: true,
++            breaks: false
++        }
++    }),
+     CustomMention.configure({
+         HTMLAttributes: {
+             class: 'variable'
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 812b8856aea..a80340cc34b 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1364,6 +1364,9 @@ importers:
+       '@tiptap/extension-placeholder':
+         specifier: ^3.20.4
+         version: 3.20.4(@tiptap/extensions@3.20.4(@tiptap/core@3.20.4(@tiptap/pm@3.20.4))(@tiptap/pm@3.20.4))
++      '@tiptap/extension-table':
++        specifier: ^3.20.4
++        version: 3.20.4(@tiptap/core@3.20.4(@tiptap/pm@3.20.4))(@tiptap/pm@3.20.4)
+       '@tiptap/markdown':
+         specifier: ^3.20.4
+         version: 3.20.4(@tiptap/core@3.20.4(@tiptap/pm@3.20.4))(@tiptap/pm@3.20.4)
+@@ -8692,6 +8695,12 @@ packages:
+     peerDependencies:
+       '@tiptap/core': ^3.20.4
+ 
++  '@tiptap/extension-table@3.20.4':
++    resolution: {integrity: sha512-vEHXRL9k9G02pp3P+DyUnN4YRaRAHGfTBC6gck0s9TpsCM9NIchL0qI1fb/u46Bu6UaoMMk58DGr7xaJ29g7KQ==}
++    peerDependencies:
++      '@tiptap/core': ^3.20.4
++      '@tiptap/pm': ^3.20.4
++
+   '@tiptap/extension-text@3.20.4':
+     resolution: {integrity: sha512-jchJcBZixDEO2J66Zx5dchsI2mA6IYsROqF8P1poxL4ienH7RVQRCTsBNnSfIeOtREKKWeOU/tEs5fcpvvGwIQ==}
+     peerDependencies:
+@@ -31532,6 +31541,11 @@ snapshots:
+     dependencies:
+       '@tiptap/core': 3.20.4(@tiptap/pm@3.20.4)
+ 
++  '@tiptap/extension-table@3.20.4(@tiptap/core@3.20.4(@tiptap/pm@3.20.4))(@tiptap/pm@3.20.4)':
++    dependencies:
++      '@tiptap/core': 3.20.4(@tiptap/pm@3.20.4)
++      '@tiptap/pm': 3.20.4
++
+   '@tiptap/extension-text@3.20.4(@tiptap/core@3.20.4(@tiptap/pm@3.20.4))':
+     dependencies:
+       '@tiptap/core': 3.20.4(@tiptap/pm@3.20.4)
+
+From 15931f4808ae1016555fe61466fb81724a8ee2e5 Mon Sep 17 00:00:00 2001
+From: mvanhorn <mvanhorn@gmail.com>
+Date: Sat, 1 Aug 2026 22:12:13 -0700
+Subject: [PATCH 2/2] fix(ui): escape pipes in markdown table cells and stop
+ shifting rows
+
+A cell containing | broke the table structure, so escape it as \|. When a table
+had no explicit header cells the serializer emitted an empty header row and
+shifted every row down by one; treat the first row as the header instead, which
+is the only shape markdown tables have.
+---
+ .../ui-component/dialog/ExpandRichInputDialog.jsx | 15 +++++++--------
+ packages/ui/src/ui-component/input/RichInput.jsx  | 15 +++++++--------
+ 2 files changed, 14 insertions(+), 16 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx b/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
+index 160a135a735..ce653371b61 100644
+--- a/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ExpandRichInputDialog.jsx
+@@ -32,14 +32,14 @@ const MarkdownTable = Table.extend({
+     renderMarkdown: (node, h) => {
+         const rows =
+             node.content?.map((rowNode) =>
+-                (rowNode.content || []).map((cellNode) => {
+-                    const text = (cellNode.content || [])
++                (rowNode.content || []).map((cellNode) =>
++                    (cellNode.content || [])
+                         .map((childNode) => h.renderChildren(childNode))
+                         .join(' ')
+                         .replace(/\s+/g, ' ')
+                         .trim()
+-                    return { text, isHeader: cellNode.type === 'tableHeader' }
+-                })
++                        .replace(/\|/g, '\\|')
++                )
+             ) || []
+         const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0)
+ 
+@@ -48,15 +48,14 @@ const MarkdownTable = Table.extend({
+         const renderRow = (row = []) =>
+             `| ${new Array(columnCount)
+                 .fill(0)
+-                .map((_, index) => row[index]?.text || '')
++                .map((_, index) => row[index] || '')
+                 .join(' | ')} |`
+ 
+         const headerRow = rows[0] || []
+-        const hasHeader = headerRow.some((cell) => cell.isHeader)
+-        const bodyRows = hasHeader ? rows.slice(1) : rows
++        const bodyRows = rows.slice(1)
+ 
+         return [
+-            renderRow(hasHeader ? headerRow : []),
++            renderRow(headerRow),
+             `| ${new Array(columnCount).fill('---').join(' | ')} |`,
+             ...bodyRows.map(renderRow)
+         ].join('\n')
+diff --git a/packages/ui/src/ui-component/input/RichInput.jsx b/packages/ui/src/ui-component/input/RichInput.jsx
+index 83b3db83994..b1dc583a2f4 100644
+--- a/packages/ui/src/ui-component/input/RichInput.jsx
++++ b/packages/ui/src/ui-component/input/RichInput.jsx
+@@ -22,14 +22,14 @@ const MarkdownTable = Table.extend({
+     renderMarkdown: (node, h) => {
+         const rows =
+             node.content?.map((rowNode) =>
+-                (rowNode.content || []).map((cellNode) => {
+-                    const text = (cellNode.content || [])
++                (rowNode.content || []).map((cellNode) =>
++                    (cellNode.content || [])
+                         .map((childNode) => h.renderChildren(childNode))
+                         .join(' ')
+                         .replace(/\s+/g, ' ')
+                         .trim()
+-                    return { text, isHeader: cellNode.type === 'tableHeader' }
+-                })
++                        .replace(/\|/g, '\\|')
++                )
+             ) || []
+         const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0)
+ 
+@@ -38,15 +38,14 @@ const MarkdownTable = Table.extend({
+         const renderRow = (row = []) =>
+             `| ${new Array(columnCount)
+                 .fill(0)
+-                .map((_, index) => row[index]?.text || '')
++                .map((_, index) => row[index] || '')
+                 .join(' | ')} |`
+ 
+         const headerRow = rows[0] || []
+-        const hasHeader = headerRow.some((cell) => cell.isHeader)
+-        const bodyRows = hasHeader ? rows.slice(1) : rows
++        const bodyRows = rows.slice(1)
+ 
+         return [
+-            renderRow(hasHeader ? headerRow : []),
++            renderRow(headerRow),
+             `| ${new Array(columnCount).fill('---').join(' | ')} |`,
+             ...bodyRows.map(renderRow)
+         ].join('\n')

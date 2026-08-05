@@ -1,0 +1,283 @@
+From 637f25978a80cbd3d9f70f38cca02957c9be427c Mon Sep 17 00:00:00 2001
+From: Tanishq <tanishq@exa.ai>
+Date: Wed, 13 May 2026 16:56:58 +0000
+Subject: [PATCH 1/4] feat(exa): modernize search types, categories,
+ highlights, add integration header
+
+- Search types: auto/fast/instant/deep (removed keyword/neural)
+- Categories: exactly 6 (company, people, research paper, news, personal site, financial report)
+- Removed useAutoprompt from UI
+- Added maxAgeHours for freshness control
+- Added x-exa-integration: flowise-integration header
+
+Co-Authored-By: Tanishq Jaiswal <tanishq.jaiswal97@gmail.com>
+---
+ .../nodes/tools/ExaSearch/ExaSearch.ts        | 83 ++++++++-----------
+ 1 file changed, 36 insertions(+), 47 deletions(-)
+
+diff --git a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+index 532ea77b1a7..417b83450a1 100644
+--- a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
++++ b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+@@ -50,41 +50,39 @@ class ExaSearch_Tools implements INode {
+                 type: 'options',
+                 options: [
+                     {
+-                        label: 'keyword',
+-                        name: 'keyword'
++                        label: 'auto',
++                        name: 'auto'
+                     },
+                     {
+-                        label: 'neural',
+-                        name: 'neural'
++                        label: 'fast',
++                        name: 'fast'
+                     },
+                     {
+-                        label: 'auto',
+-                        name: 'auto',
+-                        description: 'decides between keyword and neural'
++                        label: 'instant',
++                        name: 'instant'
++                    },
++                    {
++                        label: 'deep',
++                        name: 'deep'
+                     }
+                 ],
+                 optional: true,
+                 additionalParams: true
+             },
+             {
+-                label: 'Use Auto Prompt',
+-                name: 'useAutoprompt',
+-                type: 'boolean',
+-                optional: true,
+-                additionalParams: true,
+-                description: 'If true, your query will be converted to a Exa query. Default false.'
+-            },
+-            {
+-                label: 'Category (Beta)',
++                label: 'Category',
+                 name: 'category',
+                 type: 'options',
+-                description:
+-                    'A data category to focus on, with higher comprehensivity and data cleanliness. Categories right now include company, research paper, news, github, tweet, movie, song, personal site, and pdf',
++                description: 'A data category to focus on.',
+                 options: [
+                     {
+                         label: 'company',
+                         name: 'company'
+                     },
++                    {
++                        label: 'people',
++                        name: 'people'
++                    },
+                     {
+                         label: 'research paper',
+                         name: 'research paper'
+@@ -93,34 +91,10 @@ class ExaSearch_Tools implements INode {
+                         label: 'news',
+                         name: 'news'
+                     },
+-                    {
+-                        label: 'github',
+-                        name: 'github'
+-                    },
+-                    {
+-                        label: 'tweet',
+-                        name: 'tweet'
+-                    },
+-                    {
+-                        label: 'movie',
+-                        name: 'movie'
+-                    },
+-                    {
+-                        label: 'song',
+-                        name: 'song'
+-                    },
+-                    {
+-                        label: 'pdf',
+-                        name: 'pdf'
+-                    },
+                     {
+                         label: 'personal site',
+                         name: 'personal site'
+                     },
+-                    {
+-                        label: 'linkedin profile',
+-                        name: 'linkedin profile'
+-                    },
+                     {
+                         label: 'financial report',
+                         name: 'financial report'
+@@ -129,6 +103,15 @@ class ExaSearch_Tools implements INode {
+                 optional: true,
+                 additionalParams: true
+             },
++            {
++                label: 'Max Age Hours',
++                name: 'maxAgeHours',
++                type: 'number',
++                optional: true,
++                additionalParams: true,
++                description:
++                    'Freshness control. 0 = always crawl, -1 = cache only, 24 = cache if less than 24h old.'
++            },
+             {
+                 label: 'Include Domains',
+                 name: 'includeDomains',
+@@ -200,9 +183,9 @@ class ExaSearch_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const description = nodeData.inputs?.description as string
+         const numResults = nodeData.inputs?.numResults as string
+-        const type = nodeData.inputs?.type as 'keyword' | 'neural' | 'auto' | undefined
+-        const useAutoprompt = nodeData.inputs?.useAutoprompt as boolean
++        const type = nodeData.inputs?.type as 'auto' | 'fast' | 'instant' | 'deep' | undefined
+         const category = nodeData.inputs?.category as string
++        const maxAgeHours = nodeData.inputs?.maxAgeHours as string
+         const includeDomains = nodeData.inputs?.includeDomains as string
+         const excludeDomains = nodeData.inputs?.excludeDomains as string
+         const startCrawlDate = nodeData.inputs?.startCrawlDate as string
+@@ -213,19 +196,25 @@ class ExaSearch_Tools implements INode {
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const exaSearchApiKey = getCredentialParam('exaSearchApiKey', credentialData, nodeData)
+ 
++        const client = new Exa(exaSearchApiKey)
++        ;(client as any).headers = {
++            ...(client as any).headers,
++            'x-exa-integration': 'flowise-integration'
++        }
++
+         const tool = new ExaSearchResults({
+-            client: new Exa(exaSearchApiKey),
++            client,
+             searchArgs: {
+                 numResults: numResults ? parseFloat(numResults) : undefined,
+                 type: type || undefined,
+-                useAutoprompt: useAutoprompt || undefined,
+                 category: (category as any) || undefined,
+                 includeDomains: includeDomains ? includeDomains.split(',') : undefined,
+                 excludeDomains: excludeDomains ? excludeDomains.split(',') : undefined,
+                 startCrawlDate: startCrawlDate || undefined,
+                 endCrawlDate: endCrawlDate || undefined,
+                 startPublishedDate: startPublishedDate || undefined,
+-                endPublishedDate: endPublishedDate || undefined
++                endPublishedDate: endPublishedDate || undefined,
++                ...(maxAgeHours ? { maxAgeHours: parseFloat(maxAgeHours) } : {})
+             }
+         })
+ 
+
+From 26fd05ff3b56b163fd34ceab94eaf891bdb9b1da Mon Sep 17 00:00:00 2001
+From: Tanishq <tanishq@exa.ai>
+Date: Wed, 13 May 2026 17:10:31 +0000
+Subject: [PATCH 2/4] fix(exa): cast search type to any for exa-js compat
+
+Co-Authored-By: Tanishq Jaiswal <tanishq.jaiswal97@gmail.com>
+---
+ packages/components/nodes/tools/ExaSearch/ExaSearch.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+index 417b83450a1..ae47e2ea8ef 100644
+--- a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
++++ b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+@@ -183,7 +183,7 @@ class ExaSearch_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const description = nodeData.inputs?.description as string
+         const numResults = nodeData.inputs?.numResults as string
+-        const type = nodeData.inputs?.type as 'auto' | 'fast' | 'instant' | 'deep' | undefined
++        const type = nodeData.inputs?.type as string | undefined
+         const category = nodeData.inputs?.category as string
+         const maxAgeHours = nodeData.inputs?.maxAgeHours as string
+         const includeDomains = nodeData.inputs?.includeDomains as string
+@@ -206,7 +206,7 @@ class ExaSearch_Tools implements INode {
+             client,
+             searchArgs: {
+                 numResults: numResults ? parseFloat(numResults) : undefined,
+-                type: type || undefined,
++                type: (type as any) || undefined,
+                 category: (category as any) || undefined,
+                 includeDomains: includeDomains ? includeDomains.split(',') : undefined,
+                 excludeDomains: excludeDomains ? excludeDomains.split(',') : undefined,
+
+From 5b4f4d55454a837a198d4b99052fce686d06fc08 Mon Sep 17 00:00:00 2001
+From: Tanishq <tanishq@exa.ai>
+Date: Mon, 18 May 2026 16:51:18 +0000
+Subject: [PATCH 3/4] fix(exa): use Headers.set() for integration header,
+ restore type literal
+
+Co-Authored-By: Tanishq Jaiswal <tanishq.jaiswal97@gmail.com>
+---
+ packages/components/nodes/tools/ExaSearch/ExaSearch.ts | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+index ae47e2ea8ef..12f6382983a 100644
+--- a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
++++ b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+@@ -183,7 +183,7 @@ class ExaSearch_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const description = nodeData.inputs?.description as string
+         const numResults = nodeData.inputs?.numResults as string
+-        const type = nodeData.inputs?.type as string | undefined
++        const type = nodeData.inputs?.type as 'auto' | 'fast' | 'instant' | 'deep' | undefined
+         const category = nodeData.inputs?.category as string
+         const maxAgeHours = nodeData.inputs?.maxAgeHours as string
+         const includeDomains = nodeData.inputs?.includeDomains as string
+@@ -197,16 +197,13 @@ class ExaSearch_Tools implements INode {
+         const exaSearchApiKey = getCredentialParam('exaSearchApiKey', credentialData, nodeData)
+ 
+         const client = new Exa(exaSearchApiKey)
+-        ;(client as any).headers = {
+-            ...(client as any).headers,
+-            'x-exa-integration': 'flowise-integration'
+-        }
++        ;(client as any).headers.set('x-exa-integration', 'flowise-integration')
+ 
+         const tool = new ExaSearchResults({
+             client,
+             searchArgs: {
+                 numResults: numResults ? parseFloat(numResults) : undefined,
+-                type: (type as any) || undefined,
++                type: type || undefined,
+                 category: (category as any) || undefined,
+                 includeDomains: includeDomains ? includeDomains.split(',') : undefined,
+                 excludeDomains: excludeDomains ? excludeDomains.split(',') : undefined,
+
+From 8dd980bc5fc0738d7f7cf470b6779bbcf20acc42 Mon Sep 17 00:00:00 2001
+From: Tanishq <tanishq@exa.ai>
+Date: Thu, 21 May 2026 16:54:48 +0000
+Subject: [PATCH 4/4] remove instant search type option
+
+Co-Authored-By: Tanishq Jaiswal <tanishq.jaiswal97@gmail.com>
+---
+ packages/components/nodes/tools/ExaSearch/ExaSearch.ts | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+index 12f6382983a..b11f2dcbfd0 100644
+--- a/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
++++ b/packages/components/nodes/tools/ExaSearch/ExaSearch.ts
+@@ -57,10 +57,6 @@ class ExaSearch_Tools implements INode {
+                         label: 'fast',
+                         name: 'fast'
+                     },
+-                    {
+-                        label: 'instant',
+-                        name: 'instant'
+-                    },
+                     {
+                         label: 'deep',
+                         name: 'deep'
+@@ -183,7 +179,7 @@ class ExaSearch_Tools implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const description = nodeData.inputs?.description as string
+         const numResults = nodeData.inputs?.numResults as string
+-        const type = nodeData.inputs?.type as 'auto' | 'fast' | 'instant' | 'deep' | undefined
++        const type = nodeData.inputs?.type as 'auto' | 'fast' | 'deep' | undefined
+         const category = nodeData.inputs?.category as string
+         const maxAgeHours = nodeData.inputs?.maxAgeHours as string
+         const includeDomains = nodeData.inputs?.includeDomains as string

@@ -1,0 +1,920 @@
+From 89b62b43c1aac4069169e034b21b926b855e1af3 Mon Sep 17 00:00:00 2001
+From: us <rahmetsaritekin@gmail.com>
+Date: Thu, 26 Mar 2026 15:18:00 +0300
+Subject: [PATCH 1/2] feat: Add CRW document loader and tool nodes
+
+Add CRW integration with:
+- Document loader node supporting scrape, crawl, and map modes
+- Scrape tool node for agent-based web scraping
+- CRW API credential with support for self-hosted and cloud instances
+---
+ .../credentials/CRWApi.credential.ts          |  36 ++
+ .../nodes/documentloaders/CRW/CRW.ts          | 540 ++++++++++++++++++
+ .../nodes/documentloaders/CRW/crw.svg         |   3 +
+ .../nodes/tools/CRWScrape/CRWScrape.ts        | 167 ++++++
+ .../components/nodes/tools/CRWScrape/crw.svg  |   3 +
+ 5 files changed, 749 insertions(+)
+ create mode 100644 packages/components/credentials/CRWApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/CRW/CRW.ts
+ create mode 100644 packages/components/nodes/documentloaders/CRW/crw.svg
+ create mode 100644 packages/components/nodes/tools/CRWScrape/CRWScrape.ts
+ create mode 100644 packages/components/nodes/tools/CRWScrape/crw.svg
+
+diff --git a/packages/components/credentials/CRWApi.credential.ts b/packages/components/credentials/CRWApi.credential.ts
+new file mode 100644
+index 00000000000..a0257dfcbf7
+--- /dev/null
++++ b/packages/components/credentials/CRWApi.credential.ts
+@@ -0,0 +1,36 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class CRWApiCredential implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'CRW API'
++        this.name = 'crwApi'
++        this.version = 1.0
++        this.description =
++            'Connect to CRW (self-hosted) or <a target="_blank" href="https://fastcrw.com">fastcrw.com</a> cloud. ' +
++            'API key is optional for self-hosted instances without auth configured.'
++        this.inputs = [
++            {
++                label: 'CRW API Key',
++                name: 'crwApiKey',
++                type: 'password',
++                optional: true,
++                description: 'Bearer token. Required for fastcrw.com, optional for self-hosted.'
++            },
++            {
++                label: 'CRW API URL',
++                name: 'crwApiUrl',
++                type: 'string',
++                default: 'http://localhost:3000',
++                description: 'Base URL of your CRW instance. Use https://fastcrw.com for cloud.'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: CRWApiCredential }
+diff --git a/packages/components/nodes/documentloaders/CRW/CRW.ts b/packages/components/nodes/documentloaders/CRW/CRW.ts
+new file mode 100644
+index 00000000000..af2d29095c2
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/CRW/CRW.ts
+@@ -0,0 +1,540 @@
++import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++import { TextSplitter } from '@langchain/textsplitters'
++import { Document } from '@langchain/core/documents'
++
++// ---------------------------------------------------------------------------
++// Types
++// ---------------------------------------------------------------------------
++
++interface CRWScrapeParams {
++    formats?: string[]
++    onlyMainContent?: boolean
++    renderJs?: string
++    waitFor?: number
++    cssSelector?: string
++    xpath?: string
++    includeTags?: string[]
++    excludeTags?: string[]
++    stealth?: boolean
++    proxy?: string
++    headers?: Record<string, string>
++    integration?: string
++}
++
++interface CRWCrawlParams {
++    maxDepth?: number
++    maxPages?: number
++    formats?: string[]
++    onlyMainContent?: boolean
++    integration?: string
++}
++
++interface CRWMapParams {
++    maxDepth?: number
++    useSitemap?: boolean
++    integration?: string
++}
++
++interface CRWScrapeResult {
++    success: boolean
++    data?: {
++        markdown?: string
++        html?: string
++        plainText?: string
++        metadata?: Record<string, any>
++    }
++}
++
++interface CRWCrawlResult {
++    success: boolean
++    status: string
++    data?: Array<{
++        markdown?: string
++        html?: string
++        plainText?: string
++        metadata?: Record<string, any>
++    }>
++}
++
++interface CRWMapResult {
++    success: boolean
++    links?: string[]
++}
++
++// ---------------------------------------------------------------------------
++// CRW HTTP Client (embedded, no external SDK dependency)
++// ---------------------------------------------------------------------------
++
++class CRWClient {
++    private apiUrl: string
++    private apiKey?: string
++    private headers: Record<string, string>
++
++    constructor(config: { apiUrl: string; apiKey?: string }) {
++        this.apiUrl = config.apiUrl.replace(/\/+$/, '')
++        this.apiKey = config.apiKey
++        this.headers = {
++            'Content-Type': 'application/json',
++            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {})
++        }
++    }
++
++    async scrape(url: string, params: CRWScrapeParams): Promise<CRWScrapeResult> {
++        const body = { url, ...params, integration: 'flowise' }
++        const resp = await fetch(`${this.apiUrl}/v1/scrape`, {
++            method: 'POST',
++            headers: this.headers,
++            body: JSON.stringify(body)
++        })
++        if (!resp.ok) {
++            const text = await resp.text()
++            throw new Error(`CRW scrape failed (${resp.status}): ${text}`)
++        }
++        return resp.json() as Promise<CRWScrapeResult>
++    }
++
++    async crawl(url: string, params: CRWCrawlParams): Promise<CRWCrawlResult> {
++        const body = { url, ...params, integration: 'flowise' }
++        const startResp = await fetch(`${this.apiUrl}/v1/crawl`, {
++            method: 'POST',
++            headers: this.headers,
++            body: JSON.stringify(body)
++        })
++        if (!startResp.ok) {
++            const text = await startResp.text()
++            throw new Error(`CRW crawl start failed (${startResp.status}): ${text}`)
++        }
++        const startData = (await startResp.json()) as { success: boolean; id?: string }
++        if (!startData.id) {
++            throw new Error('CRW crawl did not return a job ID')
++        }
++
++        // Poll until completed or failed
++        const jobId = startData.id
++        const maxWaitMs = 5 * 60 * 1000 // 5 minutes
++        const pollIntervalMs = 2000
++        const startTime = Date.now()
++
++        while (Date.now() - startTime < maxWaitMs) {
++            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
++            const statusResp = await fetch(`${this.apiUrl}/v1/crawl/${jobId}`, {
++                method: 'GET',
++                headers: this.headers
++            })
++            if (!statusResp.ok) {
++                const text = await statusResp.text()
++                throw new Error(`CRW crawl poll failed (${statusResp.status}): ${text}`)
++            }
++            const statusData = (await statusResp.json()) as CRWCrawlResult
++            if (statusData.status === 'completed') {
++                return statusData
++            }
++            if (statusData.status === 'failed') {
++                throw new Error('CRW crawl job failed')
++            }
++        }
++        throw new Error('CRW crawl timed out after 5 minutes')
++    }
++
++    async map(url: string, params: CRWMapParams): Promise<CRWMapResult> {
++        const body = { url, ...params, integration: 'flowise' }
++        const resp = await fetch(`${this.apiUrl}/v1/map`, {
++            method: 'POST',
++            headers: this.headers,
++            body: JSON.stringify(body)
++        })
++        if (!resp.ok) {
++            const text = await resp.text()
++            throw new Error(`CRW map failed (${resp.status}): ${text}`)
++        }
++        return resp.json() as Promise<CRWMapResult>
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Node Definition
++// ---------------------------------------------------------------------------
++
++class CRW_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'CRW'
++        this.name = 'crw'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'crw.svg'
++        this.category = 'Document Loaders'
++        this.description = 'Scrape or crawl websites using CRW — the AI-native web scraper'
++        this.baseClasses = [this.type]
++        this.credential = {
++            label: 'CRW API',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['crwApi'],
++            optional: true
++        }
++        this.inputs = [
++            // --- Primary inputs ---
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Type',
++                name: 'crwType',
++                type: 'options',
++                options: [
++                    { label: 'Scrape', name: 'scrape', description: 'Scrape a single URL' },
++                    { label: 'Crawl', name: 'crawl', description: 'Crawl a site (BFS, multi-page)' },
++                    { label: 'Map', name: 'map', description: 'Discover all URLs on a site' }
++                ],
++                default: 'scrape'
++            },
++            {
++                label: 'URL',
++                name: 'url',
++                type: 'string',
++                placeholder: 'https://example.com'
++            },
++            {
++                label: 'Metadata',
++                name: 'metadata',
++                type: 'json',
++                optional: true,
++                additionalParams: true
++            },
++
++            // --- Scrape-specific inputs ---
++            {
++                label: 'Only Main Content',
++                name: 'onlyMainContent',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape', 'crawl'] },
++                description: 'Strip navigation, footer, and sidebar elements'
++            },
++            {
++                label: 'JS Rendering',
++                name: 'renderJs',
++                type: 'options',
++                options: [
++                    { label: 'Auto (detect SPAs)', name: 'auto' },
++                    { label: 'Force (always render)', name: 'force' },
++                    { label: 'Off (no rendering)', name: 'off' }
++                ],
++                default: 'auto',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Control JavaScript rendering behavior'
++            },
++            {
++                label: 'Wait For (ms)',
++                name: 'waitFor',
++                type: 'number',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Wait time in milliseconds after page load / JS render',
++                placeholder: '1000'
++            },
++            {
++                label: 'CSS Selector',
++                name: 'cssSelector',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Extract only content matching this CSS selector',
++                placeholder: 'article.main-content'
++            },
++            {
++                label: 'XPath',
++                name: 'xpath',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Extract content using XPath expression (alternative to CSS selector)',
++                placeholder: '//article'
++            },
++            {
++                label: 'Include Tags',
++                name: 'includeTags',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Comma-separated CSS selectors of elements to include',
++                placeholder: 'article, main, .content'
++            },
++            {
++                label: 'Exclude Tags',
++                name: 'excludeTags',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Comma-separated CSS selectors of elements to exclude',
++                placeholder: 'nav, footer, .sidebar, .ads'
++            },
++            {
++                label: 'Output Format',
++                name: 'outputFormat',
++                type: 'options',
++                options: [
++                    { label: 'Markdown', name: 'markdown' },
++                    { label: 'HTML', name: 'html' },
++                    { label: 'Plain Text', name: 'plainText' }
++                ],
++                default: 'markdown',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Content format for scraped pages'
++            },
++            {
++                label: 'Stealth Mode',
++                name: 'stealth',
++                type: 'boolean',
++                default: false,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Use browser-like headers to avoid bot detection'
++            },
++            {
++                label: 'Proxy',
++                name: 'proxy',
++                type: 'string',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Proxy URL for this request',
++                placeholder: 'http://user:pass@proxy:8080'
++            },
++            {
++                label: 'Custom Headers',
++                name: 'customHeaders',
++                type: 'json',
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['scrape'] },
++                description: 'Custom HTTP headers as JSON object'
++            },
++
++            // --- Crawl-specific inputs ---
++            {
++                label: 'Max Depth',
++                name: 'maxDepth',
++                type: 'number',
++                default: 2,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['crawl', 'map'] },
++                description: 'Maximum link-follow depth from the start URL'
++            },
++            {
++                label: 'Max Pages',
++                name: 'maxPages',
++                type: 'number',
++                default: 100,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['crawl'] },
++                description: 'Maximum number of pages to scrape'
++            },
++
++            // --- Map-specific inputs ---
++            {
++                label: 'Use Sitemap',
++                name: 'useSitemap',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['map'] },
++                description: 'Also read sitemap.xml for URL discovery'
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects with metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of all documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        // --- Credentials ---
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('crwApiKey', credentialData, nodeData)
++        const apiUrl = getCredentialParam('crwApiUrl', credentialData, nodeData) || 'http://localhost:3000'
++
++        // --- Inputs ---
++        const crwType = (nodeData.inputs?.crwType as string) || 'scrape'
++        const url = nodeData.inputs?.url as string
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter | undefined
++        const metadata = nodeData.inputs?.metadata
++        const output = nodeData.outputs?.output as string
++
++        if (!url) {
++            throw new Error('URL is required')
++        }
++
++        const client = new CRWClient({ apiUrl, apiKey })
++        let docs: Document[] = []
++
++        // --- Execute based on mode ---
++        if (crwType === 'scrape') {
++            const onlyMainContent = nodeData.inputs?.onlyMainContent as boolean
++            const renderJs = nodeData.inputs?.renderJs as string | undefined
++            const waitFor = nodeData.inputs?.waitFor as number | undefined
++            const cssSelector = nodeData.inputs?.cssSelector as string | undefined
++            const xpath = nodeData.inputs?.xpath as string | undefined
++            const includeTags = nodeData.inputs?.includeTags as string | undefined
++            const excludeTags = nodeData.inputs?.excludeTags as string | undefined
++            const outputFormat = (nodeData.inputs?.outputFormat as string) || 'markdown'
++            const stealth = nodeData.inputs?.stealth as boolean | undefined
++            const proxy = nodeData.inputs?.proxy as string | undefined
++            const customHeaders = nodeData.inputs?.customHeaders as string | undefined
++
++            const params: CRWScrapeParams = {
++                formats: [outputFormat],
++                onlyMainContent: onlyMainContent ?? true
++            }
++            if (renderJs && renderJs !== 'auto') params.renderJs = renderJs
++            if (waitFor) params.waitFor = waitFor
++            if (cssSelector) params.cssSelector = cssSelector
++            if (xpath) params.xpath = xpath
++            if (includeTags) params.includeTags = includeTags.split(',').map((s) => s.trim())
++            if (excludeTags) params.excludeTags = excludeTags.split(',').map((s) => s.trim())
++            if (stealth) params.stealth = stealth
++            if (proxy) params.proxy = proxy
++            if (customHeaders) {
++                try {
++                    params.headers = typeof customHeaders === 'string' ? JSON.parse(customHeaders) : customHeaders
++                } catch {
++                    throw new Error('Custom Headers must be valid JSON')
++                }
++            }
++
++            const result = await client.scrape(url, params)
++            if (!result.success || !result.data) {
++                throw new Error('CRW scrape returned no data')
++            }
++
++            const content = result.data[outputFormat as keyof typeof result.data] as string || ''
++            const pageMetadata = result.data.metadata || {}
++
++            docs = [
++                new Document({
++                    pageContent: content,
++                    metadata: {
++                        title: pageMetadata.title,
++                        description: pageMetadata.description,
++                        sourceURL: pageMetadata.sourceURL || url,
++                        statusCode: pageMetadata.statusCode,
++                        language: pageMetadata.language
++                    }
++                })
++            ]
++        } else if (crwType === 'crawl') {
++            const onlyMainContent = nodeData.inputs?.onlyMainContent as boolean
++            const maxDepth = nodeData.inputs?.maxDepth as number | undefined
++            const maxPages = nodeData.inputs?.maxPages as number | undefined
++
++            const params: CRWCrawlParams = {
++                formats: ['markdown'],
++                onlyMainContent: onlyMainContent ?? true
++            }
++            if (maxDepth !== undefined) params.maxDepth = maxDepth
++            if (maxPages !== undefined) params.maxPages = maxPages
++
++            const result = await client.crawl(url, params)
++            if (!result.success || !result.data) {
++                throw new Error('CRW crawl returned no data')
++            }
++
++            docs = result.data.map((page) => {
++                const pageMetadata = page.metadata || {}
++                return new Document({
++                    pageContent: page.markdown || page.html || page.plainText || '',
++                    metadata: {
++                        title: pageMetadata.title,
++                        description: pageMetadata.description,
++                        sourceURL: pageMetadata.sourceURL,
++                        statusCode: pageMetadata.statusCode,
++                        language: pageMetadata.language
++                    }
++                })
++            })
++        } else if (crwType === 'map') {
++            const maxDepth = nodeData.inputs?.maxDepth as number | undefined
++            const useSitemap = nodeData.inputs?.useSitemap as boolean | undefined
++
++            const params: CRWMapParams = {}
++            if (maxDepth !== undefined) params.maxDepth = maxDepth
++            if (useSitemap !== undefined) params.useSitemap = useSitemap
++
++            const result = await client.map(url, params)
++            if (!result.success || !result.links) {
++                throw new Error('CRW map returned no data')
++            }
++
++            docs = result.links.map(
++                (link) =>
++                    new Document({
++                        pageContent: link,
++                        metadata: { sourceURL: link }
++                    })
++            )
++        }
++
++        // --- Text splitting ---
++        if (textSplitter) {
++            docs = await textSplitter.splitDocuments(docs)
++        }
++
++        // --- Merge user metadata ---
++        if (metadata) {
++            const parsed = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
++            docs = docs.map((doc) => ({
++                ...doc,
++                metadata: { ...doc.metadata, ...parsed }
++            }))
++        }
++
++        // --- Output selection ---
++        if (output === 'text') {
++            return docs.map((doc) => doc.pageContent).join('\n\n')
++        }
++        return docs
++    }
++}
++
++module.exports = { nodeClass: CRW_DocumentLoaders }
+diff --git a/packages/components/nodes/documentloaders/CRW/crw.svg b/packages/components/nodes/documentloaders/CRW/crw.svg
+new file mode 100644
+index 00000000000..cc0ea467157
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/CRW/crw.svg
+@@ -0,0 +1,3 @@
++<svg width="209" height="104" viewBox="0 0 209 104" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill-rule="evenodd" clip-rule="evenodd" d="M10.3657 1.829C9.45566 2.835 8.71066 4.629 8.71066 5.816C8.71066 8.357 9.87366 8.974 49.6137 27.513C78.4757 40.977 79.8437 41.342 80.5167 35.757C80.7987 33.416 79.6227 32.589 65.5167 25.225C27.9357 5.603 16.5747 0 14.3757 0C13.0807 0 11.2757 0.823 10.3657 1.829ZM167.211 12.95C130.325 31.998 128.26 33.196 127.893 35.758C127.668 37.329 128.3 38.311 130.047 39.107C132.103 40.044 133.422 39.812 137.866 37.733C149.153 32.451 187.423 14.731 191.711 12.801C197.551 10.173 199.711 8.202 199.711 5.5C199.711 2.865 196.786 -0.00799954 194.132 0.0200005C193.076 0.0310005 180.961 5.849 167.211 12.95ZM100.211 38.718C96.7557 39.557 91.5557 44.128 90.1047 47.6C85.7277 58.074 92.7307 67.988 104.511 67.996C112.992 68.002 118.47 64.064 120.754 56.317C121.875 52.517 121.769 51.692 119.599 47.317C116.058 40.174 108.328 36.746 100.211 38.718ZM2.99066 46.966C-0.157341 48.31 -1.00634 52.541 1.34166 55.18C3.19366 57.261 3.51766 57.274 37.4407 56.616C56.2667 56.251 72.3367 55.697 73.1517 55.384C75.6317 54.433 76.1267 50.963 74.0657 48.982C72.3877 47.37 69.0067 47.143 38.7107 46.609C18.4177 46.251 4.33566 46.392 2.99066 46.966ZM156.211 46.959C145.211 47.257 135.649 47.864 134.961 48.309C133.323 49.369 133.356 53.461 135.015 54.837C135.856 55.535 148.543 56.165 170.789 56.614C202.652 57.256 205.39 57.178 206.985 55.583C209.38 53.188 209.146 49.418 206.488 47.557C204.099 45.883 198.486 45.816 156.211 46.959ZM43.8687 78.493C27.1807 86.393 12.6687 93.633 11.6187 94.583C7.82366 98.017 10.4867 104.019 15.7897 103.984C17.1207 103.975 25.4107 100.119 34.2107 95.415C43.0107 90.711 56.7357 83.453 64.7107 79.286C78.0457 72.318 81.7107 69.859 81.7107 67.88C81.7107 66.325 78.4717 64.003 76.3897 64.065C75.1907 64.101 60.5567 70.593 43.8687 78.493ZM128.751 65.452C126.041 68.717 128.167 70.467 146.72 80.248C172.061 93.608 189.791 102.603 192.363 103.403C195.667 104.431 200.214 100.139 199.372 96.786C198.852 94.713 196.509 93.15 186.971 88.512C165.418 78.032 133.901 64 131.916 64C130.838 64 129.414 64.653 128.751 65.452Z" fill="black"/>
++</svg>
+diff --git a/packages/components/nodes/tools/CRWScrape/CRWScrape.ts b/packages/components/nodes/tools/CRWScrape/CRWScrape.ts
+new file mode 100644
+index 00000000000..7b9b996c3f2
+--- /dev/null
++++ b/packages/components/nodes/tools/CRWScrape/CRWScrape.ts
+@@ -0,0 +1,167 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++import { DynamicStructuredTool } from '@langchain/core/tools'
++import { z } from 'zod/v3'
++
++// ---------------------------------------------------------------------------
++// Lightweight CRW HTTP Client (same as document loader, duplicated to keep
++// each node self-contained as per Flowise conventions)
++// ---------------------------------------------------------------------------
++
++class CRWClient {
++    private apiUrl: string
++    private headers: Record<string, string>
++
++    constructor(config: { apiUrl: string; apiKey?: string }) {
++        this.apiUrl = config.apiUrl.replace(/\/+$/, '')
++        this.headers = {
++            'Content-Type': 'application/json',
++            ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
++        }
++    }
++
++    async scrape(
++        url: string,
++        params: { onlyMainContent?: boolean; renderJs?: string; formats?: string[]; stealth?: boolean }
++    ): Promise<{ success: boolean; data?: { markdown?: string; html?: string; plainText?: string } }> {
++        const body = { url, ...params, integration: 'flowise' }
++        const resp = await fetch(`${this.apiUrl}/v1/scrape`, {
++            method: 'POST',
++            headers: this.headers,
++            body: JSON.stringify(body)
++        })
++        if (!resp.ok) {
++            const text = await resp.text()
++            throw new Error(`CRW scrape failed (${resp.status}): ${text}`)
++        }
++        return resp.json()
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Node Definition
++// ---------------------------------------------------------------------------
++
++class CRWScrape_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'CRW Scrape'
++        this.name = 'crwScrape'
++        this.version = 1.0
++        this.type = 'CRWScrape'
++        this.icon = 'crw.svg'
++        this.category = 'Tools'
++        this.description = 'Scrape a URL and extract content using CRW'
++        this.baseClasses = [this.type, 'Tool']
++        this.credential = {
++            label: 'CRW API',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['crwApi'],
++            optional: true
++        }
++        this.inputs = [
++            {
++                label: 'Tool Name',
++                name: 'toolName',
++                type: 'string',
++                default: 'crw_scrape',
++                description: 'The name the agent will use to call this tool'
++            },
++            {
++                label: 'Tool Description',
++                name: 'toolDescription',
++                type: 'string',
++                default:
++                    'Scrape a web page and extract its content as text. Input should be a valid URL. Returns the page content in the specified format.',
++                description: 'Description shown to the agent so it knows when to use this tool'
++            },
++            {
++                label: 'Only Main Content',
++                name: 'onlyMainContent',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true,
++                description: 'Strip navigation, footer, and sidebar elements'
++            },
++            {
++                label: 'JS Rendering',
++                name: 'renderJs',
++                type: 'options',
++                options: [
++                    { label: 'Auto (detect SPAs)', name: 'auto' },
++                    { label: 'Force (always render)', name: 'force' },
++                    { label: 'Off (no rendering)', name: 'off' }
++                ],
++                default: 'auto',
++                optional: true,
++                additionalParams: true,
++                description: 'Control JavaScript rendering behavior'
++            },
++            {
++                label: 'Output Format',
++                name: 'outputFormat',
++                type: 'options',
++                options: [
++                    { label: 'Markdown', name: 'markdown' },
++                    { label: 'HTML', name: 'html' },
++                    { label: 'Plain Text', name: 'plainText' }
++                ],
++                default: 'markdown',
++                optional: true,
++                additionalParams: true,
++                description: 'Content format for scraped pages'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('crwApiKey', credentialData, nodeData)
++        const apiUrl = getCredentialParam('crwApiUrl', credentialData, nodeData) || 'http://localhost:3000'
++
++        const toolName = (nodeData.inputs?.toolName as string) || 'crw_scrape'
++        const toolDescription =
++            (nodeData.inputs?.toolDescription as string) ||
++            'Scrape a web page and extract its content as text. Input should be a valid URL.'
++        const onlyMainContent = (nodeData.inputs?.onlyMainContent as boolean) ?? true
++        const renderJs = (nodeData.inputs?.renderJs as string) || 'auto'
++        const outputFormat = (nodeData.inputs?.outputFormat as string) || 'markdown'
++
++        return new DynamicStructuredTool({
++            name: toolName,
++            description: toolDescription,
++            schema: z.object({
++                url: z.string().describe('The URL to scrape')
++            }),
++            func: async ({ url }: { url: string }) => {
++                const client = new CRWClient({ apiUrl, apiKey })
++                const params: { onlyMainContent: boolean; renderJs?: string; formats: string[] } = {
++                    onlyMainContent,
++                    formats: [outputFormat]
++                }
++                if (renderJs !== 'auto') {
++                    params.renderJs = renderJs
++                }
++                const response = await client.scrape(url, params)
++                if (!response.success || !response.data) {
++                    return `Error: CRW scrape returned no data for ${url}`
++                }
++                return response.data.markdown || response.data.html || response.data.plainText || ''
++            }
++        })
++    }
++}
++
++module.exports = { nodeClass: CRWScrape_Tools }
+diff --git a/packages/components/nodes/tools/CRWScrape/crw.svg b/packages/components/nodes/tools/CRWScrape/crw.svg
+new file mode 100644
+index 00000000000..cc0ea467157
+--- /dev/null
++++ b/packages/components/nodes/tools/CRWScrape/crw.svg
+@@ -0,0 +1,3 @@
++<svg width="209" height="104" viewBox="0 0 209 104" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill-rule="evenodd" clip-rule="evenodd" d="M10.3657 1.829C9.45566 2.835 8.71066 4.629 8.71066 5.816C8.71066 8.357 9.87366 8.974 49.6137 27.513C78.4757 40.977 79.8437 41.342 80.5167 35.757C80.7987 33.416 79.6227 32.589 65.5167 25.225C27.9357 5.603 16.5747 0 14.3757 0C13.0807 0 11.2757 0.823 10.3657 1.829ZM167.211 12.95C130.325 31.998 128.26 33.196 127.893 35.758C127.668 37.329 128.3 38.311 130.047 39.107C132.103 40.044 133.422 39.812 137.866 37.733C149.153 32.451 187.423 14.731 191.711 12.801C197.551 10.173 199.711 8.202 199.711 5.5C199.711 2.865 196.786 -0.00799954 194.132 0.0200005C193.076 0.0310005 180.961 5.849 167.211 12.95ZM100.211 38.718C96.7557 39.557 91.5557 44.128 90.1047 47.6C85.7277 58.074 92.7307 67.988 104.511 67.996C112.992 68.002 118.47 64.064 120.754 56.317C121.875 52.517 121.769 51.692 119.599 47.317C116.058 40.174 108.328 36.746 100.211 38.718ZM2.99066 46.966C-0.157341 48.31 -1.00634 52.541 1.34166 55.18C3.19366 57.261 3.51766 57.274 37.4407 56.616C56.2667 56.251 72.3367 55.697 73.1517 55.384C75.6317 54.433 76.1267 50.963 74.0657 48.982C72.3877 47.37 69.0067 47.143 38.7107 46.609C18.4177 46.251 4.33566 46.392 2.99066 46.966ZM156.211 46.959C145.211 47.257 135.649 47.864 134.961 48.309C133.323 49.369 133.356 53.461 135.015 54.837C135.856 55.535 148.543 56.165 170.789 56.614C202.652 57.256 205.39 57.178 206.985 55.583C209.38 53.188 209.146 49.418 206.488 47.557C204.099 45.883 198.486 45.816 156.211 46.959ZM43.8687 78.493C27.1807 86.393 12.6687 93.633 11.6187 94.583C7.82366 98.017 10.4867 104.019 15.7897 103.984C17.1207 103.975 25.4107 100.119 34.2107 95.415C43.0107 90.711 56.7357 83.453 64.7107 79.286C78.0457 72.318 81.7107 69.859 81.7107 67.88C81.7107 66.325 78.4717 64.003 76.3897 64.065C75.1907 64.101 60.5567 70.593 43.8687 78.493ZM128.751 65.452C126.041 68.717 128.167 70.467 146.72 80.248C172.061 93.608 189.791 102.603 192.363 103.403C195.667 104.431 200.214 100.139 199.372 96.786C198.852 94.713 196.509 93.15 186.971 88.512C165.418 78.032 133.901 64 131.916 64C130.838 64 129.414 64.653 128.751 65.452Z" fill="black"/>
++</svg>
+
+From bf794b5fd087eabf982b540a738b7283c5e84fea Mon Sep 17 00:00:00 2001
+From: us <rahmetsaritekin@gmail.com>
+Date: Fri, 27 Mar 2026 00:50:08 +0300
+Subject: [PATCH 2/2] fix: address PR review comments for CRW nodes
+
+- Make crawl timeout configurable via node input parameter (default 5min)
+- Remove unused stealth param from CRWScrape tool's scrape method signature
+- Apply handleEscapeCharacters to text output for consistency with other loaders
+- Use explicit null/undefined check for waitFor to allow waitFor=0
+---
+ .../nodes/documentloaders/CRW/CRW.ts          | 26 ++++++++++++++-----
+ .../nodes/tools/CRWScrape/CRWScrape.ts        |  2 +-
+ 2 files changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/CRW/CRW.ts b/packages/components/nodes/documentloaders/CRW/CRW.ts
+index af2d29095c2..4c5fbe37d7e 100644
+--- a/packages/components/nodes/documentloaders/CRW/CRW.ts
++++ b/packages/components/nodes/documentloaders/CRW/CRW.ts
+@@ -1,5 +1,5 @@
+ import { ICommonObject, INode, INodeData, INodeOutputsValue, INodeParams } from '../../../src/Interface'
+-import { getCredentialData, getCredentialParam } from '../../../src/utils'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
+ import { TextSplitter } from '@langchain/textsplitters'
+ import { Document } from '@langchain/core/documents'
+ 
+@@ -94,7 +94,7 @@ class CRWClient {
+         return resp.json() as Promise<CRWScrapeResult>
+     }
+ 
+-    async crawl(url: string, params: CRWCrawlParams): Promise<CRWCrawlResult> {
++    async crawl(url: string, params: CRWCrawlParams, crawlTimeoutMs?: number): Promise<CRWCrawlResult> {
+         const body = { url, ...params, integration: 'flowise' }
+         const startResp = await fetch(`${this.apiUrl}/v1/crawl`, {
+             method: 'POST',
+@@ -112,7 +112,7 @@ class CRWClient {
+ 
+         // Poll until completed or failed
+         const jobId = startData.id
+-        const maxWaitMs = 5 * 60 * 1000 // 5 minutes
++        const maxWaitMs = crawlTimeoutMs ?? 5 * 60 * 1000 // default 5 minutes
+         const pollIntervalMs = 2000
+         const startTime = Date.now()
+ 
+@@ -134,7 +134,7 @@ class CRWClient {
+                 throw new Error('CRW crawl job failed')
+             }
+         }
+-        throw new Error('CRW crawl timed out after 5 minutes')
++        throw new Error(`CRW crawl timed out after ${Math.round(maxWaitMs / 1000 / 60)} minutes`)
+     }
+ 
+     async map(url: string, params: CRWMapParams): Promise<CRWMapResult> {
+@@ -360,6 +360,16 @@ class CRW_DocumentLoaders implements INode {
+                 show: { crwType: ['crawl'] },
+                 description: 'Maximum number of pages to scrape'
+             },
++            {
++                label: 'Crawl Timeout (minutes)',
++                name: 'crawlTimeout',
++                type: 'number',
++                default: 5,
++                optional: true,
++                additionalParams: true,
++                show: { crwType: ['crawl'] },
++                description: 'Maximum time in minutes to wait for the crawl job to complete'
++            },
+ 
+             // --- Map-specific inputs ---
+             {
+@@ -428,7 +438,7 @@ class CRW_DocumentLoaders implements INode {
+                 onlyMainContent: onlyMainContent ?? true
+             }
+             if (renderJs && renderJs !== 'auto') params.renderJs = renderJs
+-            if (waitFor) params.waitFor = waitFor
++            if (waitFor !== undefined && waitFor !== null) params.waitFor = waitFor
+             if (cssSelector) params.cssSelector = cssSelector
+             if (xpath) params.xpath = xpath
+             if (includeTags) params.includeTags = includeTags.split(',').map((s) => s.trim())
+@@ -467,6 +477,7 @@ class CRW_DocumentLoaders implements INode {
+             const onlyMainContent = nodeData.inputs?.onlyMainContent as boolean
+             const maxDepth = nodeData.inputs?.maxDepth as number | undefined
+             const maxPages = nodeData.inputs?.maxPages as number | undefined
++            const crawlTimeout = nodeData.inputs?.crawlTimeout as number | undefined
+ 
+             const params: CRWCrawlParams = {
+                 formats: ['markdown'],
+@@ -475,7 +486,8 @@ class CRW_DocumentLoaders implements INode {
+             if (maxDepth !== undefined) params.maxDepth = maxDepth
+             if (maxPages !== undefined) params.maxPages = maxPages
+ 
+-            const result = await client.crawl(url, params)
++            const crawlTimeoutMs = crawlTimeout ? crawlTimeout * 60 * 1000 : undefined
++            const result = await client.crawl(url, params, crawlTimeoutMs)
+             if (!result.success || !result.data) {
+                 throw new Error('CRW crawl returned no data')
+             }
+@@ -531,7 +543,7 @@ class CRW_DocumentLoaders implements INode {
+ 
+         // --- Output selection ---
+         if (output === 'text') {
+-            return docs.map((doc) => doc.pageContent).join('\n\n')
++            return handleEscapeCharacters(docs.map((doc) => doc.pageContent).join('\n\n'), false)
+         }
+         return docs
+     }
+diff --git a/packages/components/nodes/tools/CRWScrape/CRWScrape.ts b/packages/components/nodes/tools/CRWScrape/CRWScrape.ts
+index 7b9b996c3f2..be6e16e835a 100644
+--- a/packages/components/nodes/tools/CRWScrape/CRWScrape.ts
++++ b/packages/components/nodes/tools/CRWScrape/CRWScrape.ts
+@@ -22,7 +22,7 @@ class CRWClient {
+ 
+     async scrape(
+         url: string,
+-        params: { onlyMainContent?: boolean; renderJs?: string; formats?: string[]; stealth?: boolean }
++        params: { onlyMainContent?: boolean; renderJs?: string; formats?: string[] }
+     ): Promise<{ success: boolean; data?: { markdown?: string; html?: string; plainText?: string } }> {
+         const body = { url, ...params, integration: 'flowise' }
+         const resp = await fetch(`${this.apiUrl}/v1/scrape`, {

@@ -1,0 +1,73 @@
+From fb4fee59223f7341ab0d991fd8bae35ad158fdb2 Mon Sep 17 00:00:00 2001
+From: Zhou jules <juleszhou01@gmail.com>
+Date: Sat, 11 Jul 2026 00:57:13 +0000
+Subject: [PATCH] fix(redis): escape all RediSearch special chars in metadata,
+ not just -
+
+Redis Search reserves many characters as operators/syntax:
+,.<>{}[]"':;!@#$%^&*()-+=~
+
+The current escapeSpecialChars only escapes '-', so metadata containing
+any other special character (e.g. ':', '"') causes JSON.parse failures
+when retrieved from the vector store.
+
+Fix by escaping all reserved characters on write and un-escaping them
+on read.
+
+Fixes #6598
+---
+ .../nodes/vectorstores/Redis/utils.ts         | 33 ++++++++++++++++---
+ 1 file changed, 29 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/nodes/vectorstores/Redis/utils.ts b/packages/components/nodes/vectorstores/Redis/utils.ts
+index dff5840da55..e5852faf50d 100644
+--- a/packages/components/nodes/vectorstores/Redis/utils.ts
++++ b/packages/components/nodes/vectorstores/Redis/utils.ts
+@@ -1,12 +1,37 @@
+ import { isNil } from 'lodash'
+ 
+ /*
+- * Escapes all '-' characters.
+- * Redis Search considers '-' as a negative operator, hence we need
+- * to escape it
++ * Escapes all RediSearch special characters.
++ * Redis Search considers these characters as operators or special syntax,
++ * so they must be escaped to be treated as literals.
+  */
+ export const escapeSpecialChars = (str: string) => {
+     return str.replaceAll('-', '\\-')
++        .replaceAll(',', '\\,')
++        .replaceAll('.', '\\.')
++        .replaceAll('<', '\\<')
++        .replaceAll('>', '\\>')
++        .replaceAll('{', '\\{')
++        .replaceAll('}', '\\}')
++        .replaceAll('[', '\\[')
++        .replaceAll(']', '\\]')
++        .replaceAll('"', '\\"')
++        .replaceAll("'", "\\'")
++        .replaceAll(':', '\\:')
++        .replaceAll(';', '\\;')
++        .replaceAll('!', '\\!')
++        .replaceAll('@', '\\@')
++        .replaceAll('#', '\\#')
++        .replaceAll('$', '\\$')
++        .replaceAll('%', '\\%')
++        .replaceAll('^', '\\^')
++        .replaceAll('&', '\\&')
++        .replaceAll('*', '\\*')
++        .replaceAll('(', '\\(')
++        .replaceAll(')', '\\)')
++        .replaceAll('+', '\\+')
++        .replaceAll('=', '\\=')
++        .replaceAll('~', '\\~')
+ }
+ 
+ export const escapeAllStrings = (obj: object) => {
+@@ -27,5 +52,5 @@ export const escapeAllStrings = (obj: object) => {
+ }
+ 
+ export const unEscapeSpecialChars = (str: string) => {
+-    return str.replaceAll('\\-', '-')
++    return str.replace(/\\([-,.<>{}[\]"':;!@#$%^&*()\-+=~])/g, '$1')
+ }

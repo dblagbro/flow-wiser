@@ -1,0 +1,229 @@
+From 0f8c425149810181f3f8df5b152b6a6fede5f0e8 Mon Sep 17 00:00:00 2001
+From: Kazi Eajaj Hossain <eajajhossain890@gmail.com>
+Date: Mon, 6 Jul 2026 17:16:07 +0530
+Subject: [PATCH] fix(redis): unEscapeSpecialChars now handles all RediSearch
+ special characters
+
+---
+ .../nodes/vectorstores/Redis/utils.test.ts    | 182 ++++++++++++++++++
+ .../nodes/vectorstores/Redis/utils.ts         |  11 +-
+ 2 files changed, 188 insertions(+), 5 deletions(-)
+ create mode 100644 packages/components/nodes/vectorstores/Redis/utils.test.ts
+
+diff --git a/packages/components/nodes/vectorstores/Redis/utils.test.ts b/packages/components/nodes/vectorstores/Redis/utils.test.ts
+new file mode 100644
+index 00000000000..3b3581a38f6
+--- /dev/null
++++ b/packages/components/nodes/vectorstores/Redis/utils.test.ts
+@@ -0,0 +1,182 @@
++import { escapeSpecialChars, unEscapeSpecialChars } from './utils'
++
++// escapeSpecialChars
++
++describe('escapeSpecialChars', () => {
++    test('escapes hyphen (original behaviour preserved)', () => {
++        expect(escapeSpecialChars('hello-world')).toBe('hello\\-world')
++    })
++
++    test('escapes colon — the primary bug trigger', () => {
++        expect(escapeSpecialChars('source:file.pdf')).toBe('source\\:file\\.pdf')
++    })
++
++    test('escapes double-quote — the primary bug trigger', () => {
++        expect(escapeSpecialChars('"quoted"')).toBe('\\"quoted\\"')
++    })
++
++    test('escapes all other RediSearch special chars', () => {
++        const chars = [
++            ',',
++            '.',
++            '<',
++            '>',
++            '{',
++            '}',
++            '[',
++            ']',
++            "'",
++            ';',
++            '!',
++            '@',
++            '#',
++            '$',
++            '%',
++            '^',
++            '&',
++            '*',
++            '(',
++            ')',
++            '+',
++            '=',
++            '~',
++            '\\'
++        ]
++        for (const ch of chars) {
++            expect(escapeSpecialChars(ch)).toBe(`\\${ch}`)
++        }
++    })
++
++    test('leaves normal alphanumeric strings untouched', () => {
++        expect(escapeSpecialChars('hello world 123')).toBe('hello world 123')
++    })
++
++    test('handles empty string', () => {
++        expect(escapeSpecialChars('')).toBe('')
++    })
++})
++
++// unEscapeSpecialChars
++
++describe('unEscapeSpecialChars', () => {
++    test('unescapes hyphen (original behaviour preserved)', () => {
++        expect(unEscapeSpecialChars('hello\\-world')).toBe('hello-world')
++    })
++
++    test('unescapes colon — the primary bug trigger', () => {
++        expect(unEscapeSpecialChars('source\\:file\\.pdf')).toBe('source:file.pdf')
++    })
++
++    test('unescapes double-quote — the primary bug trigger', () => {
++        expect(unEscapeSpecialChars('\\"quoted\\"')).toBe('"quoted"')
++    })
++
++    test('unescapes all other RediSearch special chars', () => {
++        const chars = [
++            ',',
++            '.',
++            '<',
++            '>',
++            '{',
++            '}',
++            '[',
++            ']',
++            "'",
++            ';',
++            '!',
++            '@',
++            '#',
++            '$',
++            '%',
++            '^',
++            '&',
++            '*',
++            '(',
++            ')',
++            '+',
++            '=',
++            '~',
++            '\\'
++        ]
++        for (const ch of chars) {
++            expect(unEscapeSpecialChars(`\\${ch}`)).toBe(ch)
++        }
++    })
++
++    test('handles empty string', () => {
++        expect(unEscapeSpecialChars('')).toBe('')
++    })
++})
++
++// Round-trip: the core regression test
++//
++// Simulates the EXACT production flow:
++//   STORAGE — @langchain/redis vectorstores.cjs line 123:
++//     hashFields[metadataKey] = this.escapeSpecialChars(JSON.stringify(metadata))
++//   where the library's own escapeSpecialChars (line 415-416) escapes ONLY
++//   '-', ':', and '"' — applied to the entire JSON string.
++//
++//   RETRIEVAL — Redis.ts (Flowise override) line 349:
++//     const metadataString = unEscapeSpecialChars(document[metadataKey])
++//     metadata: JSON.parse(metadataString)
++//
++// The OLD bug: only '\-' was removed, leaving '\"' and '\:' in the JSON,
++// causing JSON.parse to throw "Expected property name or '}'".
++// The FIX: unEscapeSpecialChars now removes all library-applied escapes so
++// the string is valid JSON before JSON.parse is called.
++
++describe('escape / unescape round-trip (regression for GitHub bug)', () => {
++    /**
++     * Mirrors @langchain/redis vectorstores.cjs line 123:
++     *   this.escapeSpecialChars(JSON.stringify(metadata))
++     * The library escapes only '-', ':', '"' on the full JSON string.
++     */
++    function simulateUpsert(metadata: object): string {
++        const jsonStr = JSON.stringify(metadata)
++        // Same order as the library (vectorstores.cjs line 415-416):
++        return jsonStr.replaceAll('-', '\\-').replaceAll(':', '\\:').replaceAll('"', '\\"')
++    }
++
++    /**
++     * Mirrors Redis.ts line 349 (Flowise's override of similaritySearchVectorWithScore):
++     *   unEscapeSpecialChars(rawString) → JSON.parse
++     * NOTE: unescape happens BEFORE parse — that is the exact production order.
++     */
++    function simulateRetrieval(stored: string): object {
++        const unescaped = unEscapeSpecialChars(stored)
++        return JSON.parse(unescaped)
++    }
++
++    test('round-trips metadata containing a colon in a value', () => {
++        const original = { source: 'gs://my-bucket:path/to/file.pdf', page: 1 }
++        const stored = simulateUpsert(original)
++        const retrieved = simulateRetrieval(stored)
++        expect(retrieved).toEqual(original)
++    })
++
++    test('round-trips metadata containing double-quotes in a value', () => {
++        const original = { title: '"Hello World"', page: 2 }
++        const stored = simulateUpsert(original)
++        const retrieved = simulateRetrieval(stored)
++        expect(retrieved).toEqual(original)
++    })
++
++    test('round-trips metadata containing a mix of special chars', () => {
++        const original = {
++            source: 'file-name (v2).pdf',
++            author: "O'Brien, J.",
++            tag: '#important & <urgent>',
++            page: 3
++        }
++        const stored = simulateUpsert(original)
++        const retrieved = simulateRetrieval(stored)
++        expect(retrieved).toEqual(original)
++    })
++
++    test('round-trips plain metadata with no special chars (sanity check)', () => {
++        const original = { source: 'simple_file.pdf', page: 4 }
++        const stored = simulateUpsert(original)
++        const retrieved = simulateRetrieval(stored)
++        expect(retrieved).toEqual(original)
++    })
++})
+diff --git a/packages/components/nodes/vectorstores/Redis/utils.ts b/packages/components/nodes/vectorstores/Redis/utils.ts
+index dff5840da55..53861fcc7a4 100644
+--- a/packages/components/nodes/vectorstores/Redis/utils.ts
++++ b/packages/components/nodes/vectorstores/Redis/utils.ts
+@@ -1,12 +1,13 @@
+ import { isNil } from 'lodash'
+ 
+ /*
+- * Escapes all '-' characters.
+- * Redis Search considers '-' as a negative operator, hence we need
+- * to escape it
++ * Escapes all RediSearch special characters.
++ * RediSearch reserves the following characters as operators/delimiters,
++ * so they must be escaped when stored as metadata values:
++ *   , . < > { } [ ] " ' : ; ! @ # $ % ^ & * ( ) - + = ~ \
+  */
+ export const escapeSpecialChars = (str: string) => {
+-    return str.replaceAll('-', '\\-')
++    return str.replace(/([,.<>{}[\]"':;!@#$%^&*()\-+=~\\])/g, '\\$1')
+ }
+ 
+ export const escapeAllStrings = (obj: object) => {
+@@ -27,5 +28,5 @@ export const escapeAllStrings = (obj: object) => {
+ }
+ 
+ export const unEscapeSpecialChars = (str: string) => {
+-    return str.replaceAll('\\-', '-')
++    return str.replace(/\\([,.<>{}[\]"':;!@#$%^&*()\-+=~\\])/g, '$1')
+ }

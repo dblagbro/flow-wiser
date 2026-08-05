@@ -1,0 +1,128 @@
+From 700c977659360adceee9a2e2337369872ac6c109 Mon Sep 17 00:00:00 2001
+From: chungyau97 <chungyau97@gmail.com>
+Date: Mon, 10 Nov 2025 15:08:37 +0800
+Subject: [PATCH 1/2] feat(generate.util.ts): add generator for 32byte random
+ string
+
+---
+ docker/.env.example                                        | 2 +-
+ docker/worker/.env.example                                 | 2 +-
+ packages/server/.env.example                               | 2 +-
+ .../server/src/enterprise/middleware/passport/index.ts     | 7 +++++--
+ packages/server/src/utils/generate.util.ts                 | 5 +++++
+ 5 files changed, 13 insertions(+), 5 deletions(-)
+ create mode 100644 packages/server/src/utils/generate.util.ts
+
+diff --git a/docker/.env.example b/docker/.env.example
+index 2240edeb8a5..0846ffa89fd 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -100,7 +100,7 @@ JWT_AUDIENCE='AUDIENCE'
+ JWT_TOKEN_EXPIRY_IN_MINUTES=360
+ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # EXPIRE_AUTH_TOKENS_ON_RESTART=true # (if you need to expire all tokens on app restart)
+-# EXPRESS_SESSION_SECRET=flowise
++# EXPRESS_SESSION_SECRET='54aca090d4764d05d8dfa8bccbdaede143617bda9dc23c67079422803566130f'
+ # SECURE_COOKIES=
+ 
+ # INVITE_TOKEN_EXPIRY_IN_HOURS=24
+diff --git a/docker/worker/.env.example b/docker/worker/.env.example
+index 0e4b0c0dcf6..7b7e8912dbc 100644
+--- a/docker/worker/.env.example
++++ b/docker/worker/.env.example
+@@ -100,7 +100,7 @@ JWT_AUDIENCE='AUDIENCE'
+ JWT_TOKEN_EXPIRY_IN_MINUTES=360
+ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # EXPIRE_AUTH_TOKENS_ON_RESTART=true # (if you need to expire all tokens on app restart)
+-# EXPRESS_SESSION_SECRET=flowise
++# EXPRESS_SESSION_SECRET='54aca090d4764d05d8dfa8bccbdaede143617bda9dc23c67079422803566130f'
+ # SECURE_COOKIES=
+ 
+ # INVITE_TOKEN_EXPIRY_IN_HOURS=24
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 282e4cd33fc..f56c4b262a4 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -100,7 +100,7 @@ JWT_AUDIENCE='AUDIENCE'
+ JWT_TOKEN_EXPIRY_IN_MINUTES=360
+ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # EXPIRE_AUTH_TOKENS_ON_RESTART=true # (if you need to expire all tokens on app restart)
+-# EXPRESS_SESSION_SECRET=flowise
++# EXPRESS_SESSION_SECRET='54aca090d4764d05d8dfa8bccbdaede143617bda9dc23c67079422803566130f'
+ # SECURE_COOKIES=
+ 
+ # INVITE_TOKEN_EXPIRY_IN_HOURS=24
+diff --git a/packages/server/src/enterprise/middleware/passport/index.ts b/packages/server/src/enterprise/middleware/passport/index.ts
+index dc76580301d..c56b8b33d5a 100644
+--- a/packages/server/src/enterprise/middleware/passport/index.ts
++++ b/packages/server/src/enterprise/middleware/passport/index.ts
+@@ -6,9 +6,11 @@ import { StatusCodes } from 'http-status-codes'
+ import jwt, { JwtPayload, sign } from 'jsonwebtoken'
+ import passport from 'passport'
+ import { VerifiedCallback } from 'passport-jwt'
++import { v4 as uuidv4 } from 'uuid'
+ import { InternalFlowiseError } from '../../../errors/internalFlowiseError'
+ import { IdentityManager } from '../../../IdentityManager'
+ import { Platform } from '../../../Interface'
++import { generateRandomString32 } from '../../../utils/generate.util'
+ import { getRunningExpressApp } from '../../../utils/getRunningExpressApp'
+ import { OrganizationUserStatus } from '../../database/entities/organization-user.entity'
+ import { GeneralRole } from '../../database/entities/role.entity'
+@@ -22,7 +24,6 @@ import { WorkspaceUserService } from '../../services/workspace-user.service'
+ import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTokenUtils'
+ import { getAuthStrategy } from './AuthStrategy'
+ import { initializeDBClientAndStore, initializeRedisClientAndStore } from './SessionPersistance'
+-import { v4 as uuidv4 } from 'uuid'
+ 
+ const localStrategy = require('passport-local').Strategy
+ 
+@@ -50,9 +51,11 @@ const jwtOptions = {
+ }
+ 
+ const _initializePassportMiddleware = async (app: express.Application) => {
++    const sessionSecret = process.env.EXPRESS_SESSION_SECRET || generateRandomString32()
++
+     // Configure session middleware
+     let options: any = {
+-        secret: process.env.EXPRESS_SESSION_SECRET || 'flowise',
++        secret: sessionSecret,
+         resave: false,
+         saveUninitialized: false,
+         cookie: {
+diff --git a/packages/server/src/utils/generate.util.ts b/packages/server/src/utils/generate.util.ts
+new file mode 100644
+index 00000000000..69c94d5f389
+--- /dev/null
++++ b/packages/server/src/utils/generate.util.ts
+@@ -0,0 +1,5 @@
++import { randomBytes } from 'crypto'
++
++export function generateRandomString32(): string {
++    return randomBytes(32).toString('hex')
++}
+
+From c30305ee5e41a23351a7c2d4991dd2f15a2f0c96 Mon Sep 17 00:00:00 2001
+From: Yau <33013947+chungyau97@users.noreply.github.com>
+Date: Mon, 10 Nov 2025 15:31:43 +0800
+Subject: [PATCH 2/2] chore(generate.util.ts): add documentation for
+ generateRandomString32 function
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/server/src/utils/generate.util.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/server/src/utils/generate.util.ts b/packages/server/src/utils/generate.util.ts
+index 69c94d5f389..901d3e984f8 100644
+--- a/packages/server/src/utils/generate.util.ts
++++ b/packages/server/src/utils/generate.util.ts
+@@ -1,5 +1,9 @@
+ import { randomBytes } from 'crypto'
+ 
++/**
++ * Generates a cryptographically secure 32-byte random string, returned as a 64-character hex string.
++ * @returns {string} A 64-character hexadecimal string.
++ */
+ export function generateRandomString32(): string {
+     return randomBytes(32).toString('hex')
+ }

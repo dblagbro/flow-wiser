@@ -1,0 +1,421 @@
+From 1dad765c22171d3a95c1a4e81ff336eef469724b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=D7=A2=D7=99=D7=93=D7=9F=20=D7=95=D7=99=D7=9C=D7=A0=D7=A1?=
+ =?UTF-8?q?=D7=A7=D7=99?= <idan@ydns-MacBook-Pro.local>
+Date: Thu, 14 Aug 2025 18:20:36 +0300
+Subject: [PATCH 1/2] feat: Add BrightData Unlocker tool component
+
+Adds BrightData Unlocker component for web scraping and search capabilities.
+
+Features:
+- Dual input support: URLs or search queries
+- Automatic URL vs query detection
+- Utilizes BrightData's unlocking capabilities
+---
+ SECURITY.md                                   |  70 ++++----
+ i18n/CONTRIBUTING-ZH.md                       |  58 +++----
+ .../credentials/BrightDataApi.credential.ts   |  36 ++++
+ .../nodes/tools/BrightData/BrightDataAPI.ts   | 154 ++++++++++++++++++
+ .../nodes/tools/BrightData/bright.svg         |   6 +
+ 5 files changed, 260 insertions(+), 64 deletions(-)
+ create mode 100644 packages/components/credentials/BrightDataApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/BrightData/BrightDataAPI.ts
+ create mode 100644 packages/components/nodes/tools/BrightData/bright.svg
+
+diff --git a/SECURITY.md b/SECURITY.md
+index 8d7455de903..41377fec2ee 100644
+--- a/SECURITY.md
++++ b/SECURITY.md
+@@ -1,40 +1,40 @@
+-### Responsible Disclosure Policy  
++### Responsible Disclosure Policy
+ 
+-At Flowise, we prioritize security and continuously work to safeguard our systems. However, vulnerabilities can still exist. If you identify a security issue, please report it to us so we can address it promptly. Your cooperation helps us better protect our platform and users.  
++At Flowise, we prioritize security and continuously work to safeguard our systems. However, vulnerabilities can still exist. If you identify a security issue, please report it to us so we can address it promptly. Your cooperation helps us better protect our platform and users.
+ 
+-### Vulnerabilities  
++### Vulnerabilities
+ 
+ The following types of issues are some of the most common vulnerabilities:
+ 
+-- Clickjacking on pages without sensitive actions  
+-- CSRF on unauthenticated/logout/login pages  
+-- Attacks requiring MITM (Man-in-the-Middle) or physical device access  
+-- Social engineering attacks  
+-- Activities that cause service disruption (DoS)  
+-- Content spoofing and text injection without a valid attack vector  
+-- Email spoofing  
+-- Absence of DNSSEC, CAA, CSP headers  
+-- Missing Secure or HTTP-only flag on non-sensitive cookies  
+-- Deadlinks  
+-- User enumeration  
+-
+-### Reporting Guidelines  
+-
+-- Submit your findings to https://github.com/FlowiseAI/Flowise/security
+-- Provide clear details to help us reproduce and fix the issue quickly.  
+-
+-### Disclosure Guidelines  
+-
+-- Do not publicly disclose vulnerabilities until we have assessed, resolved, and notified affected users.  
+-- If you plan to present your research (e.g., at a conference or in a blog), share a draft with us at least **30 days in advance** for review.  
+-- Avoid including:  
+-  - Data from any Flowise customer projects  
+-  - Flowise user/customer information  
+-  - Details about Flowise employees, contractors, or partners  
+-
+-### Response to Reports  
+-
+-- We will acknowledge your report within **5 business days** and provide an estimated resolution timeline.  
+-- Your report will be kept **confidential**, and your details will not be shared without your consent.
+-  
+-We appreciate your efforts in helping us maintain a secure platform and look forward to working together to resolve any issues responsibly.  
++-   Clickjacking on pages without sensitive actions
++-   CSRF on unauthenticated/logout/login pages
++-   Attacks requiring MITM (Man-in-the-Middle) or physical device access
++-   Social engineering attacks
++-   Activities that cause service disruption (DoS)
++-   Content spoofing and text injection without a valid attack vector
++-   Email spoofing
++-   Absence of DNSSEC, CAA, CSP headers
++-   Missing Secure or HTTP-only flag on non-sensitive cookies
++-   Deadlinks
++-   User enumeration
++
++### Reporting Guidelines
++
++-   Submit your findings to https://github.com/FlowiseAI/Flowise/security
++-   Provide clear details to help us reproduce and fix the issue quickly.
++
++### Disclosure Guidelines
++
++-   Do not publicly disclose vulnerabilities until we have assessed, resolved, and notified affected users.
++-   If you plan to present your research (e.g., at a conference or in a blog), share a draft with us at least **30 days in advance** for review.
++-   Avoid including:
++    -   Data from any Flowise customer projects
++    -   Flowise user/customer information
++    -   Details about Flowise employees, contractors, or partners
++
++### Response to Reports
++
++-   We will acknowledge your report within **5 business days** and provide an estimated resolution timeline.
++-   Your report will be kept **confidential**, and your details will not be shared without your consent.
++
++We appreciate your efforts in helping us maintain a secure platform and look forward to working together to resolve any issues responsibly.
+diff --git a/i18n/CONTRIBUTING-ZH.md b/i18n/CONTRIBUTING-ZH.md
+index b81e300a80e..c4c1580cb58 100644
+--- a/i18n/CONTRIBUTING-ZH.md
++++ b/i18n/CONTRIBUTING-ZH.md
+@@ -118,35 +118,35 @@ Flowise 在一个单一的单体存储库中有 3 个不同的模块。
+ 
+ Flowise 支持不同的环境变量来配置您的实例。您可以在 `packages/server` 文件夹中的 `.env` 文件中指定以下变量。阅读[更多信息](https://docs.flowiseai.com/environment-variables)
+ 
+-| 变量名                       | 描述                                                    | 类型                                            | 默认值                              |
+-|-----------------------------|---------------------------------------------------------|-------------------------------------------------|-------------------------------------|
+-| `PORT`                      | Flowise 运行的 HTTP 端口                                | 数字                                            | 3000                                |
+-| `FLOWISE_FILE_SIZE_LIMIT`   | 上传文件大小限制                                        | 字符串                                          | 50mb                                |
+-| `DEBUG`                     | 打印组件的日志                                          | 布尔值                                          |                                     |
+-| `LOG_PATH`                  | 存储日志文件的位置                                      | 字符串                                          | `your-path/Flowise/logs`            |
+-| `LOG_LEVEL`                 | 日志的不同级别                                          | 枚举字符串: `error`, `info`, `verbose`, `debug` | `info`                              |
+-| `TOOL_FUNCTION_BUILTIN_DEP` | 用于工具函数的 NodeJS 内置模块                          | 字符串                                          |                                     |
+-| `TOOL_FUNCTION_EXTERNAL_DEP`| 用于工具函数的外部模块                                  | 字符串                                          |                                     |
+-| `DATABASE_TYPE`             | 存储 Flowise 数据的数据库类型                           | 枚举字符串: `sqlite`, `mysql`, `postgres`       | `sqlite`                            |
+-| `DATABASE_PATH`             | 数据库保存的位置（当 `DATABASE_TYPE` 是 sqlite 时）     | 字符串                                          | `your-home-dir/.flowise`            |
+-| `DATABASE_HOST`             | 主机 URL 或 IP 地址（当 `DATABASE_TYPE` 不是 sqlite 时）| 字符串                                          |                                     |
+-| `DATABASE_PORT`             | 数据库端口（当 `DATABASE_TYPE` 不是 sqlite 时）         | 字符串                                          |                                     |
+-| `DATABASE_USERNAME`         | 数据库用户名（当 `DATABASE_TYPE` 不是 sqlite 时）       | 字符串                                          |                                     |
+-| `DATABASE_PASSWORD`         | 数据库密码（当 `DATABASE_TYPE` 不是 sqlite 时）         | 字符串                                          |                                     |
+-| `DATABASE_NAME`             | 数据库名称（当 `DATABASE_TYPE` 不是 sqlite 时）         | 字符串                                          |                                     |
+-| `SECRETKEY_PATH`            | 保存加密密钥（用于加密/解密凭据）的位置                 | 字符串                                          | `your-path/Flowise/packages/server` |
+-| `FLOWISE_SECRETKEY_OVERWRITE`| 加密密钥用于替代存储在 `SECRETKEY_PATH` 中的密钥        | 字符串                                          |                                     |
+-| `MODEL_LIST_CONFIG_JSON`    | 加载模型的位置                                          | 字符串                                          | `/your_model_list_config_file_path` |
+-| `STORAGE_TYPE`              | 上传文件的存储类型                                      | 枚举字符串: `local`, `s3`                       | `local`                             |
+-| `BLOB_STORAGE_PATH`         | 本地上传文件存储路径（当 `STORAGE_TYPE` 为 `local`）    | 字符串                                          | `your-home-dir/.flowise/storage`    |
+-| `S3_STORAGE_BUCKET_NAME`    | S3 存储文件夹路径（当 `STORAGE_TYPE` 为 `s3`）          | 字符串                                          |                                     |
+-| `S3_STORAGE_ACCESS_KEY_ID`  | AWS 访问密钥 (Access Key)                               | 字符串                                          |                                     |
+-| `S3_STORAGE_SECRET_ACCESS_KEY` | AWS 密钥 (Secret Key)                                | 字符串                                          |                                     |
+-| `S3_STORAGE_REGION`         | S3 存储地区                                             | 字符串                                          |                                     |
+-| `S3_ENDPOINT_URL`           | S3 端点 URL                                             | 字符串                                          |                                     |
+-| `S3_FORCE_PATH_STYLE`       | 设置为 true 以强制请求使用路径样式寻址                  | 布尔值                                          | false                               |
+-| `SHOW_COMMUNITY_NODES`      | 显示由社区创建的节点                                    | 布尔值                                          |                                     |
+-| `DISABLED_NODES`            | 从界面中隐藏节点（以逗号分隔的节点名称列表）            | 字符串                                          |                                     |
++| 变量名                         | 描述                                                     | 类型                                            | 默认值                              |
++| ------------------------------ | -------------------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
++| `PORT`                         | Flowise 运行的 HTTP 端口                                 | 数字                                            | 3000                                |
++| `FLOWISE_FILE_SIZE_LIMIT`      | 上传文件大小限制                                         | 字符串                                          | 50mb                                |
++| `DEBUG`                        | 打印组件的日志                                           | 布尔值                                          |                                     |
++| `LOG_PATH`                     | 存储日志文件的位置                                       | 字符串                                          | `your-path/Flowise/logs`            |
++| `LOG_LEVEL`                    | 日志的不同级别                                           | 枚举字符串: `error`, `info`, `verbose`, `debug` | `info`                              |
++| `TOOL_FUNCTION_BUILTIN_DEP`    | 用于工具函数的 NodeJS 内置模块                           | 字符串                                          |                                     |
++| `TOOL_FUNCTION_EXTERNAL_DEP`   | 用于工具函数的外部模块                                   | 字符串                                          |                                     |
++| `DATABASE_TYPE`                | 存储 Flowise 数据的数据库类型                            | 枚举字符串: `sqlite`, `mysql`, `postgres`       | `sqlite`                            |
++| `DATABASE_PATH`                | 数据库保存的位置（当 `DATABASE_TYPE` 是 sqlite 时）      | 字符串                                          | `your-home-dir/.flowise`            |
++| `DATABASE_HOST`                | 主机 URL 或 IP 地址（当 `DATABASE_TYPE` 不是 sqlite 时） | 字符串                                          |                                     |
++| `DATABASE_PORT`                | 数据库端口（当 `DATABASE_TYPE` 不是 sqlite 时）          | 字符串                                          |                                     |
++| `DATABASE_USERNAME`            | 数据库用户名（当 `DATABASE_TYPE` 不是 sqlite 时）        | 字符串                                          |                                     |
++| `DATABASE_PASSWORD`            | 数据库密码（当 `DATABASE_TYPE` 不是 sqlite 时）          | 字符串                                          |                                     |
++| `DATABASE_NAME`                | 数据库名称（当 `DATABASE_TYPE` 不是 sqlite 时）          | 字符串                                          |                                     |
++| `SECRETKEY_PATH`               | 保存加密密钥（用于加密/解密凭据）的位置                  | 字符串                                          | `your-path/Flowise/packages/server` |
++| `FLOWISE_SECRETKEY_OVERWRITE`  | 加密密钥用于替代存储在 `SECRETKEY_PATH` 中的密钥         | 字符串                                          |                                     |
++| `MODEL_LIST_CONFIG_JSON`       | 加载模型的位置                                           | 字符串                                          | `/your_model_list_config_file_path` |
++| `STORAGE_TYPE`                 | 上传文件的存储类型                                       | 枚举字符串: `local`, `s3`                       | `local`                             |
++| `BLOB_STORAGE_PATH`            | 本地上传文件存储路径（当 `STORAGE_TYPE` 为 `local`）     | 字符串                                          | `your-home-dir/.flowise/storage`    |
++| `S3_STORAGE_BUCKET_NAME`       | S3 存储文件夹路径（当 `STORAGE_TYPE` 为 `s3`）           | 字符串                                          |                                     |
++| `S3_STORAGE_ACCESS_KEY_ID`     | AWS 访问密钥 (Access Key)                                | 字符串                                          |                                     |
++| `S3_STORAGE_SECRET_ACCESS_KEY` | AWS 密钥 (Secret Key)                                    | 字符串                                          |                                     |
++| `S3_STORAGE_REGION`            | S3 存储地区                                              | 字符串                                          |                                     |
++| `S3_ENDPOINT_URL`              | S3 端点 URL                                              | 字符串                                          |                                     |
++| `S3_FORCE_PATH_STYLE`          | 设置为 true 以强制请求使用路径样式寻址                   | 布尔值                                          | false                               |
++| `SHOW_COMMUNITY_NODES`         | 显示由社区创建的节点                                     | 布尔值                                          |                                     |
++| `DISABLED_NODES`               | 从界面中隐藏节点（以逗号分隔的节点名称列表）             | 字符串                                          |                                     |
+ 
+ 您也可以在使用 `npx` 时指定环境变量。例如：
+ 
+diff --git a/packages/components/credentials/BrightDataApi.credential.ts b/packages/components/credentials/BrightDataApi.credential.ts
+new file mode 100644
+index 00000000000..3cc2e98e4c5
+--- /dev/null
++++ b/packages/components/credentials/BrightDataApi.credential.ts
+@@ -0,0 +1,36 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class BrightDataApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'BrightData API'
++        this.name = 'brightDataApi'
++        this.version = 1.0
++        this.description = 'BrightData API credentials for web scraping and data collection'
++        this.inputs = [
++            {
++                label: 'BrightData API Key',
++                name: 'brightDataApiKey',
++                type: 'password',
++                placeholder: '<BRIGHTDATA_API_KEY>',
++                description: 'Your BrightData API key (Bearer token)'
++            },
++            {
++                label: 'Zone',
++                name: 'brightDataZone',
++                type: 'string',
++                default: 'web_unlocker1',
++                placeholder: 'web_unlocker1',
++                description: 'Zone identifier for BrightData requests',
++                optional: true
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: BrightDataApi }
+diff --git a/packages/components/nodes/tools/BrightData/BrightDataAPI.ts b/packages/components/nodes/tools/BrightData/BrightDataAPI.ts
+new file mode 100644
+index 00000000000..38efd2a7672
+--- /dev/null
++++ b/packages/components/nodes/tools/BrightData/BrightDataAPI.ts
+@@ -0,0 +1,154 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam, stripHTMLFromToolInput } from '../../../src/utils'
++import fetch from 'node-fetch'
++
++interface BrightDataConfig {
++    apiKey: string
++    zone: string
++}
++
++class BrightDataUnlockerTool extends Tool {
++    name = 'bright_data_unlocker'
++    description =
++        'Scrapes the web using BrightData Unlocker API. Input a URL or a Query and recieve the contents of the page / result page in markdown format.'
++
++    private apiKey: string
++    private zone: string
++
++    constructor(config: BrightDataConfig) {
++        super()
++        this.apiKey = config.apiKey
++        this.zone = config.zone
++    }
++
++    private isUrl(input: string): boolean {
++        try {
++            new URL(input)
++            return true
++        } catch {
++            return input.includes('.') && (input.startsWith('www.') || /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/.test(input))
++        }
++    }
++
++    private constructGoogleSearchUrl(query: string): string {
++        const formattedQuery = query.trim().replace(/\s+/g, '+')
++        const encodedQuery = encodeURIComponent(formattedQuery).replace(/%2B/g, '+')
++        return `https://www.google.com/search?q=${encodedQuery}`
++    }
++
++    async _call(input: string): Promise<string> {
++        try {
++            const cleanInput = stripHTMLFromToolInput(input.trim())
++
++            let targetUrl: string
++            if (this.isUrl(cleanInput)) {
++                targetUrl = cleanInput.startsWith('http') ? cleanInput : `https://${cleanInput}`
++            } else {
++                targetUrl = this.constructGoogleSearchUrl(cleanInput)
++            }
++
++            const payload = {
++                zone: this.zone,
++                url: targetUrl,
++                format: 'json',
++                method: 'GET',
++                country: 'us',
++                data_format: 'markdown'
++            }
++
++            const response = await fetch('https://api.brightdata.com/request', {
++                method: 'POST',
++                headers: {
++                    Authorization: `Bearer ${this.apiKey}`,
++                    'Content-Type': 'application/json'
++                },
++                body: JSON.stringify(payload)
++            })
++
++            if (!response.ok) {
++                let errorText = ''
++                try {
++                    errorText = await response.text()
++                } catch (e) {
++                    errorText = 'Unable to read error response'
++                }
++                throw new Error(`BrightData API Error: ${response.status} ${response.statusText}. Response: ${errorText}`)
++            }
++
++            const data = await response.json()
++
++            if (typeof data === 'string') {
++                return data
++            } else if (data.content) {
++                return data.content
++            } else if (data.data) {
++                return typeof data.data === 'string' ? data.data : JSON.stringify(data.data, null, 2)
++            } else {
++                return JSON.stringify(data, null, 2)
++            }
++        } catch (error) {
++            throw new Error(`Failed to scrape URL with BrightData: ${error instanceof Error ? error.message : 'Unknown error'}`)
++        }
++    }
++}
++
++class BrightDataAPI_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'BrightData Unlocker'
++        this.name = 'brightDataUnlocker'
++        this.version = 1.0
++        this.type = 'BrightDataUnlocker'
++        this.icon = 'bright.svg'
++        this.category = 'Tools'
++        this.description = 'Search the web and unlock any website.'
++        this.inputs = [
++            {
++                label: 'URL or Search Query',
++                name: 'brightDataUrl',
++                type: 'string',
++                acceptVariable: true,
++                description: 'Enter a webpage URL to scrape directly, or a search query to search Google and scrape results'
++            }
++        ]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['brightDataApi']
++        }
++        this.baseClasses = [this.type, ...getBaseClasses(BrightDataUnlockerTool)]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<BrightDataUnlockerTool> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('brightDataApiKey', credentialData, nodeData)
++        const zone = getCredentialParam('brightDataZone', credentialData, nodeData) || 'web_unlocker1'
++
++        if (!apiKey) {
++            throw new Error('BrightData API Key is required')
++        }
++
++        if (typeof apiKey !== 'string' || apiKey.length < 20) {
++            throw new Error('BrightData API Key appears to be invalid - should be a long hexadecimal string')
++        }
++
++        return new BrightDataUnlockerTool({
++            apiKey,
++            zone
++        })
++    }
++}
++
++module.exports = { nodeClass: BrightDataAPI_Tools }
+diff --git a/packages/components/nodes/tools/BrightData/bright.svg b/packages/components/nodes/tools/BrightData/bright.svg
+new file mode 100644
+index 00000000000..107931b500e
+--- /dev/null
++++ b/packages/components/nodes/tools/BrightData/bright.svg
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="UTF-8" standalone="no"?>
++<svg xmlns="http://www.w3.org/2000/svg"
++     width="225" height="225"
++     viewBox="0 0 225 225">
++  <image href="data:image/png;base64,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" x="0" y="0" width="225" height="225" />
++</svg>
+
+From 1abee67ee14cabc87e7d8b552b1b16dd4584a8cf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=D7=A2=D7=99=D7=93=D7=9F=20=D7=95=D7=99=D7=9C=D7=A0=D7=A1?=
+ =?UTF-8?q?=D7=A7=D7=99?= <idan@ydns-MacBook-Pro.local>
+Date: Thu, 4 Sep 2025 13:22:57 +0300
+Subject: [PATCH 2/2] Update BrightData credential descriptions
+
+- Updated main description with setup instructions
+- Improved zone field description for clarity
+---
+ packages/components/credentials/BrightDataApi.credential.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/credentials/BrightDataApi.credential.ts b/packages/components/credentials/BrightDataApi.credential.ts
+index 3cc2e98e4c5..92d5492b8c0 100644
+--- a/packages/components/credentials/BrightDataApi.credential.ts
++++ b/packages/components/credentials/BrightDataApi.credential.ts
+@@ -11,7 +11,7 @@ class BrightDataApi implements INodeCredential {
+         this.label = 'BrightData API'
+         this.name = 'brightDataApi'
+         this.version = 1.0
+-        this.description = 'BrightData API credentials for web scraping and data collection'
++        this.description = 'Go to https://brightdata.com/, navigate to settings, and create an API key or copy your existing one.'
+         this.inputs = [
+             {
+                 label: 'BrightData API Key',
+@@ -26,7 +26,7 @@ class BrightDataApi implements INodeCredential {
+                 type: 'string',
+                 default: 'web_unlocker1',
+                 placeholder: 'web_unlocker1',
+-                description: 'Zone identifier for BrightData requests',
++                description: 'Proxy Zone - Place your unlocker zone name here',
+                 optional: true
+             }
+         ]

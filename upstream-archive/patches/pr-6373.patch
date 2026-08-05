@@ -1,0 +1,40 @@
+From 61f531aacb8f75165078d8710bbb0197ea072ed4 Mon Sep 17 00:00:00 2001
+From: Ankit <pankitd@amazon.com>
+Date: Tue, 12 May 2026 15:08:36 -0400
+Subject: [PATCH]   bugfix: don't cache empty inference-profile sets in
+ AWSBedrock
+
+  discoverInferenceProfiles() previously cached an empty Set on both failure and empty
+  success, for the process lifetime. If the first call for a region happened before AWS
+  credentials were available (e.g. server startup race), every subsequent call for that
+  region short-circuited to the cached empty Set. resolveBedrockModel() then skipped
+  auto-applying a cross-region inference profile, and Bedrock rejected the bare model ID
+  with "This model requires a cross-region inference profile."
+
+  Only cache non-empty results, and log discovery failures instead of silently swallowing
+  them so operators can diagnose credential or permission issues.
+---
+ packages/components/nodes/chatmodels/AWSBedrock/utils.ts | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/AWSBedrock/utils.ts b/packages/components/nodes/chatmodels/AWSBedrock/utils.ts
+index 1d5660ead0c..ecdeb658ae8 100644
+--- a/packages/components/nodes/chatmodels/AWSBedrock/utils.ts
++++ b/packages/components/nodes/chatmodels/AWSBedrock/utils.ts
+@@ -144,12 +144,11 @@ export async function discoverInferenceProfiles(
+             }
+             nextToken = resp.nextToken
+         } while (nextToken)
+-        _regionProfileCache.set(region, ids)
++        if (ids.size > 0) _regionProfileCache.set(region, ids)
+         return ids
+-    } catch {
+-        const empty = new Set<string>()
+-        _regionProfileCache.set(region, empty)
+-        return empty
++    } catch (err) {
++        console.error(`[AWSBedrock] discoverInferenceProfiles(${region}) failed:`, err)
++        return new Set<string>()
+     }
+ }
+ 

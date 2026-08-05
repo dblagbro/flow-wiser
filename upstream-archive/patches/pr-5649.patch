@@ -1,0 +1,817 @@
+From 2bfb3a59559cf19c9295196c92eb07770a5de9e6 Mon Sep 17 00:00:00 2001
+From: n1n-api <support@n1n.ai>
+Date: Sun, 18 Jan 2026 20:35:26 +0800
+Subject: [PATCH] feat: Add n1n provider to Flowise
+
+- Add ChatN1n node
+- Add N1nApi credential
+- Update models.json with n1n models
+- Add n1n SVG icon
+---
+ .../credentials/N1nApi.credential.ts          |  23 +
+ packages/components/models.json               | 448 ++++++++++++++----
+ .../nodes/chatmodels/ChatN1n/ChatN1n.ts       | 233 +++++++++
+ .../chatmodels/ChatN1n/FlowiseChatN1n.ts      |  34 ++
+ .../nodes/chatmodels/ChatN1n/n1n.svg          |   4 +
+ 5 files changed, 656 insertions(+), 86 deletions(-)
+ create mode 100644 packages/components/credentials/N1nApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatN1n/ChatN1n.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatN1n/FlowiseChatN1n.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatN1n/n1n.svg
+
+diff --git a/packages/components/credentials/N1nApi.credential.ts b/packages/components/credentials/N1nApi.credential.ts
+new file mode 100644
+index 00000000000..5e3b4a7d8eb
+--- /dev/null
++++ b/packages/components/credentials/N1nApi.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class N1nApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'n1n API'
++        this.name = 'n1nApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'n1n Api Key',
++                name: 'n1nApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: N1nApi }
+diff --git a/packages/components/models.json b/packages/components/models.json
+index e027cd954ed..ee0799d6372 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -893,49 +893,178 @@
+                 }
+             ],
+             "regions": [
+-                { "label": "global", "name": "global" },
+-                { "label": "us-east1", "name": "us-east1" },
+-                { "label": "us-east4", "name": "us-east4" },
+-                { "label": "us-central1", "name": "us-central1" },
+-                { "label": "us-west1", "name": "us-west1" },
+-                { "label": "europe-west4", "name": "europe-west4" },
+-                { "label": "europe-west1", "name": "europe-west1" },
+-                { "label": "europe-west3", "name": "europe-west3" },
+-                { "label": "europe-west2", "name": "europe-west2" },
+-                { "label": "asia-east1", "name": "asia-east1" },
+-                { "label": "asia-southeast1", "name": "asia-southeast1" },
+-                { "label": "asia-northeast1", "name": "asia-northeast1" },
+-                { "label": "asia-south1", "name": "asia-south1" },
+-                { "label": "australia-southeast1", "name": "australia-southeast1" },
+-                { "label": "southamerica-east1", "name": "southamerica-east1" },
+-                { "label": "africa-south1", "name": "africa-south1" },
+-                { "label": "asia-east2", "name": "asia-east2" },
+-                { "label": "asia-northeast2", "name": "asia-northeast2" },
+-                { "label": "asia-northeast3", "name": "asia-northeast3" },
+-                { "label": "asia-south2", "name": "asia-south2" },
+-                { "label": "asia-southeast2", "name": "asia-southeast2" },
+-                { "label": "australia-southeast2", "name": "australia-southeast2" },
+-                { "label": "europe-central2", "name": "europe-central2" },
+-                { "label": "europe-north1", "name": "europe-north1" },
+-                { "label": "europe-north2", "name": "europe-north2" },
+-                { "label": "europe-southwest1", "name": "europe-southwest1" },
+-                { "label": "europe-west10", "name": "europe-west10" },
+-                { "label": "europe-west12", "name": "europe-west12" },
+-                { "label": "europe-west6", "name": "europe-west6" },
+-                { "label": "europe-west8", "name": "europe-west8" },
+-                { "label": "europe-west9", "name": "europe-west9" },
+-                { "label": "me-central1", "name": "me-central1" },
+-                { "label": "me-central2", "name": "me-central2" },
+-                { "label": "me-west1", "name": "me-west1" },
+-                { "label": "northamerica-northeast1", "name": "northamerica-northeast1" },
+-                { "label": "northamerica-northeast2", "name": "northamerica-northeast2" },
+-                { "label": "northamerica-south1", "name": "northamerica-south1" },
+-                { "label": "southamerica-west1", "name": "southamerica-west1" },
+-                { "label": "us-east5", "name": "us-east5" },
+-                { "label": "us-south1", "name": "us-south1" },
+-                { "label": "us-west2", "name": "us-west2" },
+-                { "label": "us-west3", "name": "us-west3" },
+-                { "label": "us-west4", "name": "us-west4" }
++                {
++                    "label": "global",
++                    "name": "global"
++                },
++                {
++                    "label": "us-east1",
++                    "name": "us-east1"
++                },
++                {
++                    "label": "us-east4",
++                    "name": "us-east4"
++                },
++                {
++                    "label": "us-central1",
++                    "name": "us-central1"
++                },
++                {
++                    "label": "us-west1",
++                    "name": "us-west1"
++                },
++                {
++                    "label": "europe-west4",
++                    "name": "europe-west4"
++                },
++                {
++                    "label": "europe-west1",
++                    "name": "europe-west1"
++                },
++                {
++                    "label": "europe-west3",
++                    "name": "europe-west3"
++                },
++                {
++                    "label": "europe-west2",
++                    "name": "europe-west2"
++                },
++                {
++                    "label": "asia-east1",
++                    "name": "asia-east1"
++                },
++                {
++                    "label": "asia-southeast1",
++                    "name": "asia-southeast1"
++                },
++                {
++                    "label": "asia-northeast1",
++                    "name": "asia-northeast1"
++                },
++                {
++                    "label": "asia-south1",
++                    "name": "asia-south1"
++                },
++                {
++                    "label": "australia-southeast1",
++                    "name": "australia-southeast1"
++                },
++                {
++                    "label": "southamerica-east1",
++                    "name": "southamerica-east1"
++                },
++                {
++                    "label": "africa-south1",
++                    "name": "africa-south1"
++                },
++                {
++                    "label": "asia-east2",
++                    "name": "asia-east2"
++                },
++                {
++                    "label": "asia-northeast2",
++                    "name": "asia-northeast2"
++                },
++                {
++                    "label": "asia-northeast3",
++                    "name": "asia-northeast3"
++                },
++                {
++                    "label": "asia-south2",
++                    "name": "asia-south2"
++                },
++                {
++                    "label": "asia-southeast2",
++                    "name": "asia-southeast2"
++                },
++                {
++                    "label": "australia-southeast2",
++                    "name": "australia-southeast2"
++                },
++                {
++                    "label": "europe-central2",
++                    "name": "europe-central2"
++                },
++                {
++                    "label": "europe-north1",
++                    "name": "europe-north1"
++                },
++                {
++                    "label": "europe-north2",
++                    "name": "europe-north2"
++                },
++                {
++                    "label": "europe-southwest1",
++                    "name": "europe-southwest1"
++                },
++                {
++                    "label": "europe-west10",
++                    "name": "europe-west10"
++                },
++                {
++                    "label": "europe-west12",
++                    "name": "europe-west12"
++                },
++                {
++                    "label": "europe-west6",
++                    "name": "europe-west6"
++                },
++                {
++                    "label": "europe-west8",
++                    "name": "europe-west8"
++                },
++                {
++                    "label": "europe-west9",
++                    "name": "europe-west9"
++                },
++                {
++                    "label": "me-central1",
++                    "name": "me-central1"
++                },
++                {
++                    "label": "me-central2",
++                    "name": "me-central2"
++                },
++                {
++                    "label": "me-west1",
++                    "name": "me-west1"
++                },
++                {
++                    "label": "northamerica-northeast1",
++                    "name": "northamerica-northeast1"
++                },
++                {
++                    "label": "northamerica-northeast2",
++                    "name": "northamerica-northeast2"
++                },
++                {
++                    "label": "northamerica-south1",
++                    "name": "northamerica-south1"
++                },
++                {
++                    "label": "southamerica-west1",
++                    "name": "southamerica-west1"
++                },
++                {
++                    "label": "us-east5",
++                    "name": "us-east5"
++                },
++                {
++                    "label": "us-south1",
++                    "name": "us-south1"
++                },
++                {
++                    "label": "us-west2",
++                    "name": "us-west2"
++                },
++                {
++                    "label": "us-west3",
++                    "name": "us-west3"
++                },
++                {
++                    "label": "us-west4",
++                    "name": "us-west4"
++                }
+             ]
+         },
+         {
+@@ -1579,6 +1708,27 @@
+                     "output_cost": 0.003
+                 }
+             ]
++        },
++        {
++            "name": "chatN1n",
++            "models": [
++                {
++                    "label": "gpt-4o-mini",
++                    "name": "gpt-4o-mini"
++                },
++                {
++                    "label": "gpt-4o",
++                    "name": "gpt-4o"
++                },
++                {
++                    "label": "gpt-3.5-turbo",
++                    "name": "gpt-3.5-turbo"
++                },
++                {
++                    "label": "deepseek-chat",
++                    "name": "deepseek-chat"
++                }
++            ]
+         }
+     ],
+     "llm": [
+@@ -2077,48 +2227,174 @@
+                 }
+             ],
+             "regions": [
+-                { "label": "us-east1", "name": "us-east1" },
+-                { "label": "us-east4", "name": "us-east4" },
+-                { "label": "us-central1", "name": "us-central1" },
+-                { "label": "us-west1", "name": "us-west1" },
+-                { "label": "europe-west4", "name": "europe-west4" },
+-                { "label": "europe-west1", "name": "europe-west1" },
+-                { "label": "europe-west3", "name": "europe-west3" },
+-                { "label": "europe-west2", "name": "europe-west2" },
+-                { "label": "asia-east1", "name": "asia-east1" },
+-                { "label": "asia-southeast1", "name": "asia-southeast1" },
+-                { "label": "asia-northeast1", "name": "asia-northeast1" },
+-                { "label": "asia-south1", "name": "asia-south1" },
+-                { "label": "australia-southeast1", "name": "australia-southeast1" },
+-                { "label": "southamerica-east1", "name": "southamerica-east1" },
+-                { "label": "africa-south1", "name": "africa-south1" },
+-                { "label": "asia-east2", "name": "asia-east2" },
+-                { "label": "asia-northeast2", "name": "asia-northeast2" },
+-                { "label": "asia-northeast3", "name": "asia-northeast3" },
+-                { "label": "asia-south2", "name": "asia-south2" },
+-                { "label": "asia-southeast2", "name": "asia-southeast2" },
+-                { "label": "australia-southeast2", "name": "australia-southeast2" },
+-                { "label": "europe-central2", "name": "europe-central2" },
+-                { "label": "europe-north1", "name": "europe-north1" },
+-                { "label": "europe-north2", "name": "europe-north2" },
+-                { "label": "europe-southwest1", "name": "europe-southwest1" },
+-                { "label": "europe-west10", "name": "europe-west10" },
+-                { "label": "europe-west12", "name": "europe-west12" },
+-                { "label": "europe-west6", "name": "europe-west6" },
+-                { "label": "europe-west8", "name": "europe-west8" },
+-                { "label": "europe-west9", "name": "europe-west9" },
+-                { "label": "me-central1", "name": "me-central1" },
+-                { "label": "me-central2", "name": "me-central2" },
+-                { "label": "me-west1", "name": "me-west1" },
+-                { "label": "northamerica-northeast1", "name": "northamerica-northeast1" },
+-                { "label": "northamerica-northeast2", "name": "northamerica-northeast2" },
+-                { "label": "northamerica-south1", "name": "northamerica-south1" },
+-                { "label": "southamerica-west1", "name": "southamerica-west1" },
+-                { "label": "us-east5", "name": "us-east5" },
+-                { "label": "us-south1", "name": "us-south1" },
+-                { "label": "us-west2", "name": "us-west2" },
+-                { "label": "us-west3", "name": "us-west3" },
+-                { "label": "us-west4", "name": "us-west4" }
++                {
++                    "label": "us-east1",
++                    "name": "us-east1"
++                },
++                {
++                    "label": "us-east4",
++                    "name": "us-east4"
++                },
++                {
++                    "label": "us-central1",
++                    "name": "us-central1"
++                },
++                {
++                    "label": "us-west1",
++                    "name": "us-west1"
++                },
++                {
++                    "label": "europe-west4",
++                    "name": "europe-west4"
++                },
++                {
++                    "label": "europe-west1",
++                    "name": "europe-west1"
++                },
++                {
++                    "label": "europe-west3",
++                    "name": "europe-west3"
++                },
++                {
++                    "label": "europe-west2",
++                    "name": "europe-west2"
++                },
++                {
++                    "label": "asia-east1",
++                    "name": "asia-east1"
++                },
++                {
++                    "label": "asia-southeast1",
++                    "name": "asia-southeast1"
++                },
++                {
++                    "label": "asia-northeast1",
++                    "name": "asia-northeast1"
++                },
++                {
++                    "label": "asia-south1",
++                    "name": "asia-south1"
++                },
++                {
++                    "label": "australia-southeast1",
++                    "name": "australia-southeast1"
++                },
++                {
++                    "label": "southamerica-east1",
++                    "name": "southamerica-east1"
++                },
++                {
++                    "label": "africa-south1",
++                    "name": "africa-south1"
++                },
++                {
++                    "label": "asia-east2",
++                    "name": "asia-east2"
++                },
++                {
++                    "label": "asia-northeast2",
++                    "name": "asia-northeast2"
++                },
++                {
++                    "label": "asia-northeast3",
++                    "name": "asia-northeast3"
++                },
++                {
++                    "label": "asia-south2",
++                    "name": "asia-south2"
++                },
++                {
++                    "label": "asia-southeast2",
++                    "name": "asia-southeast2"
++                },
++                {
++                    "label": "australia-southeast2",
++                    "name": "australia-southeast2"
++                },
++                {
++                    "label": "europe-central2",
++                    "name": "europe-central2"
++                },
++                {
++                    "label": "europe-north1",
++                    "name": "europe-north1"
++                },
++                {
++                    "label": "europe-north2",
++                    "name": "europe-north2"
++                },
++                {
++                    "label": "europe-southwest1",
++                    "name": "europe-southwest1"
++                },
++                {
++                    "label": "europe-west10",
++                    "name": "europe-west10"
++                },
++                {
++                    "label": "europe-west12",
++                    "name": "europe-west12"
++                },
++                {
++                    "label": "europe-west6",
++                    "name": "europe-west6"
++                },
++                {
++                    "label": "europe-west8",
++                    "name": "europe-west8"
++                },
++                {
++                    "label": "europe-west9",
++                    "name": "europe-west9"
++                },
++                {
++                    "label": "me-central1",
++                    "name": "me-central1"
++                },
++                {
++                    "label": "me-central2",
++                    "name": "me-central2"
++                },
++                {
++                    "label": "me-west1",
++                    "name": "me-west1"
++                },
++                {
++                    "label": "northamerica-northeast1",
++                    "name": "northamerica-northeast1"
++                },
++                {
++                    "label": "northamerica-northeast2",
++                    "name": "northamerica-northeast2"
++                },
++                {
++                    "label": "northamerica-south1",
++                    "name": "northamerica-south1"
++                },
++                {
++                    "label": "southamerica-west1",
++                    "name": "southamerica-west1"
++                },
++                {
++                    "label": "us-east5",
++                    "name": "us-east5"
++                },
++                {
++                    "label": "us-south1",
++                    "name": "us-south1"
++                },
++                {
++                    "label": "us-west2",
++                    "name": "us-west2"
++                },
++                {
++                    "label": "us-west3",
++                    "name": "us-west3"
++                },
++                {
++                    "label": "us-west4",
++                    "name": "us-west4"
++                }
+             ]
+         },
+         {
+@@ -2351,4 +2627,4 @@
+             ]
+         }
+     ]
+-}
++}
+\ No newline at end of file
+diff --git a/packages/components/nodes/chatmodels/ChatN1n/ChatN1n.ts b/packages/components/nodes/chatmodels/ChatN1n/ChatN1n.ts
+new file mode 100644
+index 00000000000..6d812214081
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatN1n/ChatN1n.ts
+@@ -0,0 +1,233 @@
++import { ChatOpenAIFields } from '@langchain/openai'
++import { BaseCache } from '@langchain/core/caches'
++import { ICommonObject, IMultiModalOption, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { ChatN1n } from './FlowiseChatN1n'
++import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
++import { OpenAI as OpenAIClient } from 'openai'
++
++class ChatN1n_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'ChatN1n'
++        this.name = 'chatN1n'
++        this.version = 1.0
++        this.type = 'ChatN1n'
++        this.icon = 'n1n.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around n1n large language models that use the Chat endpoint'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatN1n)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['n1nApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'gpt-4o-mini'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.9,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'BasePath',
++                name: 'basepath',
++                type: 'string',
++                default: 'https://api.n1n.ai/v1',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'BaseOptions',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Allow Image Uploads',
++                name: 'allowImageUploads',
++                type: 'boolean',
++                description:
++                    'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Image Resolution',
++                description: 'This parameter controls the resolution in which the model views the image.',
++                name: 'imageResolution',
++                type: 'options',
++                options: [
++                    {
++                        label: 'Low',
++                        name: 'low'
++                    },
++                    {
++                        label: 'High',
++                        name: 'high'
++                    },
++                    {
++                        label: 'Auto',
++                        name: 'auto'
++                    }
++                ],
++                default: 'low',
++                optional: false,
++                show: {
++                    allowImageUploads: true
++                }
++            }
++        ]
++    }
++
++    //@ts-ignore
++    loadMethods = {
++        async listModels(): Promise<INodeOptionsValue[]> {
++            return await getModels(MODEL_TYPE.CHAT, 'chatN1n')
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const basePath = nodeData.inputs?.basepath as string
++        const baseOptions = nodeData.inputs?.baseOptions
++
++        const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++        const imageResolution = nodeData.inputs?.imageResolution as string
++
++        if (nodeData.inputs?.credentialId) {
++            nodeData.credential = nodeData.inputs?.credentialId
++        }
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const n1nApiKey = getCredentialParam('n1nApiKey', credentialData, nodeData)
++
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            modelName,
++            openAIApiKey: n1nApiKey,
++            apiKey: n1nApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatN1n's BaseOptions: " + exception)
++            }
++        }
++
++        if (basePath || parsedBaseOptions) {
++            obj.configuration = {
++                baseURL: basePath,
++                defaultHeaders: parsedBaseOptions
++            }
++        }
++
++        const multiModalOption: IMultiModalOption = {
++            image: {
++                allowImageUploads: allowImageUploads ?? false,
++                imageResolution
++            }
++        }
++
++        const model = new ChatN1n(nodeData.id, obj)
++        model.setMultiModalOption(multiModalOption)
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatN1n_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatN1n/FlowiseChatN1n.ts b/packages/components/nodes/chatmodels/ChatN1n/FlowiseChatN1n.ts
+new file mode 100644
+index 00000000000..bf0dc2e1be0
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatN1n/FlowiseChatN1n.ts
+@@ -0,0 +1,34 @@
++import { ChatOpenAI as LangchainChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { IMultiModalOption, IVisionChatModal } from '../../../src'
++
++export class ChatN1n extends LangchainChatOpenAI implements IVisionChatModal {
++    configuredModel: string
++    configuredMaxToken?: number
++    multiModalOption: IMultiModalOption
++    builtInTools: Record<string, any>[] = []
++    id: string
++
++    constructor(id: string, fields?: ChatOpenAIFields) {
++        super(fields)
++        this.id = id
++        this.configuredModel = fields?.modelName ?? ''
++        this.configuredMaxToken = fields?.maxTokens
++    }
++
++    revertToOriginalModel(): void {
++        this.model = this.configuredModel
++        this.maxTokens = this.configuredMaxToken
++    }
++
++    setMultiModalOption(multiModalOption: IMultiModalOption): void {
++        this.multiModalOption = multiModalOption
++    }
++
++    setVisionModel(): void {
++        // pass
++    }
++
++    addBuiltInTools(builtInTool: Record<string, any>): void {
++        this.builtInTools.push(builtInTool)
++    }
++}
+diff --git a/packages/components/nodes/chatmodels/ChatN1n/n1n.svg b/packages/components/nodes/chatmodels/ChatN1n/n1n.svg
+new file mode 100644
+index 00000000000..58296008bce
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatN1n/n1n.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++  <rect x="2" y="2" width="20" height="20" rx="5" ry="5" fill="#000000" stroke="none" />
++  <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#ffffff" font-weight="bold">n1n</text>
++</svg>

@@ -1,0 +1,118 @@
+From 8f8aed2eede523b3cbb6b1f4dc58a89c04879498 Mon Sep 17 00:00:00 2001
+From: ShiroKSH <kushidashiro@gmail.com>
+Date: Wed, 15 Jul 2026 13:38:54 +0300
+Subject: [PATCH] fix: paginate S3 directory listings
+
+---
+ .../S3Directory/S3Directory.test.ts           | 47 +++++++++++++++++++
+ .../S3Directory/S3Directory.ts                | 32 +++++++++----
+ 2 files changed, 70 insertions(+), 9 deletions(-)
+ create mode 100644 packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+
+diff --git a/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts b/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+new file mode 100644
+index 00000000000..44ec32ce94f
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/S3Directory/S3Directory.test.ts
+@@ -0,0 +1,47 @@
++jest.mock('@aws-sdk/client-s3', () => ({
++    S3Client: jest.fn(),
++    GetObjectCommand: jest.fn(),
++    ListObjectsV2Command: jest.fn().mockImplementation((input) => ({ input }))
++}))
++
++describe('S3Directory', () => {
++    const s3Client = { send: jest.fn() }
++    let getS3FileKeys: (s3Client: any, bucketName: string, prefix: string) => Promise<string[]>
++    let ListObjectsV2Command: jest.Mock
++
++    beforeEach(async () => {
++        jest.clearAllMocks()
++        s3Client.send.mockReset()
++
++        const s3Module = require('@aws-sdk/client-s3')
++        ListObjectsV2Command = s3Module.ListObjectsV2Command
++
++        const module = (await import('./S3Directory')) as any
++        getS3FileKeys = module.getS3FileKeys
++    })
++
++    it('loads keys from every S3 list page', async () => {
++        s3Client.send
++            .mockResolvedValueOnce({
++                Contents: [{ Key: 'docs/0001.txt', ETag: 'etag-1' }],
++                IsTruncated: true,
++                NextContinuationToken: 'next-page'
++            })
++            .mockResolvedValueOnce({
++                Contents: [{ Key: 'docs/1001.txt', ETag: 'etag-2' }],
++                IsTruncated: false
++            })
++
++        await expect(getS3FileKeys(s3Client, 'documents', 'docs/')).resolves.toEqual(['docs/0001.txt', 'docs/1001.txt'])
++        expect(ListObjectsV2Command).toHaveBeenNthCalledWith(1, {
++            Bucket: 'documents',
++            Prefix: 'docs/',
++            ContinuationToken: undefined
++        })
++        expect(ListObjectsV2Command).toHaveBeenNthCalledWith(2, {
++            Bucket: 'documents',
++            Prefix: 'docs/',
++            ContinuationToken: 'next-page'
++        })
++    })
++})
+diff --git a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+index 38b76bf7fe1..274a0f59f65 100644
+--- a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
++++ b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+@@ -18,6 +18,27 @@ import { TextSplitter } from '@langchain/textsplitters'
+ import { CSVLoader } from '../Csv/CsvLoader'
+ import { LoadOfSheet } from '../MicrosoftExcel/ExcelLoader'
+ import { PowerpointLoader } from '../MicrosoftPowerpoint/PowerpointLoader'
++
++const getS3FileKeys = async (s3Client: S3Client, bucketName: string, prefix: string): Promise<string[]> => {
++    const keys: string[] = []
++    let continuationToken: string | undefined
++
++    do {
++        const listObjectsOutput: ListObjectsV2Output = await s3Client.send(
++            new ListObjectsV2Command({
++                Bucket: bucketName,
++                Prefix: prefix,
++                ContinuationToken: continuationToken
++            })
++        )
++
++        keys.push(...(listObjectsOutput.Contents ?? []).filter((item) => item.Key && item.ETag).map((item) => item.Key!))
++        continuationToken = listObjectsOutput.IsTruncated ? listObjectsOutput.NextContinuationToken : undefined
++    } while (continuationToken)
++
++    return keys
++}
++
+ class S3_DocumentLoaders implements INode {
+     label: string
+     name: string
+@@ -178,14 +199,7 @@ class S3_DocumentLoaders implements INode {
+         try {
+             const s3Client = new S3Client(s3Config)
+ 
+-            const listObjectsOutput: ListObjectsV2Output = await s3Client.send(
+-                new ListObjectsV2Command({
+-                    Bucket: bucketName,
+-                    Prefix: prefix
+-                })
+-            )
+-
+-            const keys: string[] = (listObjectsOutput?.Contents ?? []).filter((item) => item.Key && item.ETag).map((item) => item.Key!)
++            const keys = await getS3FileKeys(s3Client, bucketName, prefix)
+ 
+             await Promise.all(
+                 keys.map(async (key) => {
+@@ -291,4 +305,4 @@ class S3_DocumentLoaders implements INode {
+         }
+     }
+ }
+-module.exports = { nodeClass: S3_DocumentLoaders }
++module.exports = { nodeClass: S3_DocumentLoaders, getS3FileKeys }

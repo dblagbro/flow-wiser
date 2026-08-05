@@ -1,0 +1,187 @@
+From 2221ee4d807969790181665ac68b38cdfced5fdd Mon Sep 17 00:00:00 2001
+From: Joseph Connolly <joseph.connolly@shuffleready.com>
+Date: Wed, 9 Jul 2025 16:21:38 -0700
+Subject: [PATCH 1/2] Allow for default Ollama base url and model to be
+ provided as an environment variable
+
+FollowUpPrompt.jsx has Ollama defaults but is client side and not updated
+---
+ docker/.env.example                                       | 8 +++++++-
+ .../components/nodes/chatmodels/ChatOllama/ChatOllama.ts  | 7 ++++---
+ .../nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts  | 7 ++++---
+ .../nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts   | 7 ++++---
+ packages/components/nodes/llms/Ollama/Ollama.ts           | 7 ++++---
+ 5 files changed, 23 insertions(+), 13 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index 7e72923e926..0caff74fd17 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -162,4 +162,10 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # REDIS_KEY=
+ # REDIS_CA=
+ # REDIS_KEEP_ALIVE=
+-# ENABLE_BULLMQ_DASHBOARD=
+\ No newline at end of file
++# ENABLE_BULLMQ_DASHBOARD=
++
++############################################################################################################
++############################################# OLLAMA DEFAULTS ##############################################
++############################################################################################################
++# OLLAMA_DEFAULT_BASE_URL=http://host.docker.internal:11434
++# OLLAMA_DEFAULT_MODEL=llama3.2
+diff --git a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
+index 25bee4364c9..03998ad5708 100644
+--- a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
++++ b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
+@@ -2,7 +2,7 @@ import { ChatOllamaInput } from '@langchain/ollama'
+ import { BaseChatModelParams } from '@langchain/core/language_models/chat_models'
+ import { BaseCache } from '@langchain/core/caches'
+ import { IMultiModalOption, INode, INodeData, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getEnvironmentVariable } from '../../../src/utils'
+ import { ChatOllama } from './FlowiseChatOllama'
+ 
+ class ChatOllama_ChatModels implements INode {
+@@ -37,13 +37,14 @@ class ChatOllama_ChatModels implements INode {
+                 label: 'Base URL',
+                 name: 'baseUrl',
+                 type: 'string',
+-                default: 'http://localhost:11434'
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_BASE_URL') ?? 'http://localhost:11434'
+             },
+             {
+                 label: 'Model Name',
+                 name: 'modelName',
+                 type: 'string',
+-                placeholder: 'llama2'
++                placeholder: 'llama2',
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_MODEL') ?? ''
+             },
+             {
+                 label: 'Temperature',
+diff --git a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
+index 548c9d7d0b2..5d1cd7e5660 100644
+--- a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
++++ b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
+@@ -1,5 +1,5 @@
+ import { INode, INodeData, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getEnvironmentVariable } from '../../../src/utils'
+ import { OllamaParams, Ollama } from 'llamaindex'
+ 
+ class ChatOllama_LlamaIndex_ChatModels implements INode {
+@@ -29,13 +29,14 @@ class ChatOllama_LlamaIndex_ChatModels implements INode {
+                 label: 'Base URL',
+                 name: 'baseUrl',
+                 type: 'string',
+-                default: 'http://localhost:11434'
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_BASE_URL') ?? 'http://localhost:11434'
+             },
+             {
+                 label: 'Model Name',
+                 name: 'modelName',
+                 type: 'string',
+-                placeholder: 'llama3'
++                placeholder: 'llama3',
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_MODEL') ?? ''
+             },
+             {
+                 label: 'Temperature',
+diff --git a/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts b/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
+index 5b20fe57e5f..76b164df7d3 100644
+--- a/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
++++ b/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
+@@ -1,7 +1,7 @@
+ import { OllamaEmbeddings } from '@langchain/community/embeddings/ollama'
+ import { OllamaInput } from '@langchain/community/llms/ollama'
+ import { INode, INodeData, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getEnvironmentVariable } from '../../../src/utils'
+ 
+ class OllamaEmbedding_Embeddings implements INode {
+     label: string
+@@ -29,13 +29,14 @@ class OllamaEmbedding_Embeddings implements INode {
+                 label: 'Base URL',
+                 name: 'baseUrl',
+                 type: 'string',
+-                default: 'http://localhost:11434'
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_BASE_URL') ?? 'http://localhost:11434'
+             },
+             {
+                 label: 'Model Name',
+                 name: 'modelName',
+                 type: 'string',
+-                placeholder: 'llama2'
++                placeholder: 'llama2',
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_MODEL') ?? ''
+             },
+             {
+                 label: 'Number of GPU',
+diff --git a/packages/components/nodes/llms/Ollama/Ollama.ts b/packages/components/nodes/llms/Ollama/Ollama.ts
+index e87d08a1161..f412e08108b 100644
+--- a/packages/components/nodes/llms/Ollama/Ollama.ts
++++ b/packages/components/nodes/llms/Ollama/Ollama.ts
+@@ -2,7 +2,7 @@ import { Ollama, OllamaInput } from '@langchain/community/llms/ollama'
+ import { BaseCache } from '@langchain/core/caches'
+ import { BaseLLMParams } from '@langchain/core/language_models/llms'
+ import { INode, INodeData, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getEnvironmentVariable } from '../../../src/utils'
+ 
+ class Ollama_LLMs implements INode {
+     label: string
+@@ -36,13 +36,14 @@ class Ollama_LLMs implements INode {
+                 label: 'Base URL',
+                 name: 'baseUrl',
+                 type: 'string',
+-                default: 'http://localhost:11434'
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_BASE_URL') ?? 'http://localhost:11434'
+             },
+             {
+                 label: 'Model Name',
+                 name: 'modelName',
+                 type: 'string',
+-                placeholder: 'llama2'
++                placeholder: 'llama2',
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_MODEL') ?? ''
+             },
+             {
+                 label: 'Temperature',
+
+From 2b35a1ef7c97051761c88f0f8281e76a1ff5be2a Mon Sep 17 00:00:00 2001
+From: Joseph Connolly <joseph.connolly@shuffleready.com>
+Date: Wed, 9 Jul 2025 21:26:21 -0700
+Subject: [PATCH 2/2] Allow default ollama embedding model to be different than
+ default ollama model
+
+---
+ docker/.env.example                                           | 1 +
+ .../nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts       | 4 ++--
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index 0caff74fd17..9f62cd6ab52 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -169,3 +169,4 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ ############################################################################################################
+ # OLLAMA_DEFAULT_BASE_URL=http://host.docker.internal:11434
+ # OLLAMA_DEFAULT_MODEL=llama3.2
++# OLLAMA_DEFAULT_EMBEDDING_MODEL=nomic-embed-text
+\ No newline at end of file
+diff --git a/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts b/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
+index 76b164df7d3..3c21cbd078b 100644
+--- a/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
++++ b/packages/components/nodes/embeddings/OllamaEmbedding/OllamaEmbedding.ts
+@@ -35,8 +35,8 @@ class OllamaEmbedding_Embeddings implements INode {
+                 label: 'Model Name',
+                 name: 'modelName',
+                 type: 'string',
+-                placeholder: 'llama2',
+-                default: getEnvironmentVariable('OLLAMA_DEFAULT_MODEL') ?? ''
++                placeholder: 'nomic-embed-text',
++                default: getEnvironmentVariable('OLLAMA_DEFAULT_EMBEDDING_MODEL') ?? ''
+             },
+             {
+                 label: 'Number of GPU',

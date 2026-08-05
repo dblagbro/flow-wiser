@@ -1,0 +1,85 @@
+From 7ee9da10a9136e5f9b13b7c54c7b65172424b967 Mon Sep 17 00:00:00 2001
+From: "Flocky (GitHub Agent)" <flocky@haroldfabla2-hue.dev>
+Date: Sat, 21 Mar 2026 21:05:41 +0000
+Subject: [PATCH 1/2] fix: handle empty/whitespace LOG_PATH in docker compose
+
+When LOG_PATH is set to an empty string in docker-compose (e.g.
+LOG_PATH=${LOG_PATH} with unset LOG_PATH), mkdirSync('') fails
+with ENOENT error.
+
+Fix: use optional chaining + trim + || instead of ??
+to properly handle empty strings and whitespace-only values.
+
+Fixes #6030
+---
+ packages/server/src/utils/config.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/utils/config.ts b/packages/server/src/utils/config.ts
+index b5f5884ebc2..b32a18b3048 100644
+--- a/packages/server/src/utils/config.ts
++++ b/packages/server/src/utils/config.ts
+@@ -7,7 +7,7 @@ dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), override: true }
+ 
+ // default config
+ const loggingConfig = {
+-    dir: process.env.LOG_PATH ?? path.join(__dirname, '..', '..', 'logs'),
++    dir: process.env.LOG_PATH?.trim() || path.join(__dirname, '..', '..', 'logs'),
+     server: {
+         level: process.env.LOG_LEVEL ?? 'info',
+         filename: 'server.log',
+
+From 1cfd64f46997b4a2fa415d1e6298c70e1e3d901f Mon Sep 17 00:00:00 2001
+From: Flocky <flocky@silhouette.ai>
+Date: Thu, 26 Mar 2026 03:08:08 +0000
+Subject: [PATCH 2/2] fix(ChatOpenAICustom): add stopSequence input field
+
+Fixes FlowiseAI/Flowise#2499
+
+The ChatOpenAI Custom node was not passing the 'stop' parameter to
+the underlying model because BaseOptions was incorrectly used for
+request parameters like 'stop'. This adds a dedicated 'Stop Sequence'
+input field, matching the pattern already used in ChatOpenAI node.
+---
+ .../ChatOpenAICustom/ChatOpenAICustom.ts           | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index 9c450ba016e..6a820cd7559 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -113,6 +113,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 type: 'json',
+                 optional: true,
+                 additionalParams: true
++            },
++            {
++                label: 'Stop Sequence',
++                name: 'stopSequence',
++                type: 'string',
++                placeholder: 'Enter a comma-separated list of stop words',
++                description: 'List of stop words to use when generating. Use comma to separate multiple stop words.',
++                optional: true,
++                additionalParams: true
+             }
+         ]
+     }
+@@ -129,6 +138,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
+         const cache = nodeData.inputs?.cache as BaseCache
++        const stopSequence = nodeData.inputs?.stopSequence as string
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const openAIApiKey = getCredentialParam('openAIApiKey', credentialData, nodeData)
+@@ -147,6 +157,10 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
+         if (timeout) obj.timeout = parseInt(timeout, 10)
+         if (cache) obj.cache = cache
++        if (stopSequence) {
++            const stopSequenceArray = stopSequence.split(',').map((item) => item.trim())
++            obj.stop = stopSequenceArray
++        }
+ 
+         let parsedBaseOptions: any | undefined = undefined
+ 

@@ -1,0 +1,39 @@
+From ce31a952df8922c200ffb1a5dc058120607a9963 Mon Sep 17 00:00:00 2001
+From: Mohamed Akram <69890013+mohamed99akram@users.noreply.github.com>
+Date: Mon, 3 Jun 2024 19:06:39 +0300
+Subject: [PATCH] Update Unstructured.ts - Add header
+
+---
+ .../nodes/documentloaders/Unstructured/Unstructured.ts       | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/documentloaders/Unstructured/Unstructured.ts b/packages/components/nodes/documentloaders/Unstructured/Unstructured.ts
+index ba081ab24a4..9efddd19418 100644
+--- a/packages/components/nodes/documentloaders/Unstructured/Unstructured.ts
++++ b/packages/components/nodes/documentloaders/Unstructured/Unstructured.ts
+@@ -31,6 +31,8 @@ export class UnstructuredLoader extends BaseDocumentLoader {
+ 
+     private apiUrl = 'https://api.unstructured.io/general/v0/general'
+ 
++    private apiHeader = 'UNSTRUCTURED-API-KEY'
++    
+     private apiKey?: string
+ 
+     private strategy: StringWithAutocomplete<UnstructuredLoaderStrategy> = 'hi_res'
+@@ -67,6 +69,7 @@ export class UnstructuredLoader extends BaseDocumentLoader {
+         const options = optionsOrLegacyFilePath
+         this.apiKey = options.apiKey
+         this.apiUrl = options.apiUrl ?? this.apiUrl
++        this.apiHeader = options.apiHeader ?? 'UNSTRUCTURED-API-KEY'
+         this.strategy = options.strategy ?? this.strategy
+         this.encoding = options.encoding
+         this.ocrLanguages = options.ocrLanguages ?? this.ocrLanguages
+@@ -128,7 +131,7 @@ export class UnstructuredLoader extends BaseDocumentLoader {
+         }
+ 
+         const headers = {
+-            'UNSTRUCTURED-API-KEY': this.apiKey ?? ''
++            this.apiHeader: this.apiKey ?? ''
+         }
+ 
+         const response = await fetch(this.apiUrl, {

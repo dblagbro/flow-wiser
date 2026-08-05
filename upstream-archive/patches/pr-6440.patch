@@ -1,0 +1,234 @@
+From a78c27d848dad505db518bb469f9c3898ed88b88 Mon Sep 17 00:00:00 2001
+From: Matt Van Horn <455140+mvanhorn@users.noreply.github.com>
+Date: Wed, 27 May 2026 08:33:45 -0700
+Subject: [PATCH] feat: expose tool node artifacts to downstream nodes in
+ Agentflow v2
+
+---
+ .../useAvailableVariables.test.tsx            |  5 +-
+ .../node-editor/useAvailableVariables.ts      |  8 ++
+ .../agentflow/DirectReply/DirectReply.test.ts | 82 +++++++++++++++++++
+ .../agentflow/DirectReply/DirectReply.ts      | 51 +++++++++++-
+ 4 files changed, 142 insertions(+), 4 deletions(-)
+ create mode 100644 packages/components/nodes/agentflow/DirectReply/DirectReply.test.ts
+
+diff --git a/packages/agentflow/src/features/node-editor/useAvailableVariables.test.tsx b/packages/agentflow/src/features/node-editor/useAvailableVariables.test.tsx
+index 18366d97ff9..27754b2fdb9 100644
+--- a/packages/agentflow/src/features/node-editor/useAvailableVariables.test.tsx
++++ b/packages/agentflow/src/features/node-editor/useAvailableVariables.test.tsx
+@@ -63,9 +63,11 @@ describe('useAvailableVariables', () => {
+         const { result } = renderHook(() => useAvailableVariables('agent_0'))
+ 
+         const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+-        expect(nodeOutputs).toHaveLength(1)
++        expect(nodeOutputs).toHaveLength(2)
+         expect(nodeOutputs[0].value).toBe('{{llm_0}}')
+         expect(nodeOutputs[0].label).toBe('llm_0')
++        expect(nodeOutputs[1].value).toBe('{{llm_0.output.artifacts}}')
++        expect(nodeOutputs[1].label).toBe('llm_0.output.artifacts')
+     })
+ 
+     it('excludes startAgentflow from node outputs', () => {
+@@ -96,6 +98,7 @@ describe('useAvailableVariables', () => {
+ 
+         const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+         expect(nodeOutputs[0].label).toBe('myFunc')
++        expect(nodeOutputs[1].label).toBe('myFunc.output.artifacts')
+     })
+ 
+     it('returns flow state variables from startAgentflow node', () => {
+diff --git a/packages/agentflow/src/features/node-editor/useAvailableVariables.ts b/packages/agentflow/src/features/node-editor/useAvailableVariables.ts
+index 3b438dc3831..c2266309fae 100644
+--- a/packages/agentflow/src/features/node-editor/useAvailableVariables.ts
++++ b/packages/agentflow/src/features/node-editor/useAvailableVariables.ts
+@@ -100,6 +100,14 @@ export function useAvailableVariables(nodeId: string): VariableItem[] {
+                 icon: agentflowIcon?.icon,
+                 iconColor: agentflowIcon?.color
+             })
++            items.push({
++                label: `${displayName}.output.artifacts`,
++                description: `Artifacts from ${node.data.label ?? node.data.name}`,
++                category: 'Node Outputs',
++                value: `{{${node.id}.output.artifacts}}`,
++                icon: agentflowIcon?.icon,
++                iconColor: agentflowIcon?.color
++            })
+         }
+ 
+         // ── Flow state variables from all nodes ─────────────────────────
+diff --git a/packages/components/nodes/agentflow/DirectReply/DirectReply.test.ts b/packages/components/nodes/agentflow/DirectReply/DirectReply.test.ts
+new file mode 100644
+index 00000000000..2cb2b3c2e1d
+--- /dev/null
++++ b/packages/components/nodes/agentflow/DirectReply/DirectReply.test.ts
+@@ -0,0 +1,82 @@
++const { nodeClass: DirectReply_Agentflow } = require('./DirectReply')
++
++describe('DirectReply_Agentflow', () => {
++    const createNode = () => new DirectReply_Agentflow()
++    const createOptions = () => ({
++        agentflowRuntime: { state: { existing: 'state' } },
++        chatId: 'chat-1',
++        isLastNode: true,
++        sseStreamer: {
++            streamTokenEvent: jest.fn(),
++            streamArtifactsEvent: jest.fn()
++        }
++    })
++
++    it('returns text only when no artifacts are provided', async () => {
++        const node = createNode()
++        const options = createOptions()
++
++        const result = await node.run(
++            {
++                id: 'directReplyAgentflow_0',
++                inputs: { directReplyMessage: 'done' }
++            },
++            '',
++            options
++        )
++
++        expect(result.output).toEqual({ content: 'done' })
++        expect(options.sseStreamer.streamTokenEvent).toHaveBeenCalledWith('chat-1', 'done')
++        expect(options.sseStreamer.streamArtifactsEvent).not.toHaveBeenCalled()
++    })
++
++    it('attaches resolved artifacts from the artifacts input', async () => {
++        const node = createNode()
++        const options = createOptions()
++        const artifacts = [
++            { type: 'png', data: 'FILE-STORAGE::image.png' },
++            { type: 'pdf', data: 'FILE-STORAGE::report.pdf' }
++        ]
++
++        const result = await node.run(
++            {
++                id: 'directReplyAgentflow_0',
++                inputs: {
++                    directReplyMessage: 'generated files',
++                    directReplyArtifacts: JSON.stringify(artifacts)
++                }
++            },
++            '',
++            options
++        )
++
++        expect(result.output).toEqual({
++            content: 'generated files',
++            artifacts
++        })
++        expect(options.sseStreamer.streamTokenEvent).toHaveBeenCalledWith('chat-1', 'generated files')
++        expect(options.sseStreamer.streamArtifactsEvent).toHaveBeenCalledWith('chat-1', artifacts)
++    })
++
++    it('detects artifact-only messages without returning artifact JSON as content', async () => {
++        const node = createNode()
++        const options = createOptions()
++        const artifacts = [{ type: 'png', data: 'FILE-STORAGE::image.png' }]
++
++        const result = await node.run(
++            {
++                id: 'directReplyAgentflow_0',
++                inputs: { directReplyMessage: JSON.stringify(artifacts) }
++            },
++            '',
++            options
++        )
++
++        expect(result.output).toEqual({
++            content: ' ',
++            artifacts
++        })
++        expect(options.sseStreamer.streamTokenEvent).not.toHaveBeenCalled()
++        expect(options.sseStreamer.streamArtifactsEvent).toHaveBeenCalledWith('chat-1', artifacts)
++    })
++})
+diff --git a/packages/components/nodes/agentflow/DirectReply/DirectReply.ts b/packages/components/nodes/agentflow/DirectReply/DirectReply.ts
+index b30a8635d67..2aaf8e7931a 100644
+--- a/packages/components/nodes/agentflow/DirectReply/DirectReply.ts
++++ b/packages/components/nodes/agentflow/DirectReply/DirectReply.ts
+@@ -1,4 +1,29 @@
+ import { ICommonObject, INode, INodeData, INodeParams, IServerSideEventStreamer } from '../../../src/Interface'
++import { flatten } from 'lodash'
++
++const parseArtifacts = (value: unknown): ICommonObject[] => {
++    let artifacts = value
++
++    if (typeof artifacts === 'string') {
++        const trimmedValue = artifacts.trim()
++        if (!trimmedValue) return []
++
++        try {
++            artifacts = JSON.parse(trimmedValue)
++        } catch {
++            return []
++        }
++    }
++
++    const flattenedArtifacts = Array.isArray(artifacts) ? flatten(artifacts) : [artifacts]
++    return flattenedArtifacts.filter(
++        (artifact): artifact is ICommonObject =>
++            typeof artifact === 'object' &&
++            artifact !== null &&
++            typeof (artifact as ICommonObject).type === 'string' &&
++            typeof (artifact as ICommonObject).data === 'string'
++    )
++}
+ 
+ class DirectReply_Agentflow implements INode {
+     label: string
+@@ -32,22 +57,41 @@ class DirectReply_Agentflow implements INode {
+                 name: 'directReplyMessage',
+                 type: 'string',
+                 rows: 4,
+-                acceptVariable: true
++                acceptVariable: true,
++                acceptNodeOutputAsVariable: true
++            },
++            {
++                label: 'Artifacts',
++                name: 'directReplyArtifacts',
++                type: 'string',
++                optional: true,
++                acceptVariable: true,
++                acceptNodeOutputAsVariable: true
+             }
+         ]
+     }
+ 
+     async run(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const directReplyMessage = nodeData.inputs?.directReplyMessage as string
++        const directReplyArtifacts = nodeData.inputs?.directReplyArtifacts
+ 
+         const state = options.agentflowRuntime?.state as ICommonObject
+         const chatId = options.chatId as string
+         const isLastNode = options.isLastNode as boolean
+         const isStreamable = isLastNode && options.sseStreamer !== undefined
++        const artifacts = parseArtifacts(directReplyArtifacts)
++        const messageArtifacts = artifacts.length > 0 ? [] : parseArtifacts(directReplyMessage)
++        const resolvedArtifacts = artifacts.length > 0 ? artifacts : messageArtifacts
++        const outputContent = messageArtifacts.length > 0 && directReplyMessage?.trim() ? ' ' : directReplyMessage
+ 
+         if (isStreamable) {
+             const sseStreamer: IServerSideEventStreamer = options.sseStreamer
+-            sseStreamer.streamTokenEvent(chatId, directReplyMessage)
++            if (outputContent?.trim()) {
++                sseStreamer.streamTokenEvent(chatId, outputContent)
++            }
++            if (resolvedArtifacts.length > 0) {
++                sseStreamer.streamArtifactsEvent(chatId, resolvedArtifacts)
++            }
+         }
+ 
+         const returnOutput = {
+@@ -55,7 +99,8 @@ class DirectReply_Agentflow implements INode {
+             name: this.name,
+             input: {},
+             output: {
+-                content: directReplyMessage
++                content: outputContent,
++                ...(resolvedArtifacts.length > 0 && { artifacts: resolvedArtifacts })
+             },
+             state
+         }

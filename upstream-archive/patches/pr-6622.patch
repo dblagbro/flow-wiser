@@ -1,0 +1,1243 @@
+From b774bd6cf12698320ab4b72ba7ae6cbac25d9853 Mon Sep 17 00:00:00 2001
+From: Sweater <2755879689@qq.com>
+Date: Tue, 14 Jul 2026 16:24:15 +0800
+Subject: [PATCH] fix(memory): persist summary buffer checkpoints
+
+---
+ .../ConversationSummaryBufferMemory.test.ts   | 307 ++++++++++++++++++
+ .../ConversationSummaryBufferMemory.ts        | 267 ++++++++++++---
+ .../src/controllers/chat-messages/index.ts    |   6 +-
+ .../ConversationSummaryBufferState.ts         |  38 +++
+ .../server/src/database/entities/index.ts     |   2 +
+ ...00000-AddConversationSummaryBufferState.ts |  26 ++
+ .../src/database/migrations/mariadb/index.ts  |   4 +-
+ ...00000-AddConversationSummaryBufferState.ts |  26 ++
+ .../src/database/migrations/mysql/index.ts    |   4 +-
+ ...00000-AddConversationSummaryBufferState.ts |  29 ++
+ .../src/database/migrations/postgres/index.ts |   4 +-
+ ...-AddConversationSummaryBufferState.test.ts |  56 ++++
+ ...00000-AddConversationSummaryBufferState.ts |  28 ++
+ .../src/database/migrations/sqlite/index.ts   |   4 +-
+ .../src/services/chat-messages/index.ts       |  14 +-
+ .../server/src/services/chatflows/index.ts    |   4 +
+ packages/server/src/utils/buildAgentGraph.ts  |   2 +-
+ .../conversationSummaryBufferState.test.ts    |  35 ++
+ .../utils/conversationSummaryBufferState.ts   |  15 +
+ packages/server/src/utils/index.ts            |   8 +-
+ 20 files changed, 820 insertions(+), 59 deletions(-)
+ create mode 100644 packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.test.ts
+ create mode 100644 packages/server/src/database/entities/ConversationSummaryBufferState.ts
+ create mode 100644 packages/server/src/database/migrations/mariadb/1783987200000-AddConversationSummaryBufferState.ts
+ create mode 100644 packages/server/src/database/migrations/mysql/1783987200000-AddConversationSummaryBufferState.ts
+ create mode 100644 packages/server/src/database/migrations/postgres/1783987200000-AddConversationSummaryBufferState.ts
+ create mode 100644 packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.test.ts
+ create mode 100644 packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.ts
+ create mode 100644 packages/server/src/utils/conversationSummaryBufferState.test.ts
+ create mode 100644 packages/server/src/utils/conversationSummaryBufferState.ts
+
+diff --git a/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.test.ts b/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.test.ts
+new file mode 100644
+index 00000000000..f52a27db9cb
+--- /dev/null
++++ b/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.test.ts
+@@ -0,0 +1,307 @@
++import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
++
++jest.mock('../../../src/Interface', () => {
++    class FlowiseSummaryBufferMemory {
++        llm: any
++        maxTokenLimit: number
++        movingSummaryBuffer = ''
++        summaryChatMessageClass = SystemMessage
++        humanPrefix = 'Human'
++        aiPrefix = 'AI'
++
++        constructor(fields: any) {
++            this.llm = fields.llm
++            this.maxTokenLimit = fields.maxTokenLimit
++        }
++
++        async predictNewSummary(_messages: BaseMessage[], _previousSummary: string): Promise<string> {
++            return ''
++        }
++    }
++
++    return { FlowiseSummaryBufferMemory }
++})
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn(() => []),
++    mapChatMessageToBaseMessage: jest.fn(async (messages: Array<{ role?: string; type?: string; content?: string; message?: string }>) =>
++        messages.map((message) => {
++            const content = message.content ?? message.message ?? ''
++            return message.role === 'userMessage' || message.type === 'userMessage' ? new HumanMessage(content) : new AIMessage(content)
++        })
++    )
++}))
++
++jest.mock(
++    '../../chatmodels/ChatAnthropic/FlowiseChatAnthropic',
++    () => ({
++        ChatAnthropic: class ChatAnthropic {}
++    }),
++    { virtual: true }
++)
++
++const { nodeClass } = require('./ConversationSummaryBufferMemory')
++
++interface ChatRow {
++    id: string
++    chatflowid: string
++    sessionId: string
++    role: 'userMessage' | 'apiMessage'
++    content: string
++    createdDate: Date
++}
++
++interface StoredState {
++    stateKey: string
++    chatflowid: string
++    sessionId: string
++    nodeId: string
++    summary: string
++    cursorCreatedDate: Date
++    cursorMessageId: string
++    version: number
++}
++
++const ChatMessageEntity = class ChatMessage {}
++const ConversationSummaryBufferStateEntity = class ConversationSummaryBufferState {}
++
++const messageId = (value: number): string => `00000000-0000-0000-0000-${value.toString().padStart(12, '0')}`
++
++const row = (value: number, createdDate = new Date(`2026-01-01T00:00:0${value}.000Z`), overrides: Partial<ChatRow> = {}): ChatRow => ({
++    id: messageId(value),
++    chatflowid: 'flow-1',
++    sessionId: 'session-1',
++    role: value % 2 ? 'userMessage' : 'apiMessage',
++    content: `raw-${value}`,
++    createdDate,
++    ...overrides
++})
++
++const createSharedDatabase = (initialRows: ChatRow[] = []) => {
++    const rows = [...initialRows]
++    const states = new Map<string, StoredState>()
++    let conflict: ((stateKey: string) => void) | undefined
++
++    const messageRepository = {
++        find: jest.fn(async ({ where }: { where: { chatflowid: string; sessionId: string } | Array<Record<string, unknown>> }) => {
++            const scope = Array.isArray(where) ? where[0] : where
++            return rows
++                .filter((message) => message.chatflowid === scope.chatflowid && message.sessionId === scope.sessionId)
++                .sort((left, right) => {
++                    const dateOrder = left.createdDate.getTime() - right.createdDate.getTime()
++                    return dateOrder || left.id.localeCompare(right.id)
++                })
++        })
++    }
++
++    const stateRepository = {
++        findOneBy: jest.fn(async ({ stateKey }: { stateKey: string }) => {
++            const state = states.get(stateKey)
++            return state ? { ...state } : null
++        }),
++        insert: jest.fn(async (state: StoredState) => {
++            if (states.has(state.stateKey)) throw new Error('duplicate state')
++            states.set(state.stateKey, { ...state })
++        }),
++        update: jest.fn(async ({ stateKey, version }: { stateKey: string; version: number }, values: Omit<StoredState, 'stateKey'>) => {
++            if (conflict) {
++                const trigger = conflict
++                conflict = undefined
++                trigger(stateKey)
++                return { affected: 0 }
++            }
++
++            const state = states.get(stateKey)
++            if (!state || state.version !== version) return { affected: 0 }
++            states.set(stateKey, { stateKey, ...values })
++            return { affected: 1 }
++        }),
++        delete: jest.fn(async ({ stateKey }: { stateKey: string }) => {
++            states.delete(stateKey)
++        })
++    }
++
++    const appDataSource = {
++        getRepository: jest.fn((entity: unknown) => (entity === ChatMessageEntity ? messageRepository : stateRepository))
++    }
++
++    return {
++        appDataSource,
++        messageRepository,
++        rows,
++        states,
++        forceNextUpdateConflict(handler: (stateKey: string) => void) {
++            conflict = handler
++        }
++    }
++}
++
++const createMemory = async (
++    database: ReturnType<typeof createSharedDatabase>,
++    overrides: { chatflowid?: string; sessionId?: string; nodeId?: string; maxTokenLimit?: number } = {}
++) => {
++    const model = {
++        getNumTokens: jest.fn(async (text: string) => text.match(/raw-\d+/g)?.length ?? 0)
++    }
++    const memory = await new nodeClass().init(
++        {
++            id: overrides.nodeId ?? 'node-1',
++            inputs: {
++                model,
++                maxTokenLimit: String(overrides.maxTokenLimit ?? 2),
++                sessionId: overrides.sessionId ?? 'session-1'
++            }
++        },
++        '',
++        {
++            appDataSource: database.appDataSource,
++            databaseEntities: {
++                ChatMessage: ChatMessageEntity,
++                ConversationSummaryBufferState: ConversationSummaryBufferStateEntity
++            },
++            chatflowid: overrides.chatflowid ?? 'flow-1',
++            orgId: 'org-1'
++        }
++    )
++
++    return { memory, model }
++}
++
++const messageContents = (messages: BaseMessage[]): string[] => messages.map((message) => message.content as string)
++const summarizedValues = (messages: BaseMessage[]): string =>
++    `digest(${messages.map((message) => (message.content as string).replace('raw-', '')).join(',')})`
++const summarize = async (messages: BaseMessage[]): Promise<string> => summarizedValues(messages)
++const mockSummarizer = (memory: any): jest.Mock<Promise<string>, [BaseMessage[], string]> => {
++    const predict = jest.fn<Promise<string>, [BaseMessage[], string]>(summarize)
++    memory.predictNewSummary = predict
++    return predict
++}
++
++describe('ConversationSummaryBufferMemory persisted checkpoints', () => {
++    it('restores a summary in a fresh instance and only summarizes messages after the cursor', async () => {
++        const sameTimestamp = new Date('2026-01-01T00:00:00.000Z')
++        const database = createSharedDatabase([row(1, sameTimestamp), row(2, sameTimestamp), row(3, sameTimestamp), row(4, sameTimestamp)])
++        const first = await createMemory(database)
++        const firstSummary = mockSummarizer(first.memory)
++
++        expect(messageContents(await first.memory.getChatMessages('', true))).toEqual(['digest(1,2)', 'raw-3', 'raw-4'])
++        expect(firstSummary).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ content: 'raw-1' })]), '')
++        expect([...database.states.values()][0]).toMatchObject({
++            summary: 'digest(1,2)',
++            cursorMessageId: messageId(2),
++            version: 1
++        })
++
++        database.rows.push(row(5, sameTimestamp), row(6, sameTimestamp))
++        const second = await createMemory(database)
++        const secondSummary = mockSummarizer(second.memory)
++
++        expect(messageContents(await second.memory.getChatMessages('', true))).toEqual(['digest(3,4)', 'raw-5', 'raw-6'])
++        expect(secondSummary).toHaveBeenCalledTimes(1)
++        expect(messageContents(secondSummary.mock.calls[0][0])).toEqual(['raw-3', 'raw-4'])
++        expect(secondSummary.mock.calls[0][1]).toBe('digest(1,2)')
++        expect([...database.states.values()][0]).toMatchObject({
++            summary: 'digest(3,4)',
++            cursorMessageId: messageId(4),
++            version: 2
++        })
++        expect(database.messageRepository.find).toHaveBeenLastCalledWith(
++            expect.objectContaining({
++                where: [
++                    expect.objectContaining({ createdDate: expect.objectContaining({ _type: 'moreThan' }) }),
++                    expect.objectContaining({
++                        createdDate: expect.objectContaining({ _type: 'equal' }),
++                        id: expect.objectContaining({ _type: 'moreThan' })
++                    })
++                ],
++                order: { createdDate: 'ASC', id: 'ASC' }
++            })
++        )
++    })
++
++    it('does not create a checkpoint when the history fits within the token limit', async () => {
++        const database = createSharedDatabase([row(1), row(2)])
++        const { memory } = await createMemory(database, { maxTokenLimit: 10 })
++        const predict = jest.fn()
++        memory.predictNewSummary = predict
++
++        expect(messageContents(await memory.getChatMessages('', true))).toEqual(['raw-1', 'raw-2'])
++        expect(predict).not.toHaveBeenCalled()
++        expect(database.states.size).toBe(0)
++    })
++
++    it('uses prepend messages for the current context without advancing persisted state', async () => {
++        const database = createSharedDatabase([row(1), row(2)])
++        const { memory } = await createMemory(database, { maxTokenLimit: 1 })
++        const predict = mockSummarizer(memory)
++
++        await memory.getChatMessages('', true, [{ type: 'userMessage', message: 'raw-99' }])
++
++        expect(messageContents(predict.mock.calls[0][0])).toEqual(['raw-99', 'raw-1'])
++        expect(database.states.size).toBe(0)
++    })
++
++    it('keeps the checkpoint unchanged when summary generation fails', async () => {
++        const database = createSharedDatabase([row(1), row(2)])
++        const { memory } = await createMemory(database, { maxTokenLimit: 1 })
++        memory.predictNewSummary = jest.fn().mockRejectedValue(new Error('summary failed'))
++
++        await expect(memory.getChatMessages('', true)).rejects.toThrow('summary failed')
++        expect(database.states.size).toBe(0)
++    })
++
++    it('reloads and recomputes after a CAS conflict without overwriting the newer summary', async () => {
++        const database = createSharedDatabase([row(1), row(2), row(3), row(4)])
++        const first = await createMemory(database, { maxTokenLimit: 1 })
++        mockSummarizer(first.memory)
++        await first.memory.getChatMessages('', true)
++
++        database.rows.push(row(5))
++        database.forceNextUpdateConflict((stateKey) => {
++            const current = database.states.get(stateKey)!
++            database.states.set(stateKey, {
++                ...current,
++                summary: 'competing-summary',
++                cursorCreatedDate: row(4).createdDate,
++                cursorMessageId: messageId(4),
++                version: current.version + 1
++            })
++        })
++
++        const second = await createMemory(database, { maxTokenLimit: 0 })
++        const predict = mockSummarizer(second.memory)
++        await second.memory.getChatMessages('', true)
++
++        expect(predict).toHaveBeenCalledTimes(2)
++        expect(predict.mock.calls[1][1]).toBe('competing-summary')
++        expect([...database.states.values()][0]).toMatchObject({
++            summary: 'digest(5)',
++            cursorMessageId: messageId(5),
++            version: 3
++        })
++    })
++
++    it('isolates checkpoints by flow, session, and node and clears only its own state', async () => {
++        const database = createSharedDatabase([
++            row(1),
++            row(2),
++            row(3, undefined, { sessionId: 'session-2' }),
++            row(4, undefined, { sessionId: 'session-2' }),
++            row(5, undefined, { chatflowid: 'flow-2' }),
++            row(6, undefined, { chatflowid: 'flow-2' })
++        ])
++        const configurations = [{}, { nodeId: 'node-2' }, { sessionId: 'session-2' }, { chatflowid: 'flow-2' }]
++        const memories = []
++
++        for (const configuration of configurations) {
++            const created = await createMemory(database, { ...configuration, maxTokenLimit: 1 })
++            mockSummarizer(created.memory)
++            await created.memory.getChatMessages('', true)
++            memories.push(created.memory)
++        }
++
++        expect(database.states.size).toBe(4)
++        await memories[0].clearChatMessages()
++        expect(database.states.size).toBe(3)
++    })
++})
+diff --git a/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.ts b/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.ts
+index d41b95a32cf..4b6a7be24ff 100644
+--- a/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.ts
++++ b/packages/components/nodes/memory/ConversationSummaryBufferMemory/ConversationSummaryBufferMemory.ts
+@@ -12,9 +12,38 @@ import { getBaseClasses, mapChatMessageToBaseMessage } from '../../../src/utils'
+ import { BaseLanguageModel } from '@langchain/core/language_models/base'
+ import { BaseMessage, getBufferString, HumanMessage } from '@langchain/core/messages'
+ import { ConversationSummaryBufferMemory, ConversationSummaryBufferMemoryInput } from '@langchain/classic/memory'
+-import { DataSource } from 'typeorm'
++import { createHash } from 'crypto'
++import { DataSource, Equal, MoreThan } from 'typeorm'
+ import { ChatAnthropic } from '../../chatmodels/ChatAnthropic/FlowiseChatAnthropic'
+ 
++const MAX_STATE_WRITE_ATTEMPTS = 2
++
++interface SummaryBufferState {
++    stateKey: string
++    summary: string
++    cursorCreatedDate?: Date | null
++    cursorMessageId?: string | null
++    version: number
++}
++
++interface StoredChatMessage {
++    id: string
++    createdDate: Date
++    [key: string]: any
++}
++
++interface BufferEntry {
++    message: BaseMessage
++    storedMessage?: StoredChatMessage
++}
++
++interface PreparedMessages {
++    messages: BaseMessage[]
++    state: SummaryBufferState | null
++    summary?: string
++    checkpoint?: StoredChatMessage
++}
++
+ class ConversationSummaryBufferMemory_Memory implements INode {
+     label: string
+     name: string
+@@ -89,7 +118,8 @@ class ConversationSummaryBufferMemory_Memory implements INode {
+             appDataSource,
+             databaseEntities,
+             chatflowid,
+-            orgId
++            orgId,
++            nodeId: nodeData.id
+         }
+ 
+         return new ConversationSummaryBufferMemoryExtended(obj)
+@@ -102,6 +132,7 @@ interface BufferMemoryExtendedInput {
+     databaseEntities: IDatabaseEntity
+     chatflowid: string
+     orgId: string
++    nodeId: string
+ }
+ 
+ class ConversationSummaryBufferMemoryExtended extends FlowiseSummaryBufferMemory implements MemoryMethods {
+@@ -109,6 +140,7 @@ class ConversationSummaryBufferMemoryExtended extends FlowiseSummaryBufferMemory
+     databaseEntities: IDatabaseEntity
+     chatflowid: string
+     orgId: string
++    nodeId: string
+     sessionId = ''
+ 
+     constructor(fields: ConversationSummaryBufferMemoryInput & BufferMemoryExtendedInput) {
+@@ -118,6 +150,7 @@ class ConversationSummaryBufferMemoryExtended extends FlowiseSummaryBufferMemory
+         this.databaseEntities = fields.databaseEntities
+         this.chatflowid = fields.chatflowid
+         this.orgId = fields.orgId
++        this.nodeId = fields.nodeId
+     }
+ 
+     async getChatMessages(
+@@ -128,68 +161,201 @@ class ConversationSummaryBufferMemoryExtended extends FlowiseSummaryBufferMemory
+         const id = overrideSessionId ? overrideSessionId : this.sessionId
+         if (!id) return []
+ 
+-        let chatMessage = await this.appDataSource.getRepository(this.databaseEntities['ChatMessage']).find({
+-            where: {
+-                sessionId: id,
+-                chatflowid: this.chatflowid
+-            },
+-            order: {
+-                createdDate: 'ASC'
+-            }
+-        })
++        let baseMessages: BaseMessage[] = []
++        const stateKey = this.getStateKey(id)
++        const canPersist = !prependMessages?.length
++
++        for (let attempt = 0; attempt < MAX_STATE_WRITE_ATTEMPTS; attempt += 1) {
++            const prepared = await this.prepareMessages(id, stateKey, prependMessages)
++            baseMessages = prepared.messages
+ 
+-        if (prependMessages?.length) {
+-            chatMessage.unshift(...prependMessages)
++            if (!canPersist || !prepared.summary || !prepared.checkpoint) break
++
++            const didPersist = await this.persistState(id, stateKey, prepared.state, prepared.summary, prepared.checkpoint)
++            if (didPersist) break
+         }
+ 
+-        let baseMessages = await mapChatMessageToBaseMessage(chatMessage, this.orgId)
++        if (returnBaseMessages) {
++            return baseMessages
++        }
+ 
+-        // Prune baseMessages if it exceeds max token limit
+-        if (this.movingSummaryBuffer) {
+-            baseMessages = [new this.summaryChatMessageClass(this.movingSummaryBuffer), ...baseMessages]
++        const returnIMessages: IMessage[] = []
++        for (const m of baseMessages) {
++            returnIMessages.push({
++                message: m.content as string,
++                type: m._getType() === 'human' ? 'userMessage' : 'apiMessage'
++            })
+         }
+ 
+-        let currBufferLength = 0
+-
+-        if (this.llm && typeof this.llm !== 'string') {
+-            currBufferLength = await this.llm.getNumTokens(getBufferString(baseMessages, this.humanPrefix, this.aiPrefix))
+-            if (currBufferLength > this.maxTokenLimit) {
+-                const prunedMemory = []
+-                while (currBufferLength > this.maxTokenLimit) {
+-                    const poppedMessage = baseMessages.shift()
+-                    if (poppedMessage) {
+-                        prunedMemory.push(poppedMessage)
+-                        currBufferLength = await this.llm.getNumTokens(getBufferString(baseMessages, this.humanPrefix, this.aiPrefix))
+-                    }
+-                }
+-                this.movingSummaryBuffer = await this.predictNewSummary(prunedMemory, this.movingSummaryBuffer)
++        return returnIMessages
++    }
++
++    private getStateKey(sessionId: string): string {
++        return createHash('sha256')
++            .update(JSON.stringify([this.chatflowid, sessionId, this.nodeId]))
++            .digest('hex')
++    }
++
++    private async prepareMessages(sessionId: string, stateKey: string, prependMessages?: IMessage[]): Promise<PreparedMessages> {
++        const stateRepository = this.appDataSource.getRepository(this.databaseEntities['ConversationSummaryBufferState'])
++        const state = (await stateRepository.findOneBy({ stateKey })) as SummaryBufferState | null
++        const storedMessages = await this.getStoredMessages(sessionId, state)
++        const entries = await this.mapMessages(prependMessages ?? [], storedMessages)
++        const previousSummary = state?.summary ?? ''
++
++        this.movingSummaryBuffer = previousSummary
++
++        if (!this.llm || typeof this.llm === 'string') {
++            return {
++                messages: this.prependSummary(
++                    entries.map((entry) => entry.message),
++                    previousSummary
++                ),
++                state
+             }
+         }
+ 
+-        // ----------- Finished Pruning ---------------
++        let currBufferLength = await this.getBufferTokenLength(entries, previousSummary)
++        const prunedEntries: BufferEntry[] = []
+ 
+-        if (this.movingSummaryBuffer) {
+-            // Anthropic doesn't support multiple system messages
+-            if (this.llm instanceof ChatAnthropic) {
+-                baseMessages = [new HumanMessage(`Below is the summarized conversation:\n\n${this.movingSummaryBuffer}`), ...baseMessages]
+-            } else {
+-                baseMessages = [new this.summaryChatMessageClass(this.movingSummaryBuffer), ...baseMessages]
++        while (currBufferLength > this.maxTokenLimit && entries.length) {
++            const poppedEntry = entries.shift()
++            if (poppedEntry) prunedEntries.push(poppedEntry)
++            currBufferLength = await this.getBufferTokenLength(entries, previousSummary)
++        }
++
++        if (!prunedEntries.length) {
++            return {
++                messages: this.prependSummary(
++                    entries.map((entry) => entry.message),
++                    previousSummary
++                ),
++                state
+             }
+         }
+ 
+-        if (returnBaseMessages) {
+-            return baseMessages
++        const summary = await this.predictNewSummary(
++            prunedEntries.map((entry) => entry.message),
++            previousSummary
++        )
++        this.movingSummaryBuffer = summary
++
++        let checkpoint: StoredChatMessage | undefined
++        for (const entry of prunedEntries) {
++            if (entry.storedMessage) checkpoint = entry.storedMessage
+         }
+ 
+-        let returnIMessages: IMessage[] = []
+-        for (const m of baseMessages) {
+-            returnIMessages.push({
+-                message: m.content as string,
+-                type: m._getType() === 'human' ? 'userMessage' : 'apiMessage'
++        return {
++            messages: this.prependSummary(
++                entries.map((entry) => entry.message),
++                summary
++            ),
++            state,
++            summary,
++            checkpoint
++        }
++    }
++
++    private async getStoredMessages(sessionId: string, state: SummaryBufferState | null): Promise<StoredChatMessage[]> {
++        const messageRepository = this.appDataSource.getRepository(this.databaseEntities['ChatMessage'])
++        const baseWhere: Record<string, any> = {
++            sessionId,
++            chatflowid: this.chatflowid
++        }
++        let where: Record<string, any> | Array<Record<string, any>> = baseWhere
++
++        if (state?.cursorCreatedDate && state.cursorMessageId) {
++            where = [
++                { ...baseWhere, createdDate: MoreThan(state.cursorCreatedDate) },
++                { ...baseWhere, createdDate: Equal(state.cursorCreatedDate), id: MoreThan(state.cursorMessageId) }
++            ]
++        }
++
++        const messages = (await messageRepository.find({
++            where,
++            order: {
++                createdDate: 'ASC',
++                id: 'ASC'
++            }
++        })) as StoredChatMessage[]
++
++        if (!state?.cursorCreatedDate || !state.cursorMessageId) return messages
++
++        const cursorTime = new Date(state.cursorCreatedDate).getTime()
++        return messages.filter((message) => {
++            const messageTime = new Date(message.createdDate).getTime()
++            return messageTime > cursorTime || (messageTime === cursorTime && message.id > state.cursorMessageId!)
++        })
++    }
++
++    private async mapMessages(prependMessages: IMessage[], storedMessages: StoredChatMessage[]): Promise<BufferEntry[]> {
++        const inputs = [
++            ...prependMessages.map((message) => ({ message, storedMessage: undefined })),
++            ...storedMessages.map((message) => ({ message, storedMessage: message }))
++        ]
++
++        const entries: Array<BufferEntry | undefined> = await Promise.all(
++            inputs.map(async ({ message, storedMessage }): Promise<BufferEntry | undefined> => {
++                const [baseMessage] = await mapChatMessageToBaseMessage([message], this.orgId)
++                if (!baseMessage) return undefined
++                return storedMessage ? { message: baseMessage, storedMessage } : { message: baseMessage }
+             })
++        )
++
++        return entries.filter((entry): entry is BufferEntry => entry !== undefined)
++    }
++
++    private async getBufferTokenLength(entries: BufferEntry[], summary: string): Promise<number> {
++        const messages = this.prependSummary(
++            entries.map((entry) => entry.message),
++            summary
++        )
++        return await this.llm.getNumTokens(getBufferString(messages, this.humanPrefix, this.aiPrefix))
++    }
++
++    private prependSummary(messages: BaseMessage[], summary: string): BaseMessage[] {
++        if (!summary) return messages
++
++        // Anthropic doesn't support multiple system messages
++        if (this.llm instanceof ChatAnthropic) {
++            return [new HumanMessage(`Below is the summarized conversation:\n\n${summary}`), ...messages]
+         }
+ 
+-        return returnIMessages
++        return [new this.summaryChatMessageClass(summary), ...messages]
++    }
++
++    private async persistState(
++        sessionId: string,
++        stateKey: string,
++        state: SummaryBufferState | null,
++        summary: string,
++        checkpoint: StoredChatMessage
++    ): Promise<boolean> {
++        const stateRepository = this.appDataSource.getRepository(this.databaseEntities['ConversationSummaryBufferState'])
++        const nextVersion = (state?.version ?? 0) + 1
++        const values = {
++            chatflowid: this.chatflowid,
++            sessionId,
++            nodeId: this.nodeId,
++            summary,
++            cursorCreatedDate: checkpoint.createdDate,
++            cursorMessageId: checkpoint.id,
++            version: nextVersion
++        }
++
++        if (state) {
++            const result = await stateRepository.update({ stateKey, version: state.version }, values)
++            return result.affected === 1
++        }
++
++        try {
++            await stateRepository.insert({ stateKey, ...values })
++            return true
++        } catch (error) {
++            const existingState = await stateRepository.findOneBy({ stateKey })
++            if (existingState) return false
++            throw error
++        }
+     }
+ 
+     async addChatMessages(): Promise<void> {
+@@ -197,9 +363,12 @@ class ConversationSummaryBufferMemoryExtended extends FlowiseSummaryBufferMemory
+         return
+     }
+ 
+-    async clearChatMessages(): Promise<void> {
+-        // clearing chat messages is done on server level
+-        return
++    async clearChatMessages(overrideSessionId = ''): Promise<void> {
++        const id = overrideSessionId ? overrideSessionId : this.sessionId
++        if (!id) return
++
++        const stateRepository = this.appDataSource.getRepository(this.databaseEntities['ConversationSummaryBufferState'])
++        await stateRepository.delete({ stateKey: this.getStateKey(id) })
+     }
+ }
+ 
+diff --git a/packages/server/src/controllers/chat-messages/index.ts b/packages/server/src/controllers/chat-messages/index.ts
+index beefe64226e..61a5d29830c 100644
+--- a/packages/server/src/controllers/chat-messages/index.ts
++++ b/packages/server/src/controllers/chat-messages/index.ts
+@@ -244,7 +244,8 @@ const removeAllChatMessages = async (req: Request, res: Response, next: NextFunc
+                             orgId,
+                             sessionId,
+                             memoryType,
+-                            isClearFromViewMessageDialog
++                            isClearFromViewMessageDialog,
++                            chatflowid
+                         )
+                     } catch (e) {
+                         console.error('Error clearing chat messages')
+@@ -271,7 +272,8 @@ const removeAllChatMessages = async (req: Request, res: Response, next: NextFunc
+                     orgId,
+                     sessionId,
+                     memoryType,
+-                    isClearFromViewMessageDialog
++                    isClearFromViewMessageDialog,
++                    chatflowid
+                 )
+             } catch (e) {
+                 return res.status(500).send('Error clearing chat messages')
+diff --git a/packages/server/src/database/entities/ConversationSummaryBufferState.ts b/packages/server/src/database/entities/ConversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..8d7e05418d2
+--- /dev/null
++++ b/packages/server/src/database/entities/ConversationSummaryBufferState.ts
+@@ -0,0 +1,38 @@
++/* eslint-disable */
++import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm'
++
++@Entity()
++@Index('IDX_conversation_summary_buffer_state_session', ['chatflowid', 'sessionId'])
++export class ConversationSummaryBufferState {
++    @PrimaryColumn({ type: 'varchar', length: 64 })
++    stateKey: string
++
++    @Column({ type: 'uuid' })
++    chatflowid: string
++
++    @Column({ type: 'varchar' })
++    sessionId: string
++
++    @Column({ type: 'varchar' })
++    nodeId: string
++
++    @Column({ type: 'text' })
++    summary: string
++
++    @Column({ nullable: true, type: 'timestamp' })
++    cursorCreatedDate?: Date | null
++
++    @Column({ nullable: true, type: 'uuid' })
++    cursorMessageId?: string | null
++
++    @Column({ type: 'int', default: 1 })
++    version: number
++
++    @Column({ type: 'timestamp' })
++    @CreateDateColumn()
++    createdDate: Date
++
++    @Column({ type: 'timestamp' })
++    @UpdateDateColumn()
++    updatedDate: Date
++}
+diff --git a/packages/server/src/database/entities/index.ts b/packages/server/src/database/entities/index.ts
+index ce8edbefc93..ffdf1819b8c 100644
+--- a/packages/server/src/database/entities/index.ts
++++ b/packages/server/src/database/entities/index.ts
+@@ -1,6 +1,7 @@
+ import { ChatFlow } from './ChatFlow'
+ import { ChatMessage } from './ChatMessage'
+ import { ChatMessageFeedback } from './ChatMessageFeedback'
++import { ConversationSummaryBufferState } from './ConversationSummaryBufferState'
+ import { Credential } from './Credential'
+ import { Tool } from './Tool'
+ import { Assistant } from './Assistant'
+@@ -34,6 +35,7 @@ export const entities = {
+     ChatFlow,
+     ChatMessage,
+     ChatMessageFeedback,
++    ConversationSummaryBufferState,
+     Credential,
+     Tool,
+     Assistant,
+diff --git a/packages/server/src/database/migrations/mariadb/1783987200000-AddConversationSummaryBufferState.ts b/packages/server/src/database/migrations/mariadb/1783987200000-AddConversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..90dfc7cd240
+--- /dev/null
++++ b/packages/server/src/database/migrations/mariadb/1783987200000-AddConversationSummaryBufferState.ts
+@@ -0,0 +1,26 @@
++import { MigrationInterface, QueryRunner } from 'typeorm'
++
++export class AddConversationSummaryBufferState1783987200000 implements MigrationInterface {
++    public async up(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`
++            CREATE TABLE \`conversation_summary_buffer_state\` (
++                \`stateKey\` varchar(64) NOT NULL,
++                \`chatflowid\` varchar(36) NOT NULL,
++                \`sessionId\` varchar(255) NOT NULL,
++                \`nodeId\` varchar(255) NOT NULL,
++                \`summary\` longtext NOT NULL,
++                \`cursorCreatedDate\` datetime(6),
++                \`cursorMessageId\` varchar(36),
++                \`version\` int NOT NULL DEFAULT 1,
++                \`createdDate\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
++                \`updatedDate\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
++                PRIMARY KEY (\`stateKey\`),
++                INDEX \`IDX_conversation_summary_buffer_state_session\` (\`chatflowid\`, \`sessionId\`)
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
++        `)
++    }
++
++    public async down(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query('DROP TABLE `conversation_summary_buffer_state`')
++    }
++}
+diff --git a/packages/server/src/database/migrations/mariadb/index.ts b/packages/server/src/database/migrations/mariadb/index.ts
+index 82ed7dc488f..a06bdbfd845 100644
+--- a/packages/server/src/database/migrations/mariadb/index.ts
++++ b/packages/server/src/database/migrations/mariadb/index.ts
+@@ -47,6 +47,7 @@ import { AddCustomMcpServer1766000000000 } from './1766000000000-AddCustomMcpSer
+ import { AddWebhookSecretToChatFlow1776240000003 } from './1776240000003-AddWebhookSecretToChatFlow'
+ import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMcpServerConfigToChatFlow'
+ import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
++import { AddConversationSummaryBufferState1783987200000 } from './1783987200000-AddConversationSummaryBufferState'
+ 
+ import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/mariadb/1720230151482-AddAuthTables'
+ import { AddWorkspace1725437498242 } from '../../../enterprise/database/migrations/mariadb/1725437498242-AddWorkspace'
+@@ -120,5 +121,6 @@ export const mariadbMigrations = [
+     AddCustomMcpServer1766000000000,
+     AddWebhookSecretToChatFlow1776240000003,
+     AddMcpServerConfigToChatFlow1767000000000,
+-    AddScheduleEntities1772000000000
++    AddScheduleEntities1772000000000,
++    AddConversationSummaryBufferState1783987200000
+ ]
+diff --git a/packages/server/src/database/migrations/mysql/1783987200000-AddConversationSummaryBufferState.ts b/packages/server/src/database/migrations/mysql/1783987200000-AddConversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..2ed977bd128
+--- /dev/null
++++ b/packages/server/src/database/migrations/mysql/1783987200000-AddConversationSummaryBufferState.ts
+@@ -0,0 +1,26 @@
++import { MigrationInterface, QueryRunner } from 'typeorm'
++
++export class AddConversationSummaryBufferState1783987200000 implements MigrationInterface {
++    public async up(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`
++            CREATE TABLE \`conversation_summary_buffer_state\` (
++                \`stateKey\` varchar(64) NOT NULL,
++                \`chatflowid\` varchar(36) NOT NULL,
++                \`sessionId\` varchar(255) NOT NULL,
++                \`nodeId\` varchar(255) NOT NULL,
++                \`summary\` longtext NOT NULL,
++                \`cursorCreatedDate\` datetime(6),
++                \`cursorMessageId\` varchar(36),
++                \`version\` int NOT NULL DEFAULT 1,
++                \`createdDate\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
++                \`updatedDate\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
++                PRIMARY KEY (\`stateKey\`),
++                INDEX \`IDX_conversation_summary_buffer_state_session\` (\`chatflowid\`, \`sessionId\`)
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
++        `)
++    }
++
++    public async down(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query('DROP TABLE `conversation_summary_buffer_state`')
++    }
++}
+diff --git a/packages/server/src/database/migrations/mysql/index.ts b/packages/server/src/database/migrations/mysql/index.ts
+index 58c08d4c7b5..be22bdbb6ff 100644
+--- a/packages/server/src/database/migrations/mysql/index.ts
++++ b/packages/server/src/database/migrations/mysql/index.ts
+@@ -48,6 +48,7 @@ import { AddWebhookSecretToChatFlow1776240000002 } from './1776240000002-AddWebh
+ import { AddCustomMcpServer1766000000000 } from './1766000000000-AddCustomMcpServer'
+ import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMcpServerConfigToChatFlow'
+ import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
++import { AddConversationSummaryBufferState1783987200000 } from './1783987200000-AddConversationSummaryBufferState'
+ 
+ import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/mysql/1720230151482-AddAuthTables'
+ import { AddWorkspace1720230151484 } from '../../../enterprise/database/migrations/mysql/1720230151484-AddWorkspace'
+@@ -122,5 +123,6 @@ export const mysqlMigrations = [
+     AddWebhookSecretToChatFlow1776240000002,
+     AddCustomMcpServer1766000000000,
+     AddMcpServerConfigToChatFlow1767000000000,
+-    AddScheduleEntities1772000000000
++    AddScheduleEntities1772000000000,
++    AddConversationSummaryBufferState1783987200000
+ ]
+diff --git a/packages/server/src/database/migrations/postgres/1783987200000-AddConversationSummaryBufferState.ts b/packages/server/src/database/migrations/postgres/1783987200000-AddConversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..99a76ff7ba3
+--- /dev/null
++++ b/packages/server/src/database/migrations/postgres/1783987200000-AddConversationSummaryBufferState.ts
+@@ -0,0 +1,29 @@
++import { MigrationInterface, QueryRunner } from 'typeorm'
++
++export class AddConversationSummaryBufferState1783987200000 implements MigrationInterface {
++    public async up(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`
++            CREATE TABLE conversation_summary_buffer_state (
++                "stateKey" varchar(64) NOT NULL,
++                "chatflowid" uuid NOT NULL,
++                "sessionId" varchar NOT NULL,
++                "nodeId" varchar NOT NULL,
++                "summary" text NOT NULL,
++                "cursorCreatedDate" timestamp,
++                "cursorMessageId" uuid,
++                "version" integer NOT NULL DEFAULT 1,
++                "createdDate" timestamp NOT NULL DEFAULT now(),
++                "updatedDate" timestamp NOT NULL DEFAULT now(),
++                CONSTRAINT "PK_conversation_summary_buffer_state" PRIMARY KEY ("stateKey")
++            );
++        `)
++        await queryRunner.query(
++            `CREATE INDEX "IDX_conversation_summary_buffer_state_session" ON conversation_summary_buffer_state ("chatflowid", "sessionId");`
++        )
++    }
++
++    public async down(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`DROP INDEX "IDX_conversation_summary_buffer_state_session"`)
++        await queryRunner.query(`DROP TABLE conversation_summary_buffer_state`)
++    }
++}
+diff --git a/packages/server/src/database/migrations/postgres/index.ts b/packages/server/src/database/migrations/postgres/index.ts
+index 750d7daf647..41678a74144 100644
+--- a/packages/server/src/database/migrations/postgres/index.ts
++++ b/packages/server/src/database/migrations/postgres/index.ts
+@@ -46,6 +46,7 @@ import { AddWebhookSecretToChatFlow1776240000001 } from './1776240000001-AddWebh
+ import { AddCustomMcpServer1766000000000 } from './1766000000000-AddCustomMcpServer'
+ import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMcpServerConfigToChatFlow'
+ import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
++import { AddConversationSummaryBufferState1783987200000 } from './1783987200000-AddConversationSummaryBufferState'
+ 
+ import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/postgres/1720230151482-AddAuthTables'
+ import { AddWorkspace1720230151484 } from '../../../enterprise/database/migrations/postgres/1720230151484-AddWorkspace'
+@@ -118,5 +119,6 @@ export const postgresMigrations = [
+     AddWebhookSecretToChatFlow1776240000001,
+     AddCustomMcpServer1766000000000,
+     AddMcpServerConfigToChatFlow1767000000000,
+-    AddScheduleEntities1772000000000
++    AddScheduleEntities1772000000000,
++    AddConversationSummaryBufferState1783987200000
+ ]
+diff --git a/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.test.ts b/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.test.ts
+new file mode 100644
+index 00000000000..0b2cef9f7a8
+--- /dev/null
++++ b/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.test.ts
+@@ -0,0 +1,56 @@
++import sqlite3 from 'sqlite3'
++import type { QueryRunner } from 'typeorm'
++import { AddConversationSummaryBufferState1783987200000 } from './1783987200000-AddConversationSummaryBufferState'
++
++const run = (database: sqlite3.Database, statement: string): Promise<void> =>
++    new Promise((resolve, reject) => {
++        database.run(statement, (error) => (error ? reject(error) : resolve()))
++    })
++
++const get = <T>(database: sqlite3.Database, statement: string): Promise<T | undefined> =>
++    new Promise((resolve, reject) => {
++        database.get(statement, (error, result) => (error ? reject(error) : resolve(result as T | undefined)))
++    })
++
++const close = (database: sqlite3.Database): Promise<void> =>
++    new Promise((resolve, reject) => {
++        database.close((error) => (error ? reject(error) : resolve()))
++    })
++
++describe('AddConversationSummaryBufferState1783987200000', () => {
++    it('creates and removes the summary checkpoint table and index', async () => {
++        const database = new sqlite3.Database(':memory:')
++        const queryRunner = {
++            query: (statement: string) => run(database, statement)
++        } as QueryRunner
++        const migration = new AddConversationSummaryBufferState1783987200000()
++
++        try {
++            await migration.up(queryRunner)
++
++            await expect(
++                get<{ name: string }>(
++                    database,
++                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_summary_buffer_state'"
++                )
++            ).resolves.toEqual({ name: 'conversation_summary_buffer_state' })
++            await expect(
++                get<{ name: string }>(
++                    database,
++                    "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'IDX_conversation_summary_buffer_state_session'"
++                )
++            ).resolves.toEqual({ name: 'IDX_conversation_summary_buffer_state_session' })
++
++            await migration.down(queryRunner)
++
++            await expect(
++                get<{ name: string }>(
++                    database,
++                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_summary_buffer_state'"
++                )
++            ).resolves.toBeUndefined()
++        } finally {
++            await close(database)
++        }
++    })
++})
+diff --git a/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.ts b/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..6dd66a700a2
+--- /dev/null
++++ b/packages/server/src/database/migrations/sqlite/1783987200000-AddConversationSummaryBufferState.ts
+@@ -0,0 +1,28 @@
++import { MigrationInterface, QueryRunner } from 'typeorm'
++
++export class AddConversationSummaryBufferState1783987200000 implements MigrationInterface {
++    public async up(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`
++            CREATE TABLE "conversation_summary_buffer_state" (
++                "stateKey" varchar(64) PRIMARY KEY NOT NULL,
++                "chatflowid" varchar NOT NULL,
++                "sessionId" varchar NOT NULL,
++                "nodeId" varchar NOT NULL,
++                "summary" text NOT NULL,
++                "cursorCreatedDate" datetime,
++                "cursorMessageId" varchar,
++                "version" integer NOT NULL DEFAULT 1,
++                "createdDate" datetime NOT NULL DEFAULT (datetime('now')),
++                "updatedDate" datetime NOT NULL DEFAULT (datetime('now'))
++            );
++        `)
++        await queryRunner.query(
++            `CREATE INDEX "IDX_conversation_summary_buffer_state_session" ON "conversation_summary_buffer_state" ("chatflowid", "sessionId");`
++        )
++    }
++
++    public async down(queryRunner: QueryRunner): Promise<void> {
++        await queryRunner.query(`DROP INDEX "IDX_conversation_summary_buffer_state_session"`)
++        await queryRunner.query(`DROP TABLE "conversation_summary_buffer_state"`)
++    }
++}
+diff --git a/packages/server/src/database/migrations/sqlite/index.ts b/packages/server/src/database/migrations/sqlite/index.ts
+index db277bacda0..f89b99a6e0d 100644
+--- a/packages/server/src/database/migrations/sqlite/index.ts
++++ b/packages/server/src/database/migrations/sqlite/index.ts
+@@ -44,6 +44,7 @@ import { AddWebhookSecretToChatFlow1776240000000 } from './1776240000000-AddWebh
+ import { AddCustomMcpServer1766000000000 } from './1766000000000-AddCustomMcpServer'
+ import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMcpServerConfigToChatFlow'
+ import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
++import { AddConversationSummaryBufferState1783987200000 } from './1783987200000-AddConversationSummaryBufferState'
+ 
+ import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/sqlite/1720230151482-AddAuthTables'
+ import { AddWorkspace1720230151484 } from '../../../enterprise/database/migrations/sqlite/1720230151484-AddWorkspace'
+@@ -114,5 +115,6 @@ export const sqliteMigrations = [
+     AddWebhookSecretToChatFlow1776240000000,
+     AddCustomMcpServer1766000000000,
+     AddMcpServerConfigToChatFlow1767000000000,
+-    AddScheduleEntities1772000000000
++    AddScheduleEntities1772000000000,
++    AddConversationSummaryBufferState1783987200000
+ ]
+diff --git a/packages/server/src/services/chat-messages/index.ts b/packages/server/src/services/chat-messages/index.ts
+index 93adf3e5bfc..643604d28ea 100644
+--- a/packages/server/src/services/chat-messages/index.ts
++++ b/packages/server/src/services/chat-messages/index.ts
+@@ -11,6 +11,7 @@ import { utilAddChatMessage } from '../../utils/addChatMesage'
+ import { utilGetChatMessage } from '../../utils/getChatMessage'
+ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+ import { updateStorageUsage } from '../../utils/quotaUsage'
++import { invalidateConversationSummaryBufferStates } from '../../utils/conversationSummaryBufferState'
+ 
+ // Add chatmessages for chatflowid
+ const createChatMessage = async (chatMessage: Partial<IChatMessage>) => {
+@@ -117,6 +118,15 @@ const removeAllChatMessages = async (
+ ): Promise<DeleteResult> => {
+     try {
+         const appServer = getRunningExpressApp()
++        const chatMessageRepository = appServer.AppDataSource.getRepository(ChatMessage)
++        const affectedMessages = await chatMessageRepository.find({
++            select: ['sessionId'],
++            where: deleteOptions
++        })
++        const sessionIds = Array.from(
++            new Set(affectedMessages.map((message) => message.sessionId).filter((id): id is string => Boolean(id)))
++        )
++        await invalidateConversationSummaryBufferStates(appServer.AppDataSource, chatflowid, sessionIds)
+ 
+         // Remove all related feedback records
+         const feedbackDeleteOptions: FindOptionsWhere<ChatMessageFeedback> = { chatId }
+@@ -131,7 +141,7 @@ const removeAllChatMessages = async (
+                 // Don't throw error if file deletion fails because file might not exist
+             }
+         }
+-        const dbResponse = await appServer.AppDataSource.getRepository(ChatMessage).delete(deleteOptions)
++        const dbResponse = await chatMessageRepository.delete(deleteOptions)
+         return dbResponse
+     } catch (error) {
+         throw new InternalFlowiseError(
+@@ -155,6 +165,8 @@ const removeChatMessagesByMessageIds = async (
+         // Get messages before deletion to check for executionId
+         const messages = await appServer.AppDataSource.getRepository(ChatMessage).findByIds(messageIds)
+         const executionIds = messages.map((msg) => msg.executionId).filter(Boolean)
++        const sessionIds = Array.from(new Set(messages.map((message) => message.sessionId).filter((id): id is string => Boolean(id))))
++        await invalidateConversationSummaryBufferStates(appServer.AppDataSource, chatflowid, sessionIds)
+ 
+         for (const [composite_key] of chatIdMap) {
+             const [chatId] = composite_key.split('_')
+diff --git a/packages/server/src/services/chatflows/index.ts b/packages/server/src/services/chatflows/index.ts
+index 140cc9d31a6..af37558724b 100644
+--- a/packages/server/src/services/chatflows/index.ts
++++ b/packages/server/src/services/chatflows/index.ts
+@@ -30,6 +30,7 @@ import {
+ import { containsBase64File, updateFlowDataWithFilePaths } from '../../utils/fileRepository'
+ import { sanitizeAllowedUploadMimeTypesFromConfig } from '../../utils/fileValidation'
+ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
++import { invalidateConversationSummaryBufferStates } from '../../utils/conversationSummaryBufferState'
+ import { utilGetUploadsConfig } from '../../utils/getUploadsConfig'
+ import logger from '../../utils/logger'
+ import { updateStorageUsage } from '../../utils/quotaUsage'
+@@ -140,6 +141,9 @@ const deleteChatflow = async (
+         // Delete all chat messages
+         await appServer.AppDataSource.getRepository(ChatMessage).delete({ chatflowid: chatflowId })
+ 
++        // Delete all persisted conversation summary buffer states
++        await invalidateConversationSummaryBufferStates(appServer.AppDataSource, chatflowId)
++
+         // Delete all chat feedback
+         await appServer.AppDataSource.getRepository(ChatMessageFeedback).delete({ chatflowid: chatflowId })
+ 
+diff --git a/packages/server/src/utils/buildAgentGraph.ts b/packages/server/src/utils/buildAgentGraph.ts
+index 8ba0b42cd16..8010fb0c45a 100644
+--- a/packages/server/src/utils/buildAgentGraph.ts
++++ b/packages/server/src/utils/buildAgentGraph.ts
+@@ -392,7 +392,7 @@ export const buildAgentGraph = async ({
+             }
+         } catch (e) {
+             // clear agent memory because checkpoints were saved during runtime
+-            await clearSessionMemory(nodes, componentNodes, chatId, appDataSource, orgId, sessionId)
++            await clearSessionMemory(nodes, componentNodes, chatId, appDataSource, orgId, sessionId, undefined, undefined, chatflowid)
+             if (getErrorMessage(e).includes('Aborted')) {
+                 if (shouldStreamResponse && sseStreamer) {
+                     sseStreamer.streamAbortEvent(chatId)
+diff --git a/packages/server/src/utils/conversationSummaryBufferState.test.ts b/packages/server/src/utils/conversationSummaryBufferState.test.ts
+new file mode 100644
+index 00000000000..8f11cf9e07a
+--- /dev/null
++++ b/packages/server/src/utils/conversationSummaryBufferState.test.ts
+@@ -0,0 +1,35 @@
++import { ConversationSummaryBufferState } from '../database/entities/ConversationSummaryBufferState'
++import { invalidateConversationSummaryBufferStates } from './conversationSummaryBufferState'
++
++describe('invalidateConversationSummaryBufferStates', () => {
++    const deleteStates = jest.fn()
++    const appDataSource = {
++        getRepository: jest.fn(() => ({ delete: deleteStates }))
++    }
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('invalidates selected sessions when chat messages are deleted', async () => {
++        await invalidateConversationSummaryBufferStates(appDataSource as never, 'flow-1', ['session-1', 'session-2'])
++
++        expect(appDataSource.getRepository).toHaveBeenCalledWith(ConversationSummaryBufferState)
++        expect(deleteStates).toHaveBeenCalledWith({
++            chatflowid: 'flow-1',
++            sessionId: { type: 'in', value: ['session-1', 'session-2'] }
++        })
++    })
++
++    it('invalidates every state when a chatflow is deleted', async () => {
++        await invalidateConversationSummaryBufferStates(appDataSource as never, 'flow-1')
++
++        expect(deleteStates).toHaveBeenCalledWith({ chatflowid: 'flow-1' })
++    })
++
++    it('does not issue an unscoped delete for an empty session list', async () => {
++        await invalidateConversationSummaryBufferStates(appDataSource as never, 'flow-1', [])
++
++        expect(deleteStates).not.toHaveBeenCalled()
++    })
++})
+diff --git a/packages/server/src/utils/conversationSummaryBufferState.ts b/packages/server/src/utils/conversationSummaryBufferState.ts
+new file mode 100644
+index 00000000000..e32de4072ad
+--- /dev/null
++++ b/packages/server/src/utils/conversationSummaryBufferState.ts
+@@ -0,0 +1,15 @@
++import { DataSource, In } from 'typeorm'
++import { ConversationSummaryBufferState } from '../database/entities/ConversationSummaryBufferState'
++
++export const invalidateConversationSummaryBufferStates = async (
++    appDataSource: DataSource,
++    chatflowid: string,
++    sessionIds?: string[]
++): Promise<void> => {
++    if (sessionIds && !sessionIds.length) return
++
++    await appDataSource.getRepository(ConversationSummaryBufferState).delete({
++        chatflowid,
++        ...(sessionIds ? { sessionId: In(sessionIds) } : {})
++    })
++}
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 7a558407c7f..54d68bd172c 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -45,6 +45,7 @@ import { AES, enc } from 'crypto-js'
+ 
+ import { ChatFlow } from '../database/entities/ChatFlow'
+ import { ChatMessage } from '../database/entities/ChatMessage'
++import { ConversationSummaryBufferState } from '../database/entities/ConversationSummaryBufferState'
+ import { Credential } from '../database/entities/Credential'
+ import { Tool } from '../database/entities/Tool'
+ import { Assistant } from '../database/entities/Assistant'
+@@ -95,6 +96,7 @@ if (USE_AWS_SECRETS_MANAGER) {
+ export const databaseEntities: IDatabaseEntity = {
+     ChatFlow: ChatFlow,
+     ChatMessage: ChatMessage,
++    ConversationSummaryBufferState: ConversationSummaryBufferState,
+     Tool: Tool,
+     Credential: Credential,
+     Lead: Lead,
+@@ -764,6 +766,7 @@ export const buildFlow = async ({
+  * @param {string} sessionId
+  * @param {string} memoryType
+  * @param {string} isClearFromViewMessageDialog
++ * @param {string} chatflowid
+  */
+ export const clearSessionMemory = async (
+     reactFlowNodes: IReactFlowNode[],
+@@ -773,7 +776,8 @@ export const clearSessionMemory = async (
+     orgId?: string,
+     sessionId?: string,
+     memoryType?: string,
+-    isClearFromViewMessageDialog?: string
++    isClearFromViewMessageDialog?: string,
++    chatflowid?: string
+ ) => {
+     for (const node of reactFlowNodes) {
+         if (node.data.category !== 'Memory' && node.data.type !== 'OpenAIAssistant') continue
+@@ -784,7 +788,7 @@ export const clearSessionMemory = async (
+         const nodeInstanceFilePath = componentNodes[node.data.name].filePath as string
+         const nodeModule = await import(nodeInstanceFilePath)
+         const newNodeInstance = new nodeModule.nodeClass()
+-        const options: ICommonObject = { orgId, chatId, appDataSource, databaseEntities, logger }
++        const options: ICommonObject = { orgId, chatId, chatflowid, appDataSource, databaseEntities, logger }
+ 
+         // SessionId always take priority first because it is the sessionId used for 3rd party memory node
+         if (sessionId && node.data.inputs) {

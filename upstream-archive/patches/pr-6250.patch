@@ -1,0 +1,684 @@
+From 7f7c8ed5f6f3ba10811cf5d3f10ad2e583decd7e Mon Sep 17 00:00:00 2001
+From: manas kumar <manas.kumar.ug23@nsut.ac.in>
+Date: Mon, 20 Apr 2026 09:55:27 +0530
+Subject: [PATCH 1/2] feat(components): add extra_body support to
+ OpenAI-compatible chat model nodes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds an "Additional Body Params (JSON)" input to all OpenAI-compatible
+chat model nodes. The JSON is merged into LangChain's modelKwargs, which
+is spread into the final request body sent to the provider — matching
+the semantics of the OpenAI SDK's extra_body parameter.
+
+Enables use cases such as vLLM-served Qwen3 models where reasoning
+behavior is controlled via non-standard fields, e.g.:
+  { "chat_template_kwargs": { "enable_thinking": false } }
+
+Affected nodes: ChatOpenAI, ChatOpenAICustom, ChatLocalAI,
+AzureChatOpenAI, ChatOpenRouter, ChatCerebras, ChatCometAPI,
+ChatNvdiaNIM, ChatSambanova, ChatLitellm, ChatFireworks.
+
+The field is optional and additive — existing flows are unaffected.
+Invalid JSON throws a clear error at node init.
+---
+ .../AzureChatOpenAI/AzureChatOpenAI.ts        | 18 ++++++++++++++++++
+ .../chatmodels/ChatCerebras/ChatCerebras.ts   | 18 ++++++++++++++++++
+ .../chatmodels/ChatCometAPI/ChatCometAPI.ts   | 18 ++++++++++++++++++
+ .../chatmodels/ChatFireworks/ChatFireworks.ts | 18 ++++++++++++++++++
+ .../chatmodels/ChatLitellm/ChatLitellm.ts     | 19 +++++++++++++++++++
+ .../chatmodels/ChatLocalAI/ChatLocalAI.ts     | 19 +++++++++++++++++++
+ .../chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts   | 18 ++++++++++++++++++
+ .../nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts | 19 +++++++++++++++++++
+ .../ChatOpenAICustom/ChatOpenAICustom.ts      | 19 +++++++++++++++++++
+ .../ChatOpenRouter/ChatOpenRouter.ts          | 18 ++++++++++++++++++
+ .../chatmodels/ChatSambanova/ChatSambanova.ts | 18 ++++++++++++++++++
+ 11 files changed, 202 insertions(+)
+
+diff --git a/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts b/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
+index 24eb2c3f690..78c8d0d85d4 100644
+--- a/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
+@@ -191,6 +191,14 @@ class AzureChatOpenAI_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -214,6 +222,7 @@ class AzureChatOpenAI_ChatModels implements INode {
+         const topP = nodeData.inputs?.topP as string
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const reasoningEffort = nodeData.inputs?.reasoningEffort as OpenAIClient.Chat.ChatCompletionReasoningEffort | null
+         const reasoningSummary = nodeData.inputs?.reasoningSummary as 'auto' | 'concise' | 'detailed' | null
+ 
+@@ -265,6 +274,15 @@ class AzureChatOpenAI_ChatModels implements INode {
+             obj.reasoning = reasoning
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the AzureChatOpenAI's Additional Body Params: " + exception)
++            }
++        }
++
+         const multiModalOption: IMultiModalOption = {
+             image: {
+                 allowImageUploads: allowImageUploads ?? false
+diff --git a/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts b/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
+index 88b8dc7b678..e2eb4ea242a 100644
+--- a/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
++++ b/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
+@@ -118,6 +118,14 @@ class ChatCerebras_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -139,6 +147,7 @@ class ChatCerebras_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const cache = nodeData.inputs?.cache as BaseCache
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+@@ -182,6 +191,15 @@ class ChatCerebras_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatCerebras's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI(obj)
+         return model
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts b/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
+index 3dc709729b5..9bea1560230 100644
+--- a/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
++++ b/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
+@@ -100,6 +100,14 @@ class ChatCometAPI_ChatModels implements INode {
+                 optional: true,
+                 additionalParams: true,
+                 description: 'Additional options to pass to the CometAPI client. This should be a JSON object.'
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -113,6 +121,7 @@ class ChatCometAPI_ChatModels implements INode {
+         const presencePenalty = nodeData.inputs?.presencePenalty as string
+         const streaming = nodeData.inputs?.streaming as boolean
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+ 
+         if (nodeData.inputs?.credentialId) {
+             nodeData.credential = nodeData.inputs?.credentialId
+@@ -162,6 +171,15 @@ class ChatCometAPI_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatCometAPI's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI({
+             ...obj,
+             configuration: {
+diff --git a/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts b/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
+index 01637bdac8f..8cefc5850b1 100644
+--- a/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
++++ b/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
+@@ -58,6 +58,14 @@ class ChatFireworks_ChatModels implements INode {
+                 type: 'boolean',
+                 default: true,
+                 optional: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -67,6 +75,7 @@ class ChatFireworks_ChatModels implements INode {
+         const temperature = nodeData.inputs?.temperature as string
+         const modelName = nodeData.inputs?.modelName as string
+         const streaming = nodeData.inputs?.streaming as boolean
++        const extraBody = nodeData.inputs?.extraBody
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const fireworksApiKey = getCredentialParam('fireworksApiKey', credentialData, nodeData)
+@@ -79,6 +88,15 @@ class ChatFireworks_ChatModels implements INode {
+         }
+         if (cache) obj.cache = cache
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatFireworks's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatFireworks(obj)
+         return model
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+index a444d1ac79d..2f8e8274de4 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+@@ -100,6 +100,15 @@ class ChatLitellm_ChatModels implements INode {
+                 step: 1,
+                 optional: true,
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description:
++                    "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`. Useful for LiteLLM proxy features or backend-specific parameters.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -114,6 +123,7 @@ class ChatLitellm_ChatModels implements INode {
+         const topP = nodeData.inputs?.topP as string
+         const timeout = nodeData.inputs?.timeout as string
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++        const extraBody = nodeData.inputs?.extraBody
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const apiKey = getCredentialParam('litellmApiKey', credentialData, nodeData)
+@@ -140,6 +150,15 @@ class ChatLitellm_ChatModels implements INode {
+             obj.apiKey = apiKey
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatLitellm's Additional Body Params: " + exception)
++            }
++        }
++
+         const multiModalOption: IMultiModalOption = {
+             image: {
+                 allowImageUploads: allowImageUploads ?? false
+diff --git a/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts b/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
+index c7233004131..447336f8f5f 100644
+--- a/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
++++ b/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
+@@ -89,6 +89,15 @@ class ChatLocalAI_ChatModels implements INode {
+                 step: 1,
+                 optional: true,
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK\'s `extra_body`. Useful for providers like vLLM that accept non-standard parameters, e.g. {"chat_template_kwargs": {"enable_thinking": false}}',
++                additionalParams: true
+             }
+         ]
+     }
+@@ -101,6 +110,7 @@ class ChatLocalAI_ChatModels implements INode {
+         const timeout = nodeData.inputs?.timeout as string
+         const basePath = nodeData.inputs?.basePath as string
+         const streaming = nodeData.inputs?.streaming as boolean
++        const extraBody = nodeData.inputs?.extraBody
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const localAIApiKey = getCredentialParam('localAIApiKey', credentialData, nodeData)
+@@ -125,6 +135,15 @@ class ChatLocalAI_ChatModels implements INode {
+         }
+         if (basePath) obj.configuration = { baseURL: basePath }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatLocalAI's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI(obj)
+ 
+         return model
+diff --git a/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts b/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
+index 4ef8cf61893..2c73ec84ac5 100644
+--- a/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
++++ b/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
+@@ -113,6 +113,14 @@ class ChatNvdiaNIM_ChatModels implements INode {
+                 type: 'json',
+                 optional: true,
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -128,6 +136,7 @@ class ChatNvdiaNIM_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = nodeData.inputs?.basePath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const cache = nodeData.inputs?.cache as BaseCache
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+@@ -165,6 +174,15 @@ class ChatNvdiaNIM_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the Chat NVIDIA NIM's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI(obj)
+         return model
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index 03c13fee9b0..2f9f858f482 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -207,6 +207,15 @@ class ChatOpenAI_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK\'s `extra_body`. Useful for providers like vLLM that accept non-standard parameters, e.g. {"chat_template_kwargs": {"enable_thinking": false}}',
++                additionalParams: true
+             }
+         ]
+     }
+@@ -231,6 +240,7 @@ class ChatOpenAI_ChatModels implements INode {
+         const strictToolCalling = nodeData.inputs?.strictToolCalling as boolean
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const reasoningEffort = nodeData.inputs?.reasoningEffort as OpenAIClient.ReasoningEffort | null
+         const reasoningSummary = nodeData.inputs?.reasoningSummary as 'auto' | 'concise' | 'detailed' | null
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
+@@ -293,6 +303,15 @@ class ChatOpenAI_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOpenAI's Additional Body Params: " + exception)
++            }
++        }
++
+         const multiModalOption: IMultiModalOption = {
+             image: {
+                 allowImageUploads: allowImageUploads ?? false
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index faf2ebd8b37..f0d17ac0c3b 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -115,6 +115,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description:
++                    'Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK\'s `extra_body`. Useful for providers like vLLM that accept non-standard parameters, e.g. {"chat_template_kwargs": {"enable_thinking": false}}',
++                additionalParams: true
+             }
+         ]
+     }
+@@ -130,6 +139,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const cache = nodeData.inputs?.cache as BaseCache
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+@@ -167,6 +177,15 @@ class ChatOpenAICustom_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOpenAICustom's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI(obj)
+         return model
+     }
+diff --git a/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts b/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
+index 3cd343ed944..1e029f5b39d 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
+@@ -126,6 +126,14 @@ class ChatOpenRouter_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -141,6 +149,7 @@ class ChatOpenRouter_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = (nodeData.inputs?.basepath as string) || 'https://openrouter.ai/api/v1'
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+         const cache = nodeData.inputs?.cache as BaseCache
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
+ 
+@@ -179,6 +188,15 @@ class ChatOpenRouter_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatOpenRouter's Additional Body Params: " + exception)
++            }
++        }
++
+         const multiModalOption: IMultiModalOption = {
+             image: {
+                 allowImageUploads: allowImageUploads ?? false
+diff --git a/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts b/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
+index 7ef36545592..18dbbdc130e 100644
+--- a/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
++++ b/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
+@@ -75,6 +75,14 @@ class ChatSambanova_ChatModels implements INode {
+                 optional: true,
+                 description: 'Default headers to include with every request to the API.',
+                 additionalParams: true
++            },
++            {
++                label: 'Additional Body Params (JSON)',
++                name: 'extraBody',
++                type: 'json',
++                optional: true,
++                description: "Additional fields to merge into the request body sent to the API. Equivalent to OpenAI SDK's `extra_body`.",
++                additionalParams: true
+             }
+         ]
+     }
+@@ -86,6 +94,7 @@ class ChatSambanova_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+         const basePath = nodeData.inputs?.basepath as string
+         const baseOptions = nodeData.inputs?.baseOptions
++        const extraBody = nodeData.inputs?.extraBody
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const sambanovaApiKey = getCredentialParam('sambanovaApiKey', credentialData, nodeData)
+@@ -117,6 +126,15 @@ class ChatSambanova_ChatModels implements INode {
+             }
+         }
+ 
++        if (extraBody) {
++            try {
++                const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
++                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++            } catch (exception) {
++                throw new Error("Invalid JSON in the ChatSambanova's Additional Body Params: " + exception)
++            }
++        }
++
+         const model = new ChatOpenAI(obj)
+         return model
+     }
+
+From c58b665f84dda6834a0a731f32e68a8d7d44ff47 Mon Sep 17 00:00:00 2001
+From: manas kumar <manas.kumar.ug23@nsut.ac.in>
+Date: Mon, 20 Apr 2026 10:07:43 +0530
+Subject: [PATCH 2/2] refactor(components): drop redundant ?? {} fallback when
+ spreading modelKwargs
+
+Spreading null/undefined inside an object literal is a no-op per spec, so
+`{ ...(obj.modelKwargs ?? {}), ...parsedExtraBody }` simplifies to
+`{ ...obj.modelKwargs, ...parsedExtraBody }`.
+
+Addresses review feedback from gemini-code-assist.
+---
+ .../nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts         | 2 +-
+ .../components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts    | 2 +-
+ .../components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts    | 2 +-
+ .../components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts  | 2 +-
+ packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts | 2 +-
+ packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts | 2 +-
+ .../components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts    | 2 +-
+ packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts   | 2 +-
+ .../nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts       | 2 +-
+ .../nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts           | 2 +-
+ .../components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts  | 2 +-
+ 11 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts b/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
+index 78c8d0d85d4..df2beb7fd0c 100644
+--- a/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/AzureChatOpenAI/AzureChatOpenAI.ts
+@@ -277,7 +277,7 @@ class AzureChatOpenAI_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the AzureChatOpenAI's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts b/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
+index e2eb4ea242a..2da1400599a 100644
+--- a/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
++++ b/packages/components/nodes/chatmodels/ChatCerebras/ChatCerebras.ts
+@@ -194,7 +194,7 @@ class ChatCerebras_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatCerebras's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts b/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
+index 9bea1560230..a7247f86add 100644
+--- a/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
++++ b/packages/components/nodes/chatmodels/ChatCometAPI/ChatCometAPI.ts
+@@ -174,7 +174,7 @@ class ChatCometAPI_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatCometAPI's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts b/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
+index 8cefc5850b1..9e802d5cc80 100644
+--- a/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
++++ b/packages/components/nodes/chatmodels/ChatFireworks/ChatFireworks.ts
+@@ -91,7 +91,7 @@ class ChatFireworks_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatFireworks's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+index 2f8e8274de4..7a89476808d 100644
+--- a/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
++++ b/packages/components/nodes/chatmodels/ChatLitellm/ChatLitellm.ts
+@@ -153,7 +153,7 @@ class ChatLitellm_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatLitellm's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts b/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
+index 447336f8f5f..4433a63a023 100644
+--- a/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
++++ b/packages/components/nodes/chatmodels/ChatLocalAI/ChatLocalAI.ts
+@@ -138,7 +138,7 @@ class ChatLocalAI_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatLocalAI's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts b/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
+index 2c73ec84ac5..6efc6778d3b 100644
+--- a/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
++++ b/packages/components/nodes/chatmodels/ChatNvdiaNIM/ChatNvdiaNIM.ts
+@@ -177,7 +177,7 @@ class ChatNvdiaNIM_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the Chat NVIDIA NIM's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index 2f9f858f482..6fb11b99af5 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -306,7 +306,7 @@ class ChatOpenAI_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatOpenAI's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+index f0d17ac0c3b..c5062194292 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAICustom/ChatOpenAICustom.ts
+@@ -180,7 +180,7 @@ class ChatOpenAICustom_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatOpenAICustom's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts b/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
+index 1e029f5b39d..cbd50e33e7f 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenRouter/ChatOpenRouter.ts
+@@ -191,7 +191,7 @@ class ChatOpenRouter_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatOpenRouter's Additional Body Params: " + exception)
+             }
+diff --git a/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts b/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
+index 18dbbdc130e..0115c2182e5 100644
+--- a/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
++++ b/packages/components/nodes/chatmodels/ChatSambanova/ChatSambanova.ts
+@@ -129,7 +129,7 @@ class ChatSambanova_ChatModels implements INode {
+         if (extraBody) {
+             try {
+                 const parsedExtraBody = typeof extraBody === 'object' ? extraBody : JSON.parse(extraBody)
+-                obj.modelKwargs = { ...(obj.modelKwargs ?? {}), ...parsedExtraBody }
++                obj.modelKwargs = { ...obj.modelKwargs, ...parsedExtraBody }
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatSambanova's Additional Body Params: " + exception)
+             }

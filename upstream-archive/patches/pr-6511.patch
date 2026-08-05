@@ -1,0 +1,1755 @@
+From e22c06a46f5d2a4c01f9e5d3b0c9bb8f53d0bf71 Mon Sep 17 00:00:00 2001
+From: us <rahmetsaritekin@gmail.com>
+Date: Sat, 13 Jun 2026 20:46:09 +0300
+Subject: [PATCH 1/2] feat: add fastCRW document loader node
+
+---
+ .../credentials/CrwApi.credential.ts          |   33 +
+ .../nodes/documentloaders/Crw/Crw.test.ts     |  128 ++
+ .../nodes/documentloaders/Crw/Crw.ts          | 1045 +++++++++++++++++
+ .../nodes/documentloaders/Crw/crw.png         |  Bin 0 -> 23765 bytes
+ 4 files changed, 1206 insertions(+)
+ create mode 100644 packages/components/credentials/CrwApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/Crw/Crw.test.ts
+ create mode 100644 packages/components/nodes/documentloaders/Crw/Crw.ts
+ create mode 100644 packages/components/nodes/documentloaders/Crw/crw.png
+
+diff --git a/packages/components/credentials/CrwApi.credential.ts b/packages/components/credentials/CrwApi.credential.ts
+new file mode 100644
+index 00000000000..4bfb1596669
+--- /dev/null
++++ b/packages/components/credentials/CrwApi.credential.ts
+@@ -0,0 +1,33 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class CrwApiCredential implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'fastCRW API'
++        this.name = 'crwApi'
++        this.version = 1.0
++        this.description =
++            'You can find the fastCRW API token on your <a target="_blank" href="https://fastcrw.com/">fastCRW account</a> page. Leave the token empty when self-hosting without auth.'
++        this.inputs = [
++            {
++                label: 'fastCRW API',
++                name: 'crwApiToken',
++                type: 'password',
++                optional: true
++            },
++            {
++                label: 'fastCRW API URL',
++                name: 'crwApiUrl',
++                type: 'string',
++                default: 'https://fastcrw.com/api'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: CrwApiCredential }
+diff --git a/packages/components/nodes/documentloaders/Crw/Crw.test.ts b/packages/components/nodes/documentloaders/Crw/Crw.test.ts
+new file mode 100644
+index 00000000000..702c85987ec
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Crw/Crw.test.ts
+@@ -0,0 +1,128 @@
++jest.mock('../../../src/httpSecurity', () => ({
++    secureAxiosRequest: jest.fn()
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn(),
++    handleEscapeCharacters: jest.fn((value) => value)
++}))
++
++import { secureAxiosRequest } from '../../../src/httpSecurity'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: Crw } = require('./Crw')
++
++describe('Crw', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('exposes the expected node metadata and fastCRW credential', () => {
++        const node = new Crw()
++
++        expect(node.name).toBe('crw')
++        expect(node.label).toBe('fastCRW')
++        expect(node.type).toBe('Document')
++        expect(node.category).toBe('Document Loaders')
++        expect(node.credential.credentialNames).toEqual(['crwApi'])
++    })
++
++    it('scrapes a URL using the configured credential and base URL', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            crwApiToken: 'crw-test-key',
++            crwApiUrl: 'https://fastcrw.com/api'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData, _nodeData, fallback) =>
++            credentialData[key] ?? fallback
++        )
++        ;(secureAxiosRequest as jest.Mock).mockResolvedValue({
++            status: 200,
++            data: {
++                success: true,
++                data: {
++                    markdown: '# Hello fastCRW',
++                    metadata: {
++                        title: 'Example',
++                        sourceURL: 'https://example.com',
++                        description: 'An example page',
++                        language: 'en',
++                        statusCode: 200
++                    }
++                }
++            }
++        })
++
++        const node = new Crw()
++        const docs = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    url: 'https://example.com',
++                    crawlerType: 'scrape'
++                },
++                outputs: { output: 'document' }
++            },
++            '',
++            {}
++        )
++
++        expect(secureAxiosRequest).toHaveBeenCalledTimes(1)
++        const requestArgs = (secureAxiosRequest as jest.Mock).mock.calls[0][0]
++        expect(requestArgs.method).toBe('POST')
++        expect(requestArgs.url).toBe('https://fastcrw.com/api/v1/scrape')
++        expect(requestArgs.data.url).toBe('https://example.com')
++        expect(requestArgs.headers.Authorization).toBe('Bearer crw-test-key')
++
++        expect(docs).toHaveLength(1)
++        expect(docs[0].pageContent).toBe('# Hello fastCRW')
++        expect(docs[0].metadata.source).toBe('https://example.com')
++        expect(docs[0].metadata.title).toBe('Example')
++    })
++
++    it('searches the web and maps results into documents', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({
++            crwApiToken: 'crw-test-key',
++            crwApiUrl: 'https://fastcrw.com/api'
++        })
++        ;(getCredentialParam as jest.Mock).mockImplementation((key, credentialData, _nodeData, fallback) =>
++            credentialData[key] ?? fallback
++        )
++        ;(secureAxiosRequest as jest.Mock).mockResolvedValue({
++            status: 200,
++            data: {
++                success: true,
++                data: [
++                    {
++                        url: 'https://example.com/a',
++                        title: 'Result A',
++                        description: 'Description A'
++                    }
++                ]
++            }
++        })
++
++        const node = new Crw()
++        const docs = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    crawlerType: 'search',
++                    searchQuery: 'fastcrw'
++                },
++                outputs: { output: 'document' }
++            },
++            '',
++            {}
++        )
++
++        const requestArgs = (secureAxiosRequest as jest.Mock).mock.calls[0][0]
++        expect(requestArgs.url).toBe('https://fastcrw.com/api/v1/search')
++        expect(requestArgs.data.query).toBe('fastcrw')
++
++        expect(docs).toHaveLength(1)
++        expect(docs[0].pageContent).toBe('Description A')
++        expect(docs[0].metadata.source).toBe('https://example.com/a')
++        expect(docs[0].metadata.title).toBe('Result A')
++    })
++})
+diff --git a/packages/components/nodes/documentloaders/Crw/Crw.ts b/packages/components/nodes/documentloaders/Crw/Crw.ts
+new file mode 100644
+index 00000000000..15686b699e2
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Crw/Crw.ts
+@@ -0,0 +1,1045 @@
++import { TextSplitter } from '@langchain/textsplitters'
++import { Document, DocumentInterface } from '@langchain/core/documents'
++import { BaseDocumentLoader } from '@langchain/classic/document_loaders/base'
++import { INode, INodeData, INodeParams, ICommonObject, INodeOutputsValue } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
++import { AxiosResponse, AxiosRequestHeaders } from 'axios'
++import { secureAxiosRequest } from '../../../src/httpSecurity'
++import { z } from 'zod/v3'
++
++// fastCRW is a Firecrawl-compatible web scraper: a single ~8MB Rust binary you can
++// self-host (AGPL open core) or use via the managed cloud at https://fastcrw.com.
++// Because the REST API is Firecrawl-compatible, this loader mirrors the FireCrawl
++// loader and simply targets the fastCRW base URL.
++
++// CrwApp interfaces
++interface CrwAppConfig {
++    apiKey?: string | null
++    apiUrl?: string | null
++}
++
++interface CrwDocumentMetadata {
++    title?: string
++    description?: string
++    language?: string
++    sourceURL?: string
++    statusCode?: number
++    error?: string
++    [key: string]: any
++}
++
++interface CrwDocument {
++    markdown?: string
++    html?: string
++    rawHtml?: string
++    screenshot?: string
++    links?: string[]
++    actions?: {
++        screenshots?: string[]
++    }
++    metadata: CrwDocumentMetadata
++    llm_extraction?: Record<string, any>
++    warning?: string
++}
++
++interface ScrapeResponse {
++    success: boolean
++    data?: CrwDocument
++    error?: string
++}
++
++interface CrawlResponse {
++    success: boolean
++    id: string
++    url: string
++    error?: string
++    data?: CrwDocument
++}
++
++interface CrawlStatusResponse {
++    status: string
++    total: number
++    completed: number
++    creditsUsed: number
++    expiresAt: string
++    next?: string
++    data?: CrwDocument[]
++}
++
++interface ExtractResponse {
++    success: boolean
++    id: string
++    url: string
++    data?: Record<string, any>
++}
++
++interface SearchResult {
++    url: string
++    title: string
++    description: string
++}
++
++interface SearchResponse {
++    success: boolean
++    data?: SearchResult[]
++    warning?: string
++}
++
++interface SearchRequest {
++    query: string
++    limit?: number
++    tbs?: string
++    lang?: string
++    country?: string
++    location?: string
++    timeout?: number
++    ignoreInvalidURLs?: boolean
++}
++
++interface Params {
++    [key: string]: any
++    extractorOptions?: {
++        extractionSchema: z.ZodSchema | any
++        mode?: 'llm-extraction'
++        extractionPrompt?: string
++    }
++}
++
++interface ExtractRequest {
++    urls: string[]
++    prompt?: string
++    schema?: Record<string, any>
++    enableWebSearch?: boolean
++    ignoreSitemap?: boolean
++    includeSubdomains?: boolean
++    showSources?: boolean
++    scrapeOptions?: {
++        formats?: string[]
++        onlyMainContent?: boolean
++        includeTags?: string | string[]
++        excludeTags?: string | string[]
++        mobile?: boolean
++        skipTlsVerification?: boolean
++        timeout?: number
++        jsonOptions?: {
++            schema?: Record<string, any>
++            prompt?: string
++        }
++    }
++}
++
++interface ExtractStatusResponse {
++    success: boolean
++    data: any
++    status: 'completed' | 'pending' | 'processing' | 'failed' | 'cancelled'
++    expiresAt: string
++}
++
++// CrwApp class (not exported)
++class CrwApp {
++    private apiKey: string
++    private apiUrl: string
++
++    constructor({ apiKey = null, apiUrl = null }: CrwAppConfig) {
++        this.apiKey = apiKey || ''
++        this.apiUrl = apiUrl || 'https://fastcrw.com/api'
++    }
++
++    async scrapeUrl(url: string, params: Params | null = null): Promise<ScrapeResponse> {
++        const headers = this.prepareHeaders()
++
++        // Create a clean payload with only valid parameters
++        const validParams: any = {
++            url,
++            formats: ['markdown'],
++            onlyMainContent: true
++        }
++
++        // Add optional parameters if they exist
++        if (params?.scrapeOptions) {
++            if (params.scrapeOptions.includeTags) {
++                validParams.includeTags = Array.isArray(params.scrapeOptions.includeTags)
++                    ? params.scrapeOptions.includeTags
++                    : params.scrapeOptions.includeTags.split(',')
++            }
++            if (params.scrapeOptions.excludeTags) {
++                validParams.excludeTags = Array.isArray(params.scrapeOptions.excludeTags)
++                    ? params.scrapeOptions.excludeTags
++                    : params.scrapeOptions.excludeTags.split(',')
++            }
++            if (params.scrapeOptions.mobile !== undefined) {
++                validParams.mobile = params.scrapeOptions.mobile
++            }
++            if (params.scrapeOptions.skipTlsVerification !== undefined) {
++                validParams.skipTlsVerification = params.scrapeOptions.skipTlsVerification
++            }
++            if (params.scrapeOptions.timeout) {
++                validParams.timeout = params.scrapeOptions.timeout
++            }
++        }
++
++        // Add JSON options if they exist
++        if (params?.extractorOptions) {
++            validParams.jsonOptions = {
++                schema: params.extractorOptions.extractionSchema,
++                prompt: params.extractorOptions.extractionPrompt
++            }
++        }
++
++        try {
++            const parameters = {
++                ...validParams,
++                integration: 'flowise'
++            }
++            const response: AxiosResponse = await this.postRequest(this.apiUrl + '/v1/scrape', parameters, headers)
++            if (response.status === 200) {
++                const responseData = response.data
++                if (responseData.success) {
++                    return responseData
++                } else {
++                    throw new Error(`Failed to scrape URL. Error: ${responseData.error}`)
++                }
++            } else {
++                this.handleError(response, 'scrape URL')
++            }
++        } catch (error: any) {
++            throw new Error(error.message)
++        }
++        return { success: false, error: 'Internal server error.' }
++    }
++
++    async crawlUrl(
++        url: string,
++        params: Params | null = null,
++        waitUntilDone: boolean = true,
++        pollInterval: number = 2,
++        idempotencyKey?: string
++    ): Promise<CrawlResponse | CrawlStatusResponse> {
++        const headers = this.prepareHeaders(idempotencyKey)
++
++        // Create a clean payload with only valid parameters
++        const validParams: any = {
++            url
++        }
++
++        // Add scrape options with only non-empty values
++        const scrapeOptions: any = {
++            formats: ['markdown'],
++            onlyMainContent: true
++        }
++
++        // Add crawl-specific parameters if they exist and are not empty
++        if (params) {
++            const validCrawlParams = [
++                'excludePaths',
++                'includePaths',
++                'maxDepth',
++                'maxDiscoveryDepth',
++                'ignoreSitemap',
++                'ignoreQueryParameters',
++                'limit',
++                'allowBackwardLinks',
++                'allowExternalLinks',
++                'delay'
++            ]
++
++            validCrawlParams.forEach((param) => {
++                if (params[param] !== undefined && params[param] !== null && params[param] !== '') {
++                    validParams[param] = params[param]
++                }
++            })
++        }
++
++        // Add scrape options if they exist and are not empty
++        if (params?.scrapeOptions) {
++            if (params.scrapeOptions.includePaths) {
++                const includePaths = Array.isArray(params.scrapeOptions.includePaths)
++                    ? params.scrapeOptions.includePaths
++                    : params.scrapeOptions.includePaths.split(',')
++                if (includePaths.length > 0) {
++                    validParams.includePaths = includePaths
++                }
++            }
++
++            if (params.scrapeOptions.excludePaths) {
++                const excludePaths = Array.isArray(params.scrapeOptions.excludePaths)
++                    ? params.scrapeOptions.excludePaths
++                    : params.scrapeOptions.excludePaths.split(',')
++                if (excludePaths.length > 0) {
++                    validParams.excludePaths = excludePaths
++                }
++            }
++
++            if (params.scrapeOptions.limit) {
++                validParams.limit = params.scrapeOptions.limit
++            }
++
++            const validScrapeParams = ['mobile', 'skipTlsVerification', 'timeout', 'includeTags', 'excludeTags', 'onlyMainContent']
++
++            validScrapeParams.forEach((param) => {
++                if (params.scrapeOptions[param] !== undefined && params.scrapeOptions[param] !== null) {
++                    scrapeOptions[param] = params.scrapeOptions[param]
++                }
++            })
++        }
++
++        // Only add scrapeOptions if it has more than just the default values
++        if (Object.keys(scrapeOptions).length > 2) {
++            validParams.scrapeOptions = scrapeOptions
++        }
++
++        try {
++            const parameters = {
++                ...validParams,
++                integration: 'flowise'
++            }
++            const response: AxiosResponse = await this.postRequest(this.apiUrl + '/v1/crawl', parameters, headers)
++            if (response.status === 200) {
++                const crawlResponse = response.data as CrawlResponse
++                if (!crawlResponse.success) {
++                    throw new Error(`Crawl request failed: ${crawlResponse.error || 'Unknown error'}`)
++                }
++
++                if (waitUntilDone) {
++                    return this.monitorJobStatus(crawlResponse.id, headers, pollInterval)
++                } else {
++                    return crawlResponse
++                }
++            } else {
++                this.handleError(response, 'start crawl job')
++            }
++        } catch (error: any) {
++            if (error.response?.data?.error) {
++                throw new Error(`Crawl failed: ${error.response.data.error}`)
++            }
++            throw new Error(`Crawl failed: ${error.message}`)
++        }
++
++        return { success: false, id: '', url: '' }
++    }
++
++    async extract(
++        request: ExtractRequest,
++        waitUntilDone: boolean = true,
++        pollInterval: number = 2
++    ): Promise<ExtractResponse | ExtractStatusResponse> {
++        const headers = this.prepareHeaders()
++
++        // Create a clean payload with only valid parameters
++        const validParams: any = {
++            urls: request.urls
++        }
++
++        // Add optional parameters if they exist and are not empty
++        if (request.prompt) {
++            validParams.prompt = request.prompt
++        }
++
++        if (request.schema) {
++            validParams.schema = request.schema
++        }
++
++        const validExtractParams = ['enableWebSearch', 'ignoreSitemap', 'includeSubdomains', 'showSources'] as const
++
++        validExtractParams.forEach((param) => {
++            if (request[param] !== undefined && request[param] !== null) {
++                validParams[param] = request[param]
++            }
++        })
++
++        // Add scrape options if they exist
++        if (request.scrapeOptions) {
++            const scrapeOptions: any = {
++                formats: ['markdown'],
++                onlyMainContent: true
++            }
++
++            // Handle includeTags
++            if (request.scrapeOptions.includeTags) {
++                const includeTags = Array.isArray(request.scrapeOptions.includeTags)
++                    ? request.scrapeOptions.includeTags
++                    : request.scrapeOptions.includeTags.split(',')
++                if (includeTags.length > 0) {
++                    scrapeOptions.includeTags = includeTags
++                }
++            }
++
++            // Handle excludeTags
++            if (request.scrapeOptions.excludeTags) {
++                const excludeTags = Array.isArray(request.scrapeOptions.excludeTags)
++                    ? request.scrapeOptions.excludeTags
++                    : request.scrapeOptions.excludeTags.split(',')
++                if (excludeTags.length > 0) {
++                    scrapeOptions.excludeTags = excludeTags
++                }
++            }
++
++            // Add other scrape options if they exist and are not empty
++            const validScrapeParams = ['mobile', 'skipTlsVerification', 'timeout'] as const
++
++            validScrapeParams.forEach((param) => {
++                if (request.scrapeOptions?.[param] !== undefined && request.scrapeOptions?.[param] !== null) {
++                    scrapeOptions[param] = request.scrapeOptions[param]
++                }
++            })
++
++            // Add JSON options if they exist
++            if (request.scrapeOptions.jsonOptions) {
++                scrapeOptions.jsonOptions = {}
++                if (request.scrapeOptions.jsonOptions.schema) {
++                    scrapeOptions.jsonOptions.schema = request.scrapeOptions.jsonOptions.schema
++                }
++                if (request.scrapeOptions.jsonOptions.prompt) {
++                    scrapeOptions.jsonOptions.prompt = request.scrapeOptions.jsonOptions.prompt
++                }
++            }
++
++            // Only add scrapeOptions if it has more than just the default values
++            if (Object.keys(scrapeOptions).length > 2) {
++                validParams.scrapeOptions = scrapeOptions
++            }
++        }
++
++        try {
++            const parameters = {
++                ...validParams,
++                integration: 'flowise'
++            }
++            const response: AxiosResponse = await this.postRequest(this.apiUrl + '/v1/extract', parameters, headers)
++            if (response.status === 200) {
++                const extractResponse = response.data as ExtractResponse
++                if (waitUntilDone) {
++                    return this.monitorExtractStatus(extractResponse.id, headers, pollInterval)
++                } else {
++                    return extractResponse
++                }
++            } else {
++                this.handleError(response, 'start extract job')
++            }
++        } catch (error: any) {
++            throw new Error(error.message)
++        }
++        return { success: false, id: '', url: '' }
++    }
++
++    async search(request: SearchRequest): Promise<SearchResponse> {
++        const headers = this.prepareHeaders()
++
++        // Create a clean payload with only valid parameters
++        const validParams: any = {
++            query: request.query
++        }
++
++        // Add optional parameters if they exist and are not empty
++        const validSearchParams = ['limit', 'tbs', 'lang', 'country', 'location', 'timeout', 'ignoreInvalidURLs'] as const
++
++        validSearchParams.forEach((param) => {
++            if (request[param] !== undefined && request[param] !== null) {
++                validParams[param] = request[param]
++            }
++        })
++
++        try {
++            const parameters = {
++                ...validParams,
++                integration: 'flowise'
++            }
++            const response: AxiosResponse = await this.postRequest(this.apiUrl + '/v1/search', parameters, headers)
++            if (response.status === 200) {
++                const searchResponse = response.data as SearchResponse
++                if (!searchResponse.success) {
++                    throw new Error(`Search request failed: ${searchResponse.warning || 'Unknown error'}`)
++                }
++                return searchResponse
++            } else {
++                this.handleError(response, 'perform search')
++            }
++        } catch (error: any) {
++            throw new Error(error.message)
++        }
++        return { success: false }
++    }
++
++    private prepareHeaders(idempotencyKey?: string): AxiosRequestHeaders {
++        return {
++            'Content-Type': 'application/json',
++            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
++            ...(idempotencyKey ? { 'x-idempotency-key': idempotencyKey } : {})
++        } as AxiosRequestHeaders & { 'x-idempotency-key'?: string }
++    }
++
++    private async postRequest(url: string, data: Params, headers: AxiosRequestHeaders): Promise<AxiosResponse> {
++        const result = await secureAxiosRequest({ method: 'POST', url, data, headers })
++        return result
++    }
++
++    private getRequest(url: string, headers: AxiosRequestHeaders): Promise<AxiosResponse> {
++        return secureAxiosRequest({ method: 'GET', url, headers })
++    }
++
++    private async monitorJobStatus(jobId: string, headers: AxiosRequestHeaders, checkInterval: number): Promise<CrawlStatusResponse> {
++        let isJobCompleted = false
++        while (!isJobCompleted) {
++            const statusResponse: AxiosResponse = await this.getRequest(this.apiUrl + `/v1/crawl/${jobId}`, headers)
++            if (statusResponse.status === 200) {
++                const statusData = statusResponse.data as CrawlStatusResponse
++                switch (statusData.status) {
++                    case 'completed':
++                        isJobCompleted = true
++                        return statusData
++                    case 'scraping':
++                    case 'failed':
++                        if (statusData.status === 'failed') {
++                            throw new Error('Crawl job failed')
++                        }
++                        await new Promise((resolve) => setTimeout(resolve, Math.max(checkInterval, 2) * 1000))
++                        break
++                    default:
++                        throw new Error(`Unknown crawl status: ${statusData.status}`)
++                }
++            } else {
++                this.handleError(statusResponse, 'check crawl status')
++            }
++        }
++        throw new Error('Failed to monitor job status')
++    }
++
++    private async monitorExtractStatus(jobId: string, headers: AxiosRequestHeaders, checkInterval: number): Promise<ExtractStatusResponse> {
++        let isJobCompleted = false
++        while (!isJobCompleted) {
++            const statusResponse: AxiosResponse = await this.getRequest(this.apiUrl + `/v1/extract/${jobId}`, headers)
++            if (statusResponse.status === 200) {
++                const statusData = statusResponse.data as ExtractStatusResponse
++                switch (statusData.status) {
++                    case 'completed':
++                        isJobCompleted = true
++                        return statusData
++                    case 'processing':
++                    case 'failed':
++                        if (statusData.status === 'failed') {
++                            throw new Error('Extract job failed')
++                        }
++                        await new Promise((resolve) => setTimeout(resolve, Math.max(checkInterval, 2) * 1000))
++                        break
++                    default:
++                        throw new Error(`Unknown extract status: ${statusData.status}`)
++                }
++            } else {
++                this.handleError(statusResponse, 'check extract status')
++            }
++        }
++        throw new Error('Failed to monitor extract status')
++    }
++
++    private handleError(response: AxiosResponse, action: string): void {
++        if ([402, 408, 409, 500].includes(response.status)) {
++            const errorMessage: string = response.data.error || 'Unknown error occurred'
++            throw new Error(`Failed to ${action}. Status code: ${response.status}. Error: ${errorMessage}`)
++        } else {
++            throw new Error(`Unexpected error occurred while trying to ${action}. Status code: ${response.status}`)
++        }
++    }
++}
++
++// Crw Loader
++interface CrwLoaderParameters {
++    url?: string
++    query?: string
++    apiKey?: string
++    apiUrl?: string
++    mode?: 'crawl' | 'scrape' | 'extract' | 'search'
++    params?: Record<string, unknown>
++}
++
++export class CrwLoader extends BaseDocumentLoader {
++    private apiKey: string
++    private apiUrl: string
++    private url?: string
++    private query?: string
++    private mode: 'crawl' | 'scrape' | 'extract' | 'search'
++    private params?: Record<string, unknown>
++
++    constructor(loaderParams: CrwLoaderParameters) {
++        super()
++        const { apiKey, apiUrl, url, query, mode = 'crawl', params } = loaderParams
++
++        this.apiKey = apiKey || ''
++        this.url = url
++        this.query = query
++        this.mode = mode
++        this.params = params
++        this.apiUrl = apiUrl || 'https://fastcrw.com/api'
++    }
++
++    public async load(): Promise<DocumentInterface[]> {
++        const app = new CrwApp({ apiKey: this.apiKey, apiUrl: this.apiUrl })
++        let crwDocs: CrwDocument[]
++
++        if (this.mode === 'search') {
++            if (!this.query) {
++                throw new Error('fastCRW: Query is required for search mode')
++            }
++            const response = await app.search({ query: this.query, ...this.params })
++            if (!response.success) {
++                throw new Error(`fastCRW: Failed to search. Warning: ${response.warning}`)
++            }
++
++            // Convert search results to CrwDocument format
++            crwDocs = (response.data || []).map((result) => ({
++                markdown: result.description,
++                metadata: {
++                    title: result.title,
++                    sourceURL: result.url,
++                    description: result.description
++                }
++            }))
++        } else if (this.mode === 'scrape') {
++            if (!this.url) {
++                throw new Error('fastCRW: URL is required for scrape mode')
++            }
++            const response = await app.scrapeUrl(this.url, this.params)
++            if (!response.success) {
++                throw new Error(`fastCRW: Failed to scrape URL. Error: ${response.error}`)
++            }
++            crwDocs = [response.data as CrwDocument]
++        } else if (this.mode === 'crawl') {
++            if (!this.url) {
++                throw new Error('fastCRW: URL is required for crawl mode')
++            }
++            const response = await app.crawlUrl(this.url, this.params)
++            if ('status' in response) {
++                if (response.status === 'failed') {
++                    throw new Error('fastCRW: Crawl job failed')
++                }
++                crwDocs = response.data || []
++            } else {
++                if (!response.success) {
++                    throw new Error(`fastCRW: Failed to scrape URL. Error: ${response.error}`)
++                }
++                crwDocs = [response.data as CrwDocument]
++            }
++        } else if (this.mode === 'extract') {
++            if (!this.url) {
++                throw new Error('fastCRW: URL is required for extract mode')
++            }
++            this.params!.urls = [this.url]
++            const response = await app.extract(this.params as any as ExtractRequest)
++            if (!response.success) {
++                throw new Error(`fastCRW: Failed to extract URL.`)
++            }
++
++            // Convert extract response to document format
++            if ('data' in response && response.data) {
++                // Create a document from the extracted data
++                const extractedData = response.data
++                const content = JSON.stringify(extractedData, null, 2)
++
++                const metadata: Record<string, any> = {
++                    source: this.url,
++                    type: 'extracted_data'
++                }
++
++                // Add status and expiresAt if they exist in the response
++                if ('status' in response) {
++                    metadata.status = response.status
++                }
++                if ('data' in response) {
++                    metadata.data = response.data
++                }
++                if ('expiresAt' in response) {
++                    metadata.expiresAt = response.expiresAt
++                }
++
++                return [
++                    new Document({
++                        pageContent: content,
++                        metadata
++                    })
++                ]
++            }
++            return []
++        } else {
++            throw new Error(`Unrecognized mode '${this.mode}'. Expected one of 'crawl', 'scrape', 'extract', 'search'.`)
++        }
++
++        // Convert fastCRW documents to LangChain documents
++        const documents = crwDocs.map((doc) => {
++            // Use markdown content if available, otherwise fallback to HTML or empty string
++            const content = doc.markdown || doc.html || doc.rawHtml || ''
++
++            // Create a standard LangChain document
++            return new Document({
++                pageContent: content,
++                metadata: {
++                    ...doc.metadata,
++                    source: doc.metadata?.sourceURL || this.url,
++                    title: doc.metadata?.title,
++                    description: doc.metadata?.description,
++                    language: doc.metadata?.language,
++                    statusCode: doc.metadata?.statusCode
++                }
++            })
++        })
++
++        return documents
++    }
++}
++
++// Flowise Node Class
++class Crw_DocumentLoaders implements INode {
++    label: string
++    name: string
++    description: string
++    type: string
++    icon: string
++    version: number
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'fastCRW'
++        this.name = 'crw'
++        this.type = 'Document'
++        this.icon = 'crw.png'
++        this.version = 1.0
++        this.category = 'Document Loaders'
++        this.description = 'Load data from URL using fastCRW'
++        this.baseClasses = [this.type]
++        this.credential = {
++            label: 'fastCRW API',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['crwApi']
++        }
++        this.inputs = [
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Type',
++                type: 'options',
++                name: 'crawlerType',
++                options: [
++                    {
++                        label: 'Crawl',
++                        name: 'crawl',
++                        description: 'Crawl a URL and all accessible subpages'
++                    },
++                    {
++                        label: 'Scrape',
++                        name: 'scrape',
++                        description: 'Scrape a URL and get its content'
++                    },
++                    {
++                        label: 'Extract',
++                        name: 'extract',
++                        description: 'Extract data from a URL'
++                    },
++                    {
++                        label: 'Search',
++                        name: 'search',
++                        description: 'Search the web using fastCRW'
++                    }
++                ],
++                default: 'crawl'
++            },
++            {
++                label: 'URLs',
++                name: 'url',
++                type: 'string',
++                description: 'URL to be crawled/scraped/extracted',
++                placeholder: 'https://docs.flowiseai.com',
++                optional: true,
++                show: {
++                    crawlerType: ['crawl', 'scrape', 'extract']
++                }
++            },
++            {
++                // includeTags
++                label: 'Include Tags',
++                name: 'includeTags',
++                type: 'string',
++                description: 'Tags to include in the output. Use comma to separate multiple tags.',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['scrape']
++                }
++            },
++            {
++                // excludeTags
++                label: 'Exclude Tags',
++                name: 'excludeTags',
++                type: 'string',
++                description: 'Tags to exclude from the output. Use comma to separate multiple tags.',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['scrape']
++                }
++            },
++            {
++                // onlyMainContent
++                label: 'Only Main Content',
++                name: 'onlyMainContent',
++                type: 'boolean',
++                description: 'Extract only the main content of the page',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['scrape']
++                }
++            },
++            {
++                // limit
++                label: 'Limit',
++                name: 'limit',
++                type: 'string',
++                description: 'Maximum number of pages to crawl',
++                optional: true,
++                additionalParams: true,
++                default: '10000',
++                show: {
++                    crawlerType: ['crawl']
++                }
++            },
++            {
++                label: 'Include Paths',
++                name: 'includePaths',
++                type: 'string',
++                description:
++                    'URL pathname regex patterns that include matching URLs in the crawl. Only the paths that match the specified patterns will be included in the response.',
++                placeholder: `blog/.*, news/.*`,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['crawl']
++                }
++            },
++            {
++                label: 'Exclude Paths',
++                name: 'excludePaths',
++                type: 'string',
++                description: 'URL pathname regex patterns that exclude matching URLs from the crawl.',
++                placeholder: `blog/.*, news/.*`,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['crawl']
++                }
++            },
++            {
++                label: 'Schema',
++                name: 'extractSchema',
++                type: 'json',
++                description: 'JSON schema for data extraction',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['extract']
++                }
++            },
++            {
++                label: 'Prompt',
++                name: 'extractPrompt',
++                type: 'string',
++                description: 'Prompt for data extraction',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    crawlerType: ['extract']
++                }
++            },
++            {
++                label: 'Query',
++                name: 'searchQuery',
++                type: 'string',
++                description: 'Search query to find relevant content',
++                optional: true,
++                show: {
++                    crawlerType: ['search']
++                }
++            },
++            {
++                label: 'Limit',
++                name: 'searchLimit',
++                type: 'string',
++                description: 'Maximum number of results to return',
++                optional: true,
++                additionalParams: true,
++                default: '5',
++                show: {
++                    crawlerType: ['search']
++                }
++            },
++            {
++                label: 'Language',
++                name: 'searchLang',
++                type: 'string',
++                description: 'Language code for search results (e.g., en, es, fr)',
++                optional: true,
++                additionalParams: true,
++                default: 'en',
++                show: {
++                    crawlerType: ['search']
++                }
++            },
++            {
++                label: 'Country',
++                name: 'searchCountry',
++                type: 'string',
++                description: 'Country code for search results (e.g., us, uk, ca)',
++                optional: true,
++                additionalParams: true,
++                default: 'us',
++                show: {
++                    crawlerType: ['search']
++                }
++            },
++            {
++                label: 'Timeout',
++                name: 'searchTimeout',
++                type: 'number',
++                description: 'Timeout in milliseconds for search operation',
++                optional: true,
++                additionalParams: true,
++                default: 60000,
++                show: {
++                    crawlerType: ['search']
++                }
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const metadata = nodeData.inputs?.metadata
++        const url = nodeData.inputs?.url as string
++        const crawlerType = nodeData.inputs?.crawlerType as string
++        const limit = nodeData.inputs?.limit as string
++        const onlyMainContent = nodeData.inputs?.onlyMainContent as boolean
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const crwApiToken = getCredentialParam('crwApiToken', credentialData, nodeData)
++        const crwApiUrl = getCredentialParam('crwApiUrl', credentialData, nodeData, 'https://fastcrw.com/api')
++        const output = nodeData.outputs?.output as string
++
++        // Validate URL only for non-search methods
++        if (crawlerType !== 'search' && !url) {
++            throw new Error('fastCRW: URL is required for ' + crawlerType + ' mode')
++        }
++
++        const includePaths = nodeData.inputs?.includePaths ? (nodeData.inputs.includePaths.split(',') as string[]) : undefined
++        const excludePaths = nodeData.inputs?.excludePaths ? (nodeData.inputs.excludePaths.split(',') as string[]) : undefined
++
++        const includeTags = nodeData.inputs?.includeTags ? (nodeData.inputs.includeTags.split(',') as string[]) : undefined
++        const excludeTags = nodeData.inputs?.excludeTags ? (nodeData.inputs.excludeTags.split(',') as string[]) : undefined
++
++        const extractSchema = nodeData.inputs?.extractSchema
++        const extractPrompt = nodeData.inputs?.extractPrompt as string
++
++        const searchQuery = nodeData.inputs?.searchQuery as string
++        const searchLimit = nodeData.inputs?.searchLimit as string
++        const searchLang = nodeData.inputs?.searchLang as string
++        const searchCountry = nodeData.inputs?.searchCountry as string
++        const searchTimeout = nodeData.inputs?.searchTimeout as number
++
++        const input: CrwLoaderParameters = {
++            url,
++            query: searchQuery,
++            mode: crawlerType as 'crawl' | 'scrape' | 'extract' | 'search',
++            apiKey: crwApiToken,
++            apiUrl: crwApiUrl,
++            params: {
++                scrapeOptions: {
++                    includePaths,
++                    excludePaths,
++                    limit: limit ? parseInt(limit, 10) : 1000,
++                    includeTags,
++                    excludeTags
++                },
++                schema: extractSchema || undefined,
++                prompt: extractPrompt || undefined
++            }
++        }
++
++        // Add search-specific parameters only when in search mode
++        if (crawlerType === 'search') {
++            if (!searchQuery) {
++                throw new Error('fastCRW: Search query is required for search mode')
++            }
++            input.params = {
++                limit: searchLimit ? parseInt(searchLimit, 10) : 5,
++                lang: searchLang,
++                country: searchCountry,
++                timeout: searchTimeout
++            }
++        }
++
++        if (onlyMainContent === true) {
++            const scrapeOptions = input.params?.scrapeOptions as any
++            input.params!.scrapeOptions = {
++                ...scrapeOptions,
++                onlyMainContent: true
++            }
++        }
++
++        const loader = new CrwLoader(input)
++        let docs = []
++
++        // Load documents
++        docs = await loader.load()
++
++        // Apply text splitting if configured
++        if (textSplitter && docs.length > 0) {
++            docs = await textSplitter.splitDocuments(docs)
++        }
++
++        // Apply metadata if provided
++        if (metadata) {
++            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            docs = docs.map((doc) => ({
++                ...doc,
++                metadata: {
++                    ...doc.metadata,
++                    ...parsedMetadata
++                }
++            }))
++        }
++
++        // Return based on output type
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++}
++
++module.exports = { nodeClass: Crw_DocumentLoaders }
++
++// FOR TESTING PURPOSES
++// export { Crw_DocumentLoaders }
+diff --git a/packages/components/nodes/documentloaders/Crw/crw.png b/packages/components/nodes/documentloaders/Crw/crw.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..caf440f00e0ab8dacabb9cc40570bad3f6ec5969
+GIT binary patch
+literal 23765
+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%0AhehiL_|tv#{C-`E6&M
+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
+QLKOTl(lgV2aKbhEA933E3IG5A
+
+literal 0
+HcmV?d00001
+
+
+From ba2be484c6f593eb885352c23c8f8d11ed32a571 Mon Sep 17 00:00:00 2001
+From: us <rahmetsaritekin@gmail.com>
+Date: Sat, 13 Jun 2026 22:38:46 +0300
+Subject: [PATCH 2/2] fix: address review feedback on fastCRW loader
+
+- guard this.params init in extract mode to avoid TypeError when params is undefined
+- treat non-terminal crawl statuses (scraping/pending/active) as keep-polling; only fail on failed/error/cancelled
+- handle pending/processing extract statuses as keep-polling; fail explicitly on failed/cancelled
+---
+ .../nodes/documentloaders/Crw/Crw.ts          | 30 +++++++++++--------
+ 1 file changed, 17 insertions(+), 13 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Crw/Crw.ts b/packages/components/nodes/documentloaders/Crw/Crw.ts
+index 15686b699e2..09467e215f4 100644
+--- a/packages/components/nodes/documentloaders/Crw/Crw.ts
++++ b/packages/components/nodes/documentloaders/Crw/Crw.ts
+@@ -487,15 +487,15 @@ class CrwApp {
+                     case 'completed':
+                         isJobCompleted = true
+                         return statusData
+-                    case 'scraping':
+                     case 'failed':
+-                        if (statusData.status === 'failed') {
+-                            throw new Error('Crawl job failed')
+-                        }
++                    case 'error':
++                        throw new Error('Crawl job failed')
++                    case 'cancelled':
++                        throw new Error('Crawl job was cancelled')
++                    default:
++                        // Non-terminal statuses (e.g. 'scraping', 'pending', 'active') — keep polling
+                         await new Promise((resolve) => setTimeout(resolve, Math.max(checkInterval, 2) * 1000))
+                         break
+-                    default:
+-                        throw new Error(`Unknown crawl status: ${statusData.status}`)
+                 }
+             } else {
+                 this.handleError(statusResponse, 'check crawl status')
+@@ -514,15 +514,16 @@ class CrwApp {
+                     case 'completed':
+                         isJobCompleted = true
+                         return statusData
+-                    case 'processing':
+                     case 'failed':
+-                        if (statusData.status === 'failed') {
+-                            throw new Error('Extract job failed')
+-                        }
++                        throw new Error('Extract job failed')
++                    case 'cancelled':
++                        throw new Error('Extract job was cancelled')
++                    case 'pending':
++                    case 'processing':
++                    default:
++                        // Non-terminal statuses — keep polling
+                         await new Promise((resolve) => setTimeout(resolve, Math.max(checkInterval, 2) * 1000))
+                         break
+-                    default:
+-                        throw new Error(`Unknown extract status: ${statusData.status}`)
+                 }
+             } else {
+                 this.handleError(statusResponse, 'check extract status')
+@@ -622,7 +623,10 @@ export class CrwLoader extends BaseDocumentLoader {
+             if (!this.url) {
+                 throw new Error('fastCRW: URL is required for extract mode')
+             }
+-            this.params!.urls = [this.url]
++            this.params = {
++                ...this.params,
++                urls: [this.url]
++            }
+             const response = await app.extract(this.params as any as ExtractRequest)
+             if (!response.success) {
+                 throw new Error(`fastCRW: Failed to extract URL.`)

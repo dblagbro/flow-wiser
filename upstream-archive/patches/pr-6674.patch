@@ -1,0 +1,1067 @@
+From f0d5aeefaf11fd9ff1c9077b23d777db0517dce6 Mon Sep 17 00:00:00 2001
+From: Robert Keus <robertkeus@gmail.com>
+Date: Mon, 27 Jul 2026 17:20:01 +0200
+Subject: [PATCH] feat(components): add GreenPT provider
+
+---
+ .../credentials/GreenPTApi.credential.ts      |  23 +++
+ .../ChatGreenPT/ChatGreenPT.test.ts           |  65 ++++++++
+ .../chatmodels/ChatGreenPT/ChatGreenPT.ts     | 144 ++++++++++++++++++
+ .../nodes/chatmodels/ChatGreenPT/greenpt.svg  |  13 ++
+ .../GreenPTEmbedding/GreenPTEmbedding.test.ts |  65 ++++++++
+ .../GreenPTEmbedding/GreenPTEmbedding.ts      |  92 +++++++++++
+ .../embeddings/GreenPTEmbedding/greenpt.svg   |   8 +
+ .../GreenPTRerank.test.ts                     |  44 ++++++
+ .../GreenPTRerankRetriever/GreenPTRerank.ts   |  58 +++++++
+ .../GreenPTRerankRetriever.ts                 | 117 ++++++++++++++
+ .../GreenPTRerankRetriever/greenpt.svg        |   8 +
+ .../nodes/speechtotext/greenpt/GreenPT.ts     |  35 +++++
+ .../nodes/speechtotext/greenpt/greenpt.svg    |   8 +
+ packages/components/src/greenpt.test.ts       |  60 ++++++++
+ packages/components/src/greenpt.ts            |  70 +++++++++
+ packages/components/src/speechToText.ts       |   6 +-
+ packages/ui/src/assets/images/greenpt.svg     |   8 +
+ .../ui-component/extended/SpeechToText.jsx    |  56 ++++++-
+ 18 files changed, 878 insertions(+), 2 deletions(-)
+ create mode 100644 packages/components/credentials/GreenPTApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.test.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatGreenPT/greenpt.svg
+ create mode 100644 packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.test.ts
+ create mode 100644 packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.ts
+ create mode 100644 packages/components/nodes/embeddings/GreenPTEmbedding/greenpt.svg
+ create mode 100644 packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.test.ts
+ create mode 100644 packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.ts
+ create mode 100644 packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerankRetriever.ts
+ create mode 100644 packages/components/nodes/retrievers/GreenPTRerankRetriever/greenpt.svg
+ create mode 100644 packages/components/nodes/speechtotext/greenpt/GreenPT.ts
+ create mode 100644 packages/components/nodes/speechtotext/greenpt/greenpt.svg
+ create mode 100644 packages/components/src/greenpt.test.ts
+ create mode 100644 packages/components/src/greenpt.ts
+ create mode 100644 packages/ui/src/assets/images/greenpt.svg
+
+diff --git a/packages/components/credentials/GreenPTApi.credential.ts b/packages/components/credentials/GreenPTApi.credential.ts
+new file mode 100644
+index 00000000000..4cffed47abc
+--- /dev/null
++++ b/packages/components/credentials/GreenPTApi.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class GreenPTApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'GreenPT API'
++        this.name = 'greenPTApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'GreenPT API Key',
++                name: 'greenPTApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: GreenPTApi }
+diff --git a/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.test.ts b/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.test.ts
+new file mode 100644
+index 00000000000..8e3293bb751
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.test.ts
+@@ -0,0 +1,65 @@
++jest.mock('@langchain/openai', () => ({
++    ChatOpenAI: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['BaseChatModel']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++jest.mock('../../../src/greenpt', () => ({
++    GREENPT_API_BASE_URL: 'https://api.greenpt.ai/v1',
++    listGreenPTModels: jest.fn()
++}))
++
++import { listGreenPTModels } from '../../../src/greenpt'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: ChatGreenPT } = require('./ChatGreenPT')
++
++describe('ChatGreenPT', () => {
++    beforeEach(() => jest.clearAllMocks())
++
++    it('loads chat models from the GreenPT endpoint', async () => {
++        ;(listGreenPTModels as jest.Mock).mockResolvedValue([{ label: 'glm-5.2', name: 'glm-5.2' }])
++        const node = new ChatGreenPT()
++        const nodeData = { credential: 'cred-1' }
++        const options = { appDataSource: {} }
++
++        await expect(node.loadMethods.listModels(nodeData, options)).resolves.toEqual([{ label: 'glm-5.2', name: 'glm-5.2' }])
++        expect(listGreenPTModels).toHaveBeenCalledWith(nodeData, options, 'chat')
++    })
++
++    it('configures ChatOpenAI for GreenPT', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ greenPTApiKey: 'secret' })
++        ;(getCredentialParam as jest.Mock).mockReturnValue('secret')
++        const node = new ChatGreenPT()
++
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'glm-5.2',
++                    temperature: '0.2',
++                    streaming: false,
++                    maxTokens: '4096',
++                    topP: '0.8'
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            model: 'glm-5.2',
++            apiKey: 'secret',
++            openAIApiKey: 'secret',
++            temperature: 0.2,
++            streaming: false,
++            maxTokens: 4096,
++            topP: 0.8,
++            configuration: { baseURL: 'https://api.greenpt.ai/v1' }
++        })
++    })
++})
+diff --git a/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.ts b/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.ts
+new file mode 100644
+index 00000000000..a5f685bbb7a
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatGreenPT/ChatGreenPT.ts
+@@ -0,0 +1,144 @@
++import { BaseCache } from '@langchain/core/caches'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { GREENPT_API_BASE_URL, listGreenPTModels } from '../../../src/greenpt'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class ChatGreenPT_ChatModels implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'GreenPT'
++        this.name = 'chatGreenPT'
++        this.version = 1.0
++        this.type = 'ChatGreenPT'
++        this.icon = 'greenpt.svg'
++        this.category = 'Chat Models'
++        this.description =
++            'GreenPT is a European AI provider with an OpenAI-compatible API, optimized infrastructure, and data centers powered by 100% renewable energy.'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['greenPTApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'glm-5.2',
++                description: 'Models are loaded from GreenPT. glm-5.2 is the flagship model; kimi-k2.7-code is optimized for coding.'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(nodeData: INodeData, options?: ICommonObject): Promise<INodeOptionsValue[]> {
++            return listGreenPTModels(nodeData, options, 'chat')
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('greenPTApiKey', credentialData, nodeData)
++        const obj: ChatOpenAIFields = {
++            model: nodeData.inputs?.modelName as string,
++            apiKey,
++            openAIApiKey: apiKey,
++            temperature: parseFloat(nodeData.inputs?.temperature as string),
++            streaming: (nodeData.inputs?.streaming as boolean) ?? true,
++            configuration: { baseURL: GREENPT_API_BASE_URL }
++        }
++
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const cache = nodeData.inputs?.cache as BaseCache
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        return new ChatOpenAI(obj)
++    }
++}
++
++module.exports = { nodeClass: ChatGreenPT_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatGreenPT/greenpt.svg b/packages/components/nodes/chatmodels/ChatGreenPT/greenpt.svg
+new file mode 100644
+index 00000000000..b03e6d020b2
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatGreenPT/greenpt.svg
+@@ -0,0 +1,13 @@
++<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
++  <defs>
++    <linearGradient id="greenpt-gradient" x1="46.586%" y1="13.983%" x2="59.234%" y2="85.511%">
++      <stop stop-color="#fff" stop-opacity=".1"/>
++      <stop offset="1" stop-opacity=".3"/>
++    </linearGradient>
++  </defs>
++  <g transform="translate(52.773 52.773)" fill-rule="evenodd">
++    <path fill="#9BE755" d="M202.973 0C90.874 0 0 90.874 0 202.973s90.874 202.973 202.973 202.973 202.973-90.874 202.973-202.973S315.073 0 202.973 0Zm6.428 313.932c-60.72 0-109.944-49.527-109.944-110.62 0-61.095 49.224-110.621 109.944-110.621s109.944 49.526 109.944 110.62c0 61.094-49.224 110.621-109.944 110.621Z"/>
++    <path fill="#9BE755" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++    <path fill="url(#greenpt-gradient)" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++  </g>
++</svg>
+diff --git a/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.test.ts b/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.test.ts
+new file mode 100644
+index 00000000000..ffb993ab0e6
+--- /dev/null
++++ b/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.test.ts
+@@ -0,0 +1,65 @@
++jest.mock('@langchain/openai', () => ({
++    OpenAIEmbeddings: jest.fn().mockImplementation((fields) => ({ fields }))
++}))
++
++jest.mock('../../../src/utils', () => ({
++    getBaseClasses: jest.fn().mockReturnValue(['Embeddings']),
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn()
++}))
++
++jest.mock('../../../src/greenpt', () => ({
++    GREENPT_API_BASE_URL: 'https://api.greenpt.ai/v1',
++    listGreenPTModels: jest.fn()
++}))
++
++import { listGreenPTModels } from '../../../src/greenpt'
++import { getCredentialData, getCredentialParam } from '../../../src/utils'
++
++const { nodeClass: GreenPTEmbedding } = require('./GreenPTEmbedding')
++
++describe('GreenPTEmbedding', () => {
++    beforeEach(() => jest.clearAllMocks())
++
++    it('loads embedding models from the GreenPT endpoint', async () => {
++        ;(listGreenPTModels as jest.Mock).mockResolvedValue([{ label: 'green-embedding', name: 'green-embedding' }])
++        const node = new GreenPTEmbedding()
++        const nodeData = { credential: 'cred-1' }
++        const options = { appDataSource: {} }
++
++        await expect(node.loadMethods.listModels(nodeData, options)).resolves.toEqual([
++            { label: 'green-embedding', name: 'green-embedding' }
++        ])
++        expect(listGreenPTModels).toHaveBeenCalledWith(nodeData, options, 'embedding')
++    })
++
++    it('configures OpenAIEmbeddings for GreenPT', async () => {
++        ;(getCredentialData as jest.Mock).mockResolvedValue({ greenPTApiKey: 'secret' })
++        ;(getCredentialParam as jest.Mock).mockReturnValue('secret')
++        const node = new GreenPTEmbedding()
++
++        const model = await node.init(
++            {
++                credential: 'cred-1',
++                inputs: {
++                    modelName: 'green-embedding',
++                    stripNewLines: true,
++                    batchSize: '16',
++                    timeout: '15000'
++                }
++            },
++            '',
++            {}
++        )
++
++        expect(model.fields).toMatchObject({
++            model: 'green-embedding',
++            modelName: 'green-embedding',
++            openAIApiKey: 'secret',
++            stripNewLines: true,
++            batchSize: 16,
++            timeout: 15000,
++            configuration: { baseURL: 'https://api.greenpt.ai/v1' }
++        })
++    })
++})
+diff --git a/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.ts b/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.ts
+new file mode 100644
+index 00000000000..abd9acd6603
+--- /dev/null
++++ b/packages/components/nodes/embeddings/GreenPTEmbedding/GreenPTEmbedding.ts
+@@ -0,0 +1,92 @@
++import { ClientOptions, OpenAIEmbeddings, OpenAIEmbeddingsParams } from '@langchain/openai'
++import { GREENPT_API_BASE_URL, listGreenPTModels } from '../../../src/greenpt'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class GreenPTEmbedding_Embeddings implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'GreenPT Embedding'
++        this.name = 'greenPTEmbedding'
++        this.version = 1.0
++        this.type = 'GreenPTEmbedding'
++        this.icon = 'greenpt.svg'
++        this.category = 'Embeddings'
++        this.description = 'GreenPT embeddings run on optimized European infrastructure in data centers powered by 100% renewable energy.'
++        this.baseClasses = [this.type, ...getBaseClasses(OpenAIEmbeddings)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['greenPTApi']
++        }
++        this.inputs = [
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'green-embedding'
++            },
++            {
++                label: 'Strip New Lines',
++                name: 'stripNewLines',
++                type: 'boolean',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Batch Size',
++                name: 'batchSize',
++                type: 'number',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(nodeData: INodeData, options?: ICommonObject): Promise<INodeOptionsValue[]> {
++            return listGreenPTModels(nodeData, options, 'embedding')
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('greenPTApiKey', credentialData, nodeData)
++        const obj: Partial<OpenAIEmbeddingsParams> & { openAIApiKey?: string; configuration?: ClientOptions } = {
++            model: nodeData.inputs?.modelName as string,
++            modelName: nodeData.inputs?.modelName as string,
++            openAIApiKey: apiKey,
++            configuration: { baseURL: GREENPT_API_BASE_URL }
++        }
++
++        const stripNewLines = nodeData.inputs?.stripNewLines as boolean
++        const batchSize = nodeData.inputs?.batchSize as string
++        const timeout = nodeData.inputs?.timeout as string
++        if (stripNewLines) obj.stripNewLines = stripNewLines
++        if (batchSize) obj.batchSize = parseInt(batchSize, 10)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++
++        return new OpenAIEmbeddings(obj)
++    }
++}
++
++module.exports = { nodeClass: GreenPTEmbedding_Embeddings }
+diff --git a/packages/components/nodes/embeddings/GreenPTEmbedding/greenpt.svg b/packages/components/nodes/embeddings/GreenPTEmbedding/greenpt.svg
+new file mode 100644
+index 00000000000..a1e2a5f8680
+--- /dev/null
++++ b/packages/components/nodes/embeddings/GreenPTEmbedding/greenpt.svg
+@@ -0,0 +1,8 @@
++<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
++  <defs><linearGradient id="greenpt-gradient" x1="46.586%" y1="13.983%" x2="59.234%" y2="85.511%"><stop stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient></defs>
++  <g transform="translate(52.773 52.773)" fill-rule="evenodd">
++    <path fill="#9BE755" d="M202.973 0C90.874 0 0 90.874 0 202.973s90.874 202.973 202.973 202.973 202.973-90.874 202.973-202.973S315.073 0 202.973 0Zm6.428 313.932c-60.72 0-109.944-49.527-109.944-110.62 0-61.095 49.224-110.621 109.944-110.621s109.944 49.526 109.944 110.62c0 61.094-49.224 110.621-109.944 110.621Z"/>
++    <path fill="#9BE755" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++    <path fill="url(#greenpt-gradient)" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++  </g>
++</svg>
+diff --git a/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.test.ts b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.test.ts
+new file mode 100644
+index 00000000000..2ce1a9d45d2
+--- /dev/null
++++ b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.test.ts
+@@ -0,0 +1,44 @@
++import { Document } from '@langchain/core/documents'
++import axios from 'axios'
++import { GreenPTRerank } from './GreenPTRerank'
++
++jest.mock('axios')
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++describe('GreenPTRerank', () => {
++    it('returns documents in API relevance order without mutating the input', async () => {
++        mockedAxios.post.mockResolvedValueOnce({
++            data: {
++                results: [
++                    { index: 1, relevance_score: 0.9 },
++                    { index: 0, relevance_score: 0.2 }
++                ]
++            }
++        })
++        const documents = [new Document({ pageContent: 'solar', metadata: { source: 1 } }), new Document({ pageContent: 'wind' })]
++
++        const result = await new GreenPTRerank('secret', 'green-rerank', 2).compressDocuments(documents, 'renewable energy')
++
++        expect(result.map((document) => document.pageContent)).toEqual(['wind', 'solar'])
++        expect(result.map((document) => document.metadata.relevance_score)).toEqual([0.9, 0.2])
++        expect(documents[0].metadata).toEqual({ source: 1 })
++        expect(mockedAxios.post).toHaveBeenCalledWith(
++            'https://api.greenpt.ai/v1/rerank',
++            {
++                model: 'green-rerank',
++                query: 'renewable energy',
++                documents: ['solar', 'wind'],
++                top_n: 2,
++                return_documents: false
++            },
++            expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer secret' }) })
++        )
++    })
++
++    it('rejects invalid result indexes', async () => {
++        mockedAxios.post.mockResolvedValueOnce({ data: { results: [{ index: 4, relevance_score: 0.9 }] } })
++        const reranker = new GreenPTRerank('secret', 'green-rerank', 1)
++        await expect(reranker.compressDocuments([new Document({ pageContent: 'solar' })], 'query')).rejects.toThrow('invalid result')
++    })
++})
+diff --git a/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.ts b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.ts
+new file mode 100644
+index 00000000000..d978f1931cd
+--- /dev/null
++++ b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerank.ts
+@@ -0,0 +1,58 @@
++import { Callbacks } from '@langchain/core/callbacks/manager'
++import { Document } from '@langchain/core/documents'
++import { BaseDocumentCompressor } from '@langchain/classic/retrievers/document_compressors'
++import axios from 'axios'
++import { GREENPT_API_BASE_URL } from '../../../src/greenpt'
++
++interface GreenPTRerankResult {
++    index?: unknown
++    relevance_score?: unknown
++}
++
++export class GreenPTRerank extends BaseDocumentCompressor {
++    constructor(private readonly apiKey: string, private readonly model: string, private readonly topN: number) {
++        super()
++    }
++
++    async compressDocuments(
++        documents: Document<Record<string, any>>[],
++        query: string,
++        _?: Callbacks
++    ): Promise<Document<Record<string, any>>[]> {
++        if (!documents.length) return []
++        const response = await axios.post(
++            `${GREENPT_API_BASE_URL}/rerank`,
++            {
++                model: this.model,
++                query,
++                documents: documents.map((document) => document.pageContent),
++                top_n: this.topN,
++                return_documents: false
++            },
++            {
++                headers: {
++                    Authorization: `Bearer ${this.apiKey}`,
++                    'Content-Type': 'application/json'
++                },
++                timeout: 30_000
++            }
++        )
++        if (!Array.isArray(response.data?.results)) throw new Error('GreenPT rerank response contains no valid results')
++
++        return response.data.results.map((result: GreenPTRerankResult) => {
++            if (
++                !Number.isInteger(result?.index) ||
++                (result.index as number) < 0 ||
++                (result.index as number) >= documents.length ||
++                typeof result.relevance_score !== 'number'
++            ) {
++                throw new Error('GreenPT rerank response contains an invalid result')
++            }
++            const document = documents[result.index as number]
++            return new Document({
++                pageContent: document.pageContent,
++                metadata: { ...document.metadata, relevance_score: result.relevance_score }
++            })
++        })
++    }
++}
+diff --git a/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerankRetriever.ts b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerankRetriever.ts
+new file mode 100644
+index 00000000000..73232b06eb4
+--- /dev/null
++++ b/packages/components/nodes/retrievers/GreenPTRerankRetriever/GreenPTRerankRetriever.ts
+@@ -0,0 +1,117 @@
++import { BaseRetriever } from '@langchain/core/retrievers'
++import { ContextualCompressionRetriever } from '@langchain/classic/retrievers/contextual_compression'
++import { listGreenPTModels } from '../../../src/greenpt'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeOutputsValue, INodeParams } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src/utils'
++import { GreenPTRerank } from './GreenPTRerank'
++
++class GreenPTRerankRetriever_Retrievers implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'GreenPT Rerank Retriever'
++        this.name = 'greenPTRerankRetriever'
++        this.version = 1.0
++        this.type = 'GreenPTRerankRetriever'
++        this.icon = 'greenpt.svg'
++        this.category = 'Retrievers'
++        this.description =
++            'GreenPT reranks retrieved documents on optimized European infrastructure in data centers powered by 100% renewable energy.'
++        this.baseClasses = [this.type, 'BaseRetriever']
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['greenPTApi']
++        }
++        this.inputs = [
++            {
++                label: 'Vector Store Retriever',
++                name: 'baseRetriever',
++                type: 'VectorStoreRetriever'
++            },
++            {
++                label: 'Model Name',
++                name: 'model',
++                type: 'asyncOptions',
++                loadMethod: 'listModels',
++                default: 'green-rerank'
++            },
++            {
++                label: 'Query',
++                name: 'query',
++                type: 'string',
++                description: 'Query to retrieve documents from retriever. If not specified, the user question is used.',
++                optional: true,
++                acceptVariable: true
++            },
++            {
++                label: 'Top N',
++                name: 'topN',
++                description: 'Number of top results to return.',
++                default: 4,
++                type: 'number',
++                additionalParams: true,
++                optional: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'GreenPT Rerank Retriever',
++                name: 'retriever',
++                baseClasses: this.baseClasses
++            },
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: ['Document', 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated pageContent from reranked documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    loadMethods = {
++        async listModels(nodeData: INodeData, options?: ICommonObject): Promise<INodeOptionsValue[]> {
++            return listGreenPTModels(nodeData, options, 'rerank')
++        }
++    }
++
++    async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const apiKey = getCredentialParam('greenPTApiKey', credentialData, nodeData)
++        const baseRetriever = nodeData.inputs?.baseRetriever as BaseRetriever
++        const model = (nodeData.inputs?.model as string) || 'green-rerank'
++        const topN = nodeData.inputs?.topN ? parseInt(nodeData.inputs.topN as string, 10) : 4
++        const retriever = new ContextualCompressionRetriever({
++            baseCompressor: new GreenPTRerank(apiKey, model, topN),
++            baseRetriever
++        })
++        const query = (nodeData.inputs?.query as string) || input
++        const output = nodeData.outputs?.output as string
++
++        if (output === 'document') return retriever.invoke(query)
++        if (output === 'text') {
++            const documents = await retriever.invoke(query)
++            return handleEscapeCharacters(documents.map((document) => document.pageContent).join('\n'), false)
++        }
++        return retriever
++    }
++}
++
++module.exports = { nodeClass: GreenPTRerankRetriever_Retrievers }
+diff --git a/packages/components/nodes/retrievers/GreenPTRerankRetriever/greenpt.svg b/packages/components/nodes/retrievers/GreenPTRerankRetriever/greenpt.svg
+new file mode 100644
+index 00000000000..a1e2a5f8680
+--- /dev/null
++++ b/packages/components/nodes/retrievers/GreenPTRerankRetriever/greenpt.svg
+@@ -0,0 +1,8 @@
++<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
++  <defs><linearGradient id="greenpt-gradient" x1="46.586%" y1="13.983%" x2="59.234%" y2="85.511%"><stop stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient></defs>
++  <g transform="translate(52.773 52.773)" fill-rule="evenodd">
++    <path fill="#9BE755" d="M202.973 0C90.874 0 0 90.874 0 202.973s90.874 202.973 202.973 202.973 202.973-90.874 202.973-202.973S315.073 0 202.973 0Zm6.428 313.932c-60.72 0-109.944-49.527-109.944-110.62 0-61.095 49.224-110.621 109.944-110.621s109.944 49.526 109.944 110.62c0 61.094-49.224 110.621-109.944 110.621Z"/>
++    <path fill="#9BE755" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++    <path fill="url(#greenpt-gradient)" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++  </g>
++</svg>
+diff --git a/packages/components/nodes/speechtotext/greenpt/GreenPT.ts b/packages/components/nodes/speechtotext/greenpt/GreenPT.ts
+new file mode 100644
+index 00000000000..1f56b86fd95
+--- /dev/null
++++ b/packages/components/nodes/speechtotext/greenpt/GreenPT.ts
+@@ -0,0 +1,35 @@
++import { INode, INodeParams } from '../../../src/Interface'
++
++class GreenPT_SpeechToText implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    credential: INodeParams
++
++    constructor() {
++        this.label = 'GreenPT'
++        this.name = 'greenPT'
++        this.version = 1.0
++        this.type = 'GreenPT'
++        this.icon = 'greenpt.svg'
++        this.category = 'SpeechToText'
++        this.description =
++            'GreenPT speech-to-text runs on optimized European infrastructure in data centers powered by 100% renewable energy.'
++        this.baseClasses = [this.type]
++        this.inputs = []
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['greenPTApi']
++        }
++    }
++}
++
++module.exports = { nodeClass: GreenPT_SpeechToText }
+diff --git a/packages/components/nodes/speechtotext/greenpt/greenpt.svg b/packages/components/nodes/speechtotext/greenpt/greenpt.svg
+new file mode 100644
+index 00000000000..a1e2a5f8680
+--- /dev/null
++++ b/packages/components/nodes/speechtotext/greenpt/greenpt.svg
+@@ -0,0 +1,8 @@
++<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
++  <defs><linearGradient id="greenpt-gradient" x1="46.586%" y1="13.983%" x2="59.234%" y2="85.511%"><stop stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient></defs>
++  <g transform="translate(52.773 52.773)" fill-rule="evenodd">
++    <path fill="#9BE755" d="M202.973 0C90.874 0 0 90.874 0 202.973s90.874 202.973 202.973 202.973 202.973-90.874 202.973-202.973S315.073 0 202.973 0Zm6.428 313.932c-60.72 0-109.944-49.527-109.944-110.62 0-61.095 49.224-110.621 109.944-110.621s109.944 49.526 109.944 110.62c0 61.094-49.224 110.621-109.944 110.621Z"/>
++    <path fill="#9BE755" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++    <path fill="url(#greenpt-gradient)" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++  </g>
++</svg>
+diff --git a/packages/components/src/greenpt.test.ts b/packages/components/src/greenpt.test.ts
+new file mode 100644
+index 00000000000..f2090e5ce4b
+--- /dev/null
++++ b/packages/components/src/greenpt.test.ts
+@@ -0,0 +1,60 @@
++import axios from 'axios'
++import { filterGreenPTModels, GREENPT_API_BASE_URL, transcribeWithGreenPT } from './greenpt'
++
++jest.mock('axios')
++
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++describe('GreenPT helpers', () => {
++    const models = {
++        data: [
++            { id: 'glm-5.2' },
++            { id: 'kimi-k2.7-code' },
++            { id: 'green-embedding' },
++            { id: 'green-rerank' },
++            { id: 'green-s' },
++            { id: 'green-s-pro' },
++            { id: 42 }
++        ]
++    }
++
++    it.each([
++        ['chat', ['glm-5.2', 'kimi-k2.7-code']],
++        ['embedding', ['green-embedding']],
++        ['rerank', ['green-rerank']],
++        ['speech', ['green-s', 'green-s-pro']]
++    ] as const)('filters live models for %s', (type, expected) => {
++        expect(filterGreenPTModels(models, type).map((model) => model.name)).toEqual(expected)
++    })
++
++    it('transcribes audio with the GreenPT listen protocol', async () => {
++        mockedAxios.post.mockResolvedValueOnce({
++            data: { results: { channels: [{ alternatives: [{ transcript: ' renewable inference ' }] }] } }
++        })
++
++        await expect(
++            transcribeWithGreenPT(Buffer.from('audio'), 'audio/wav', { model: 'green-s-pro', language: 'en', punctuate: 'true' }, 'secret')
++        ).resolves.toBe('renewable inference')
++        expect(mockedAxios.post).toHaveBeenCalledWith(
++            `${GREENPT_API_BASE_URL}/listen`,
++            expect.any(Buffer),
++            expect.objectContaining({
++                headers: { Authorization: 'Token secret', 'Content-Type': 'audio/wav' },
++                params: { model: 'green-s-pro', language: 'en', punctuate: true },
++                timeout: 300_000
++            })
++        )
++    })
++
++    it('rejects malformed speech responses', async () => {
++        mockedAxios.post.mockResolvedValueOnce({ data: { results: { channels: [] } } })
++        await expect(transcribeWithGreenPT(Buffer.from('audio'), 'invalid\r\nheader', {}, 'secret')).rejects.toThrow(
++            'contains no valid transcript'
++        )
++        expect(mockedAxios.post).toHaveBeenLastCalledWith(
++            `${GREENPT_API_BASE_URL}/listen`,
++            expect.any(Buffer),
++            expect.objectContaining({ headers: expect.objectContaining({ 'Content-Type': 'application/octet-stream' }) })
++        )
++    })
++})
+diff --git a/packages/components/src/greenpt.ts b/packages/components/src/greenpt.ts
+new file mode 100644
+index 00000000000..251c7806136
+--- /dev/null
++++ b/packages/components/src/greenpt.ts
+@@ -0,0 +1,70 @@
++import axios from 'axios'
++import { ICommonObject, INodeData, INodeOptionsValue } from './Interface'
++import { getCredentialData, getCredentialParam } from './utils'
++
++export const GREENPT_API_BASE_URL = 'https://api.greenpt.ai/v1'
++
++export type GreenPTModelType = 'chat' | 'embedding' | 'rerank' | 'speech'
++
++interface GreenPTModelsResponse {
++    data?: Array<{ id?: unknown }>
++}
++
++const isModelType = (model: string, type: GreenPTModelType): boolean => {
++    if (type === 'embedding') return model.toLowerCase().includes('embedding')
++    if (type === 'rerank') return model.toLowerCase().includes('rerank')
++    if (type === 'speech') return /^green-s(?:-|$)/i.test(model)
++    return !model.toLowerCase().includes('embedding') && !model.toLowerCase().includes('rerank') && !/^green-s(?:-|$)/i.test(model)
++}
++
++export const filterGreenPTModels = (payload: GreenPTModelsResponse, type: GreenPTModelType): INodeOptionsValue[] => {
++    if (!Array.isArray(payload?.data)) return []
++    return payload.data
++        .map((model) => model?.id)
++        .filter((id): id is string => typeof id === 'string' && id.length > 0 && isModelType(id, type))
++        .map((id) => ({ label: id, name: id }))
++}
++
++export const listGreenPTModels = async (
++    nodeData: INodeData,
++    options: ICommonObject | undefined,
++    type: GreenPTModelType
++): Promise<INodeOptionsValue[]> => {
++    if (!options) return []
++    const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++    const apiKey = getCredentialParam('greenPTApiKey', credentialData, nodeData)
++    const response = await axios.get<GreenPTModelsResponse>(`${GREENPT_API_BASE_URL}/models`, {
++        headers: { Authorization: `Bearer ${apiKey}` },
++        timeout: 10_000
++    })
++    return filterGreenPTModels(response.data, type)
++}
++
++const booleanParam = (value: unknown): boolean | undefined => {
++    if (value === true || value === 'true') return true
++    if (value === false || value === 'false') return false
++    return undefined
++}
++
++export const transcribeWithGreenPT = async (audio: Buffer, contentType: string, config: ICommonObject, apiKey: string): Promise<string> => {
++    const params: ICommonObject = { model: (config.model as string) || 'green-s-pro' }
++    if (config.language) params.language = config.language
++    const punctuate = booleanParam(config.punctuate)
++    const smartFormat = booleanParam(config.smartFormat)
++    if (punctuate !== undefined) params.punctuate = punctuate
++    if (smartFormat !== undefined) params.smart_format = smartFormat
++
++    const response = await axios.post(`${GREENPT_API_BASE_URL}/listen`, audio, {
++        headers: {
++            Authorization: `Token ${apiKey}`,
++            'Content-Type': /^[\w.+-]+\/[\w.+-]+$/.test(contentType) ? contentType : 'application/octet-stream'
++        },
++        params,
++        timeout: 300_000
++    })
++    const transcript = response.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript
++    if (typeof transcript !== 'string' || !transcript.trim()) {
++        throw new Error('GreenPT speech response contains no valid transcript')
++    }
++    return transcript.trim()
++}
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index e59368a5eae..4dacaa7a17e 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -5,13 +5,15 @@ import { AssemblyAI } from 'assemblyai'
+ import { getFileFromStorage } from './storageUtils'
+ import axios from 'axios'
+ import Groq from 'groq-sdk'
++import { transcribeWithGreenPT } from './greenpt'
+ 
+ const SpeechToTextType = {
+     OPENAI_WHISPER: 'openAIWhisper',
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    GREENPT_TRANSCRIBE: 'greenPTTranscribe'
+ }
+ 
+ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfig: ICommonObject, options: ICommonObject) => {
+@@ -125,6 +127,8 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                 }
+                 break
+             }
++            case SpeechToTextType.GREENPT_TRANSCRIBE:
++                return transcribeWithGreenPT(audio_file, upload.type, speechToTextConfig, credentialData.greenPTApiKey)
+         }
+     } else {
+         throw new Error('Speech to text is not selected, but found a recorded audio file. Please fix the chain.')
+diff --git a/packages/ui/src/assets/images/greenpt.svg b/packages/ui/src/assets/images/greenpt.svg
+new file mode 100644
+index 00000000000..a1e2a5f8680
+--- /dev/null
++++ b/packages/ui/src/assets/images/greenpt.svg
+@@ -0,0 +1,8 @@
++<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
++  <defs><linearGradient id="greenpt-gradient" x1="46.586%" y1="13.983%" x2="59.234%" y2="85.511%"><stop stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".3"/></linearGradient></defs>
++  <g transform="translate(52.773 52.773)" fill-rule="evenodd">
++    <path fill="#9BE755" d="M202.973 0C90.874 0 0 90.874 0 202.973s90.874 202.973 202.973 202.973 202.973-90.874 202.973-202.973S315.073 0 202.973 0Zm6.428 313.932c-60.72 0-109.944-49.527-109.944-110.62 0-61.095 49.224-110.621 109.944-110.621s109.944 49.526 109.944 110.62c0 61.094-49.224 110.621-109.944 110.621Z"/>
++    <path fill="#9BE755" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++    <path fill="url(#greenpt-gradient)" d="M267.15 372.118c-92.214 0-166.969-75.729-166.969-169.145S174.936 33.829 267.15 33.829c20.617 0 40.275 3.965 58.506 10.887C291.333 16.794 247.809 0 200.363 0 89.705 0 0 90.874 0 202.973s89.705 202.973 200.363 202.973c47.446 0 90.97-16.793 125.293-44.716-18.231 6.922-37.89 10.888-58.506 10.888Z"/>
++  </g>
++</svg>
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index 2ca7fd95c28..8d0d855fbe4 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -20,6 +20,7 @@ import assemblyAIPng from '@/assets/images/assemblyai.png'
+ import localAiPng from '@/assets/images/localai.png'
+ import azureSvg from '@/assets/images/azure_openai.svg'
+ import groqPng from '@/assets/images/groq.png'
++import greenPTSVG from '@/assets/images/greenpt.svg'
+ 
+ // store
+ import useNotifier from '@/utils/useNotifier'
+@@ -34,7 +35,8 @@ const SpeechToTextType = {
+     ASSEMBLYAI_TRANSCRIBE: 'assemblyAiTranscribe',
+     LOCALAI_STT: 'localAISTT',
+     AZURE_COGNITIVE: 'azureCognitive',
+-    GROQ_WHISPER: 'groqWhisper'
++    GROQ_WHISPER: 'groqWhisper',
++    GREENPT_TRANSCRIBE: 'greenPTTranscribe'
+ }
+ 
+ // Weird quirk - the key must match the name property value.
+@@ -236,6 +238,58 @@ const speechToTextProviders = {
+                 optional: true
+             }
+         ]
++    },
++    [SpeechToTextType.GREENPT_TRANSCRIBE]: {
++        label: 'GreenPT',
++        name: SpeechToTextType.GREENPT_TRANSCRIBE,
++        icon: greenPTSVG,
++        url: 'https://docs.greenpt.ai/audio-prerecorded',
++        inputs: [
++            {
++                label: 'Connect Credential',
++                name: 'credential',
++                type: 'credential',
++                credentialNames: ['greenPTApi']
++            },
++            {
++                label: 'Model',
++                name: 'model',
++                type: 'options',
++                options: [
++                    {
++                        label: 'GreenS Pro',
++                        name: 'green-s-pro'
++                    },
++                    {
++                        label: 'GreenS',
++                        name: 'green-s'
++                    }
++                ],
++                default: 'green-s-pro'
++            },
++            {
++                label: 'Language',
++                name: 'language',
++                type: 'string',
++                description: 'Language code such as en, de, or multi. GreenS Pro supports multilingual transcription with multi.',
++                placeholder: 'en',
++                optional: true
++            },
++            {
++                label: 'Punctuate',
++                name: 'punctuate',
++                type: 'boolean',
++                default: true,
++                optional: true
++            },
++            {
++                label: 'Smart Format',
++                name: 'smartFormat',
++                type: 'boolean',
++                default: true,
++                optional: true
++            }
++        ]
+     }
+ }
+ 

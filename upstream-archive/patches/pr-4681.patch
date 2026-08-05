@@ -1,0 +1,47 @@
+From fea4bddfda300dadd8e19063d726a5ba4013c0e5 Mon Sep 17 00:00:00 2001
+From: Stuart Hirst <stuart@pebbletek.ai>
+Date: Thu, 19 Jun 2025 06:57:16 +1000
+Subject: [PATCH] Add PostgreSQL schema configuration support via
+ DATABASE_SCHEMA environment variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This update enables users to specify a custom PostgreSQL schema for Flowise to use,
+improving database organization and multi-tenant deployments.
+
+Changes:
+- Add schema property to PostgreSQL DataSource configuration using DATABASE_SCHEMA env var
+- Configure search_path to include custom schema, public, and extensions schemas
+- Ensure UUID functions remain accessible from extensions schema
+- Maintain backward compatibility with default 'public' schema when DATABASE_SCHEMA is not set
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ packages/server/src/DataSource.ts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/DataSource.ts b/packages/server/src/DataSource.ts
+index f6e43ba7293..3d4d2acef64 100644
+--- a/packages/server/src/DataSource.ts
++++ b/packages/server/src/DataSource.ts
+@@ -70,13 +70,16 @@ export const init = async (): Promise<void> => {
+                 username: process.env.DATABASE_USER,
+                 password: process.env.DATABASE_PASSWORD,
+                 database: process.env.DATABASE_NAME,
++                schema: process.env.DATABASE_SCHEMA || 'public',
+                 ssl: getDatabaseSSLFromEnv(),
+                 synchronize: false,
+                 migrationsRun: false,
+                 entities: Object.values(entities),
+                 migrations: postgresMigrations,
+                 extra: {
+-                    idleTimeoutMillis: 120000
++                    idleTimeoutMillis: 120000,
++                    // Ensure search_path includes extensions schema for UUID functions
++                    searchPath: process.env.DATABASE_SCHEMA ? `${process.env.DATABASE_SCHEMA}, public, extensions` : 'public, extensions'
+                 },
+                 logging: ['error', 'warn', 'info', 'log'],
+                 logger: 'advanced-console',

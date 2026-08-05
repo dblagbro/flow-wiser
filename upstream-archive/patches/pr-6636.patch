@@ -1,0 +1,57 @@
+From b1c83a4d46ba40803de02224114a24b8077910a4 Mon Sep 17 00:00:00 2001
+From: exec-chain-4 <exec-chain-4@users.noreply.github.com>
+Date: Fri, 17 Jul 2026 17:42:36 +0800
+Subject: [PATCH] fix: unEscapeSpecialChars now handles all RediSearch special
+ characters
+
+- Previously only escaped/unescaped '-' character
+- Now handles all RediSearch reserved characters: , . < > { } [ ] " ' : ; ! @ # $ % ^ & * ( ) - + = ~
+- Fixes JSON.parse failure when metadata contains special characters (#6598)
+---
+ .../nodes/vectorstores/Redis/utils.ts         | 35 ++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/vectorstores/Redis/utils.ts b/packages/components/nodes/vectorstores/Redis/utils.ts
+index dff5840da55..e7279f3fa39 100644
+--- a/packages/components/nodes/vectorstores/Redis/utils.ts
++++ b/packages/components/nodes/vectorstores/Redis/utils.ts
+@@ -27,5 +27,38 @@ export const escapeAllStrings = (obj: object) => {
+ }
+ 
+ export const unEscapeSpecialChars = (str: string) => {
+-    return str.replaceAll('\\-', '-')
++    // RediSearch special characters that need to be unescaped
++    // https://redis.io/docs/latest/develop/interact/search-and-query/advanced/concepts/special-characters/
++    const specialChars = [
++        '\\-', '-',
++        '\\,', ',',
++        '\\<', '<',
++        '\\>', '>',
++        '\\{', '{',
++        '\\}', '}',
++        '\\[', '[',
++        '\\]', ']',
++        '\"', '"',
++        "\'", "'",
++        '\\:', ':',
++        '\\;', ';',
++        '\\!', '!',
++        '\\@', '@',
++        '\\#', '#',
++        '\\$', '$',
++        '\\%', '%',
++        '\\^', '^',
++        '\\&', '&',
++        '\\*', '*',
++        '\\(', '(',
++        '\\)', ')',
++        '\\+', '+',
++        '\\=', '=',
++        '\\~', '~',
++    ]
++    
++    for (let i = 0; i < specialChars.length; i += 2) {
++        str = str.replaceAll(specialChars[i], specialChars[i + 1])
++    }
++    return str
+ }

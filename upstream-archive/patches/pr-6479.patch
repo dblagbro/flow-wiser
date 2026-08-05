@@ -1,0 +1,201 @@
+From b05a74b5a6fcbd1ffa91ca40cbf97e083e28e963 Mon Sep 17 00:00:00 2001
+From: Sairam Veereddy <vsairamkumarreddy@gmail.com>
+Date: Thu, 4 Jun 2026 14:26:21 -0400
+Subject: [PATCH 1/2] Validate pagination query params
+
+---
+ packages/server/src/utils/pagination.test.ts | 40 ++++++++++++++++++++
+ packages/server/src/utils/pagination.ts      | 25 +++++++-----
+ 2 files changed, 55 insertions(+), 10 deletions(-)
+ create mode 100644 packages/server/src/utils/pagination.test.ts
+
+diff --git a/packages/server/src/utils/pagination.test.ts b/packages/server/src/utils/pagination.test.ts
+new file mode 100644
+index 00000000000..c43ec97e4a7
+--- /dev/null
++++ b/packages/server/src/utils/pagination.test.ts
+@@ -0,0 +1,40 @@
++import { Request } from 'express'
++import { StatusCodes } from 'http-status-codes'
++import { InternalFlowiseError } from '../errors/internalFlowiseError'
++import { getPageAndLimitParams } from './pagination'
++
++const makeRequest = (query: Request['query']): Request => ({ query }) as Request
++
++describe('getPageAndLimitParams', () => {
++    it('returns sentinel values when pagination is not provided', () => {
++        expect(getPageAndLimitParams(makeRequest({}))).toEqual({ page: -1, limit: -1 })
++    })
++
++    it('parses non-negative integer pagination values', () => {
++        expect(getPageAndLimitParams(makeRequest({ page: '2', limit: '25' }))).toEqual({ page: 2, limit: 25 })
++    })
++
++    it('allows zero so existing callers can apply their default pagination behavior', () => {
++        expect(getPageAndLimitParams(makeRequest({ page: '0', limit: '0' }))).toEqual({ page: 0, limit: 0 })
++    })
++
++    it.each([
++        ['page', '-1'],
++        ['page', 'abc'],
++        ['page', '1.5'],
++        ['page', ['1', '2']],
++        ['limit', '-1'],
++        ['limit', 'abc'],
++        ['limit', '1.5'],
++        ['limit', ['1', '2']]
++    ])('rejects invalid %s values', (paramName, value) => {
++        expect(() => getPageAndLimitParams(makeRequest({ [paramName]: value }))).toThrow(InternalFlowiseError)
++
++        try {
++            getPageAndLimitParams(makeRequest({ [paramName]: value }))
++        } catch (error) {
++            expect((error as InternalFlowiseError).statusCode).toBe(StatusCodes.PRECONDITION_FAILED)
++            expect((error as InternalFlowiseError).message).toContain(`${paramName} must be a non-negative integer`)
++        }
++    })
++})
+diff --git a/packages/server/src/utils/pagination.ts b/packages/server/src/utils/pagination.ts
+index ae81933cd94..8d6029e684c 100644
+--- a/packages/server/src/utils/pagination.ts
++++ b/packages/server/src/utils/pagination.ts
+@@ -7,23 +7,28 @@ type Pagination = {
+     limit: number
+ }
+ 
++const parsePaginationParam = (value: unknown, paramName: 'page' | 'limit'): number => {
++    if (Array.isArray(value) || typeof value !== 'string' || !/^\d+$/.test(value)) {
++        throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: ${paramName} must be a non-negative integer!`)
++    }
++
++    const parsedValue = Number(value)
++    if (!Number.isSafeInteger(parsedValue)) {
++        throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: ${paramName} must be a non-negative integer!`)
++    }
++
++    return parsedValue
++}
++
+ export const getPageAndLimitParams = (req: Request): Pagination => {
+     // by default assume no pagination
+     let page = -1
+     let limit = -1
+     if (req.query.page) {
+-        // if page is provided, make sure it's a positive number
+-        page = parseInt(req.query.page as string)
+-        if (page < 0) {
+-            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: page cannot be negative!`)
+-        }
++        page = parsePaginationParam(req.query.page, 'page')
+     }
+     if (req.query.limit) {
+-        // if limit is provided, make sure it's a positive number
+-        limit = parseInt(req.query.limit as string)
+-        if (limit < 0) {
+-            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: limit cannot be negative!`)
+-        }
++        limit = parsePaginationParam(req.query.limit, 'limit')
+     }
+     return { page, limit }
+ }
+
+From 23b2aadff5add58b116c0b551d64d5a45b7528c7 Mon Sep 17 00:00:00 2001
+From: Sairam Veereddy <165347912+sairamveereddy@users.noreply.github.com>
+Date: Thu, 4 Jun 2026 14:35:14 -0400
+Subject: [PATCH 2/2] Revert "[codex] Validate pagination query params"
+
+---
+ packages/server/src/utils/pagination.test.ts | 40 --------------------
+ packages/server/src/utils/pagination.ts      | 25 +++++-------
+ 2 files changed, 10 insertions(+), 55 deletions(-)
+ delete mode 100644 packages/server/src/utils/pagination.test.ts
+
+diff --git a/packages/server/src/utils/pagination.test.ts b/packages/server/src/utils/pagination.test.ts
+deleted file mode 100644
+index c43ec97e4a7..00000000000
+--- a/packages/server/src/utils/pagination.test.ts
++++ /dev/null
+@@ -1,40 +0,0 @@
+-import { Request } from 'express'
+-import { StatusCodes } from 'http-status-codes'
+-import { InternalFlowiseError } from '../errors/internalFlowiseError'
+-import { getPageAndLimitParams } from './pagination'
+-
+-const makeRequest = (query: Request['query']): Request => ({ query }) as Request
+-
+-describe('getPageAndLimitParams', () => {
+-    it('returns sentinel values when pagination is not provided', () => {
+-        expect(getPageAndLimitParams(makeRequest({}))).toEqual({ page: -1, limit: -1 })
+-    })
+-
+-    it('parses non-negative integer pagination values', () => {
+-        expect(getPageAndLimitParams(makeRequest({ page: '2', limit: '25' }))).toEqual({ page: 2, limit: 25 })
+-    })
+-
+-    it('allows zero so existing callers can apply their default pagination behavior', () => {
+-        expect(getPageAndLimitParams(makeRequest({ page: '0', limit: '0' }))).toEqual({ page: 0, limit: 0 })
+-    })
+-
+-    it.each([
+-        ['page', '-1'],
+-        ['page', 'abc'],
+-        ['page', '1.5'],
+-        ['page', ['1', '2']],
+-        ['limit', '-1'],
+-        ['limit', 'abc'],
+-        ['limit', '1.5'],
+-        ['limit', ['1', '2']]
+-    ])('rejects invalid %s values', (paramName, value) => {
+-        expect(() => getPageAndLimitParams(makeRequest({ [paramName]: value }))).toThrow(InternalFlowiseError)
+-
+-        try {
+-            getPageAndLimitParams(makeRequest({ [paramName]: value }))
+-        } catch (error) {
+-            expect((error as InternalFlowiseError).statusCode).toBe(StatusCodes.PRECONDITION_FAILED)
+-            expect((error as InternalFlowiseError).message).toContain(`${paramName} must be a non-negative integer`)
+-        }
+-    })
+-})
+diff --git a/packages/server/src/utils/pagination.ts b/packages/server/src/utils/pagination.ts
+index 8d6029e684c..ae81933cd94 100644
+--- a/packages/server/src/utils/pagination.ts
++++ b/packages/server/src/utils/pagination.ts
+@@ -7,28 +7,23 @@ type Pagination = {
+     limit: number
+ }
+ 
+-const parsePaginationParam = (value: unknown, paramName: 'page' | 'limit'): number => {
+-    if (Array.isArray(value) || typeof value !== 'string' || !/^\d+$/.test(value)) {
+-        throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: ${paramName} must be a non-negative integer!`)
+-    }
+-
+-    const parsedValue = Number(value)
+-    if (!Number.isSafeInteger(parsedValue)) {
+-        throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: ${paramName} must be a non-negative integer!`)
+-    }
+-
+-    return parsedValue
+-}
+-
+ export const getPageAndLimitParams = (req: Request): Pagination => {
+     // by default assume no pagination
+     let page = -1
+     let limit = -1
+     if (req.query.page) {
+-        page = parsePaginationParam(req.query.page, 'page')
++        // if page is provided, make sure it's a positive number
++        page = parseInt(req.query.page as string)
++        if (page < 0) {
++            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: page cannot be negative!`)
++        }
+     }
+     if (req.query.limit) {
+-        limit = parsePaginationParam(req.query.limit, 'limit')
++        // if limit is provided, make sure it's a positive number
++        limit = parseInt(req.query.limit as string)
++        if (limit < 0) {
++            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: limit cannot be negative!`)
++        }
+     }
+     return { page, limit }
+ }

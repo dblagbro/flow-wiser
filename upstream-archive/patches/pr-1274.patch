@@ -1,0 +1,694 @@
+From a5016ffd34226f5ebce69533f65e350bb3f6c3b7 Mon Sep 17 00:00:00 2001
+From: Knighttower <knighttower+git@outlook.com>
+Date: Wed, 22 Nov 2023 21:50:00 -0500
+Subject: [PATCH 1/2] removed dockefile duplicates --VERIFIED
+
+---
+ .gitignore        |  4 ++++
+ Dockerfile        | 41 -----------------------------------------
+ docker/Dockerfile | 21 ---------------------
+ 3 files changed, 4 insertions(+), 62 deletions(-)
+ delete mode 100644 Dockerfile
+ delete mode 100644 docker/Dockerfile
+
+diff --git a/.gitignore b/.gitignore
+index 533f68a5278..ed80b0f3bd2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -44,3 +44,7 @@
+ 
+ ## compressed
+ **/*.tgz
++
++.gitcommands
++.gitconfig
++.bash-helpers
+diff --git a/Dockerfile b/Dockerfile
+deleted file mode 100644
+index e485cd3ef35..00000000000
+--- a/Dockerfile
++++ /dev/null
+@@ -1,41 +0,0 @@
+-# Build local monorepo image
+-# docker build --no-cache -t  flowise .
+-
+-# Run image
+-# docker run -d -p 3000:3000 flowise
+-
+-FROM node:18-alpine
+-RUN apk add --update libc6-compat python3 make g++
+-# needed for pdfjs-dist
+-RUN apk add --no-cache build-base cairo-dev pango-dev
+-
+-# Install Chromium
+-RUN apk add --no-cache chromium
+-
+-ENV PUPPETEER_SKIP_DOWNLOAD=true
+-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+-
+-WORKDIR /usr/src/packages
+-
+-# Copy root package.json and lockfile
+-COPY package.json yarn.loc[k] ./
+-
+-# Copy components package.json
+-COPY packages/components/package.json ./packages/components/package.json
+-
+-# Copy ui package.json
+-COPY packages/ui/package.json ./packages/ui/package.json
+-
+-# Copy server package.json
+-COPY packages/server/package.json ./packages/server/package.json
+-
+-RUN yarn install
+-
+-# Copy app source
+-COPY . .
+-
+-RUN yarn build
+-
+-EXPOSE 3000
+-
+-CMD [ "yarn", "start" ]
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+deleted file mode 100644
+index 1ad1bf5ee2b..00000000000
+--- a/docker/Dockerfile
++++ /dev/null
+@@ -1,21 +0,0 @@
+-FROM node:18-alpine
+-
+-USER root
+-
+-RUN apk add --no-cache git
+-RUN apk add --no-cache python3 py3-pip make g++
+-# needed for pdfjs-dist
+-RUN apk add --no-cache build-base cairo-dev pango-dev
+-
+-# Install Chromium
+-RUN apk add --no-cache chromium
+-
+-ENV PUPPETEER_SKIP_DOWNLOAD=true
+-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+-
+-# You can install a specific version like: flowise@1.0.0
+-RUN npm install -g flowise
+-
+-WORKDIR /data
+-
+-CMD "flowise"
+\ No newline at end of file
+
+From 4f3687a6b7ca4f35ace0c29b7a1c7d7941b0ef70 Mon Sep 17 00:00:00 2001
+From: Knighttower <knighttower+git@outlook.com>
+Date: Thu, 23 Nov 2023 11:26:51 -0500
+Subject: [PATCH 2/2] added full docker flow
+
+---
+ .gitignore                         |  2 +
+ README.md                          | 60 ++++++++---------------
+ docker/.env.example                | 30 +++++++++---
+ docker/Dockerfile                  | 42 +++++++++++++++++
+ docker/README.md                   | 47 +++++++++---------
+ docker/cli                         | 25 ++++++++++
+ docker/docker-compose.yml          | 28 -----------
+ docker/docker-compose.yml.template | 57 ++++++++++++++++++++++
+ docker/helpers.sh                  | 41 ++++++++++++++++
+ docker/start                       | 76 ++++++++++++++++++++++++++++++
+ docker/stop                        | 21 +++++++++
+ package.json                       |  5 +-
+ 12 files changed, 337 insertions(+), 97 deletions(-)
+ create mode 100644 docker/Dockerfile
+ create mode 100644 docker/cli
+ delete mode 100644 docker/docker-compose.yml
+ create mode 100644 docker/docker-compose.yml.template
+ create mode 100644 docker/helpers.sh
+ create mode 100644 docker/start
+ create mode 100644 docker/stop
+
+diff --git a/.gitignore b/.gitignore
+index ed80b0f3bd2..a166dcac13a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -48,3 +48,5 @@
+ .gitcommands
+ .gitconfig
+ .bash-helpers
++.gitcommands
++.gitconfig
+diff --git a/README.md b/README.md
+index 25026237f76..4f8c56a83e0 100644
+--- a/README.md
++++ b/README.md
+@@ -40,30 +40,9 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+ 
+ ## 🐳 Docker
+ 
+-### Docker Compose
++**Go here for [Instructions](https://github.com/FlowiseAI/Flowise/blob/main/docker/README.md)**
+ 
+-1. Go to `docker` folder at the root of the project
+-2. Copy `.env.example` file, paste it into the same location, and rename to `.env`
+-3. `docker-compose up -d`
+-4. Open [http://localhost:3000](http://localhost:3000)
+-5. You can bring the containers down by `docker-compose stop`
+-
+-### Docker Image
+-
+-1. Build the image locally:
+-    ```bash
+-    docker build --no-cache -t flowise .
+-    ```
+-2. Run image:
+-
+-    ```bash
+-    docker run -d --name flowise -p 3000:3000 flowise
+-    ```
+-
+-3. Stop image:
+-    ```bash
+-    docker stop flowise
+-    ```
++     
+ 
+ ## 👨‍💻 Developers
+ 
+@@ -88,31 +67,32 @@ Flowise has 3 different modules in a single mono repository.
+     git clone https://github.com/FlowiseAI/Flowise.git
+     ```
+ 
+-2. Go into repository folder
++2. Use Docker for a better Dev flow (see Docker [Instructions](https://github.com/FlowiseAI/Flowise/blob/main/docker/README.md), and skip the other steps) or Manually: 
++    - Go into repository folder
+ 
+-    ```bash
+-    cd Flowise
+-    ```
++        ```bash
++        cd Flowise
++        ```
+ 
+-3. Install all dependencies of all modules:
++    - Install all dependencies of all modules:
+ 
+-    ```bash
+-    yarn install
+-    ```
++        ```bash
++        yarn install
++        ```
+ 
+-4. Build all the code:
++    - Build all the code:
+ 
+-    ```bash
+-    yarn build
+-    ```
++        ```bash
++        yarn build
++        ```
+ 
+-5. Start the app:
++    - Start the app:
+ 
+-    ```bash
+-    yarn start
+-    ```
++        ```bash
++        yarn start
++        ```
+ 
+-    You can now access the app on [http://localhost:3000](http://localhost:3000)
++    - You can now access the app on [http://localhost:3000](http://localhost:3000)
+ 
+ 6. For development build:
+ 
+diff --git a/docker/.env.example b/docker/.env.example
+index 967a1ab6b39..58887aa00e0 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -1,11 +1,22 @@
+-PORT=3000
+-DATABASE_PATH=/root/.flowise
+-APIKEY_PATH=/root/.flowise
+-SECRETKEY_PATH=/root/.flowise
+-LOG_PATH=/root/.flowise/logs
++#------------------------------------
++#-->Docker/codespace
++# Avoids the use of 'root' for better compatibility and adherence
++DOCKER_USER=flowise
++DOCKER_USER_UID=1000
++DOCKER_USER_DIR="/home/${DOCKER_USER}"
++DOCKER_WORKSPACE_DIR="${DOCKER_USER_DIR}"
+ 
++#------------------------------------
++#-->Standard settings
++PORT=3000
++APIKEY_PATH="${DOCKER_USER_DIR}/.flowise"
++SECRETKEY_PATH="${DOCKER_USER_DIR}/.flowise"
++LOG_PATH="${DOCKER_USER_DIR}/.flowise/logs"
++DATABASE_PATH="${DOCKER_USER_DIR}/.flowise"
+ # NUMBER_OF_PROXIES= 1
+ 
++#------------------------------------
++#-->DB [uncomment when in use]
+ # DATABASE_TYPE=postgres
+ # DATABASE_PORT=""
+ # DATABASE_HOST=""
+@@ -13,6 +24,8 @@ LOG_PATH=/root/.flowise/logs
+ # DATABASE_USER=""
+ # DATABASE_PASSWORD=""
+ 
++#------------------------------------
++#-->LangChain [uncomment when in use]
+ # FLOWISE_USERNAME=user
+ # FLOWISE_PASSWORD=1234
+ # FLOWISE_SECRETKEY_OVERWRITE=myencryptionkey
+@@ -21,7 +34,12 @@ LOG_PATH=/root/.flowise/logs
+ # TOOL_FUNCTION_BUILTIN_DEP=crypto,fs
+ # TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash
+ 
++#------------------------------------
++#-->LangChain [uncomment when in use]
+ # LANGCHAIN_TRACING_V2=true
+ # LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+ # LANGCHAIN_API_KEY=your_api_key
+-# LANGCHAIN_PROJECT=your_project
+\ No newline at end of file
++# LANGCHAIN_PROJECT=your_project
++
++# --> Note:
++# --> when uncommenting the above, make sure to also uncomment the following in the docker-compose file
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+new file mode 100644
+index 00000000000..a9db3e1b114
+--- /dev/null
++++ b/docker/Dockerfile
+@@ -0,0 +1,42 @@
++# @knighttower - https://knighttower.io
++
++# Use Node.js official base image
++FROM node:20.2.0-slim
++
++ARG DOCKER_WORKSPACE_DIR
++
++# Set environment variables
++ENV PUPPETEER_SKIP_DOWNLOAD=true \
++    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
++
++# Set working directory
++WORKDIR $DOCKER_WORKSPACE_DIR
++
++# Install necessary packages to extend the dev environment and allow other integrations or manipulations
++RUN apt-get update -y \
++    && apt-get install -y --no-install-recommends \
++    curl \
++    build-essential \
++    python3 \
++    python3-pip \
++    make \
++    g++ \
++    git \
++    libcairo2-dev \
++    libpango1.0-dev \
++    chromium \
++    bash \
++    wget \
++    nano \
++    gcc \
++    zip \
++    unzip \
++    && apt-get clean \
++    && rm -rf /var/lib/apt/lists/*
++
++# Ensure .bashrc exists for root and is executable
++RUN touch ~/.bashrc && chmod +x ~/.bashrc
++SHELL ["/bin/bash", "--login", "-c"]
++
++# Expose port 3000
++EXPOSE 3000
+diff --git a/docker/README.md b/docker/README.md
+index d3ad1c19708..d8303ca07aa 100644
+--- a/docker/README.md
++++ b/docker/README.md
+@@ -1,35 +1,38 @@
+-# Flowise Docker Hub Image
++# Docker User Guide
+ 
+-Starts Flowise from [DockerHub Image](https://hub.docker.com/repository/docker/flowiseai/flowise/general)
++## 📦 Prerequisites
++- NPM or CLI console that supports bash
+ 
+-## Usage
++## 🌱 Env Variables
++The Autosetup will copy the ENV file automatically, but if you want to customize the configuration, you can copy the `.env.example` file to `.env` and change the values. Otherwise, just skip this step.
+ 
+-1. Create `.env` file and specify the `PORT` (refer to `.env.example`)
+-2. `docker-compose up -d`
+-3. Open [http://localhost:3000](http://localhost:3000)
+-4. You can bring the containers down by `docker-compose stop`
++Flowise also support different environment variables to configure your instance. Read [more](https://docs.flowiseai.com/environment-variables)
++
++## 🚀 Quick Start  
++
++#### Method A: 
++From the root dir, run the following command:  
++`npm run docker:start`  
++
++#### Method B: 
++From the root dir, run the following command: 
++`sh ./docker/start`  
++
++Open [http://localhost:3000](http://localhost:3000)  
++
++**Note**: Yarn install, yarn build and start, are automatically executed when you run the start script. If they are not or you need to add other packages or execute them manually, enter the container and run them from there. Do not run these commands outside of the container because they will not work or bring issues with docker performance. 
++Use: `npm run docker:cli` it will get you inside the docker container bash.
+ 
+ ## 🔒 Authentication
+ 
+-1. Create `.env` file and specify the `PORT`, `FLOWISE_USERNAME`, and `FLOWISE_PASSWORD` (refer to `.env.example`)
+-2. Pass `FLOWISE_USERNAME` and `FLOWISE_PASSWORD` to the `docker-compose.yml` file:
++1. Pass `FLOWISE_USERNAME` and `FLOWISE_PASSWORD` to the `docker-compose.yml` file:
+     ```
+     environment:
+         - PORT=${PORT}
+         - FLOWISE_USERNAME=${FLOWISE_USERNAME}
+         - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}
+     ```
+-3. `docker-compose up -d`
+-4. Open [http://localhost:3000](http://localhost:3000)
+-5. You can bring the containers down by `docker-compose stop`
+-
+-## 🌱 Env Variables
+-
+-If you like to persist your data (flows, logs, apikeys, credentials), set these variables in the `.env` file inside `docker` folder:
+-
+--   DATABASE_PATH=/root/.flowise
+--   APIKEY_PATH=/root/.flowise
+--   LOG_PATH=/root/.flowise/logs
+--   SECRETKEY_PATH=/root/.flowise
++2. Run `npm run docker:start`
++3. Open [http://localhost:3000](http://localhost:3000)
++5. You can bring the containers down by `npm run docker:stop`
+ 
+-Flowise also support different environment variables to configure your instance. Read [more](https://docs.flowiseai.com/environment-variables)
+diff --git a/docker/cli b/docker/cli
+new file mode 100644
+index 00000000000..f6208231d7a
+--- /dev/null
++++ b/docker/cli
+@@ -0,0 +1,25 @@
++#!/usr/bin/env bash
++# @knighttower - https://github.com/knighttower
++# ------------------
++# Docker Start Script
++# ------------------
++
++# DO NOT EDIT THIS FILE OR RUN IT DIRECTLY.
++# --> Use it executing from the root directory of the project: npm run docker:start
++# ------------------
++
++rootDir="$(pwd)"
++echo "$rootDir"
++dockerDir="$rootDir/docker"
++source "$dockerDir/helpers.sh"
++
++# ------------------
++# Run the docker command
++dockerUser="$(getEnv DOCKER_USER)"
++# Check if it is empty and set the default value if it is
++# User and container will be the same. It avoid issues/confusions with permissions and allows easy access via bash cli.
++if [ "$dockerUser" = "" ]; then
++    dockerUser="flowise"
++fi
++echo -e "\e[32m Using dockerUser ----> $dockerUser!\e[0m"
++docker exec -it $dockerUser bash
+diff --git a/docker/docker-compose.yml b/docker/docker-compose.yml
+deleted file mode 100644
+index 8e0e1af50ce..00000000000
+--- a/docker/docker-compose.yml
++++ /dev/null
+@@ -1,28 +0,0 @@
+-version: '3.1'
+-
+-services:
+-    flowise:
+-        image: flowiseai/flowise
+-        restart: always
+-        environment:
+-            - PORT=${PORT}
+-            - FLOWISE_USERNAME=${FLOWISE_USERNAME}
+-            - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}
+-            - DEBUG=${DEBUG}
+-            - DATABASE_PATH=${DATABASE_PATH}
+-            - DATABASE_TYPE=${DATABASE_TYPE}
+-            - DATABASE_PORT=${DATABASE_PORT}
+-            - DATABASE_HOST=${DATABASE_HOST}
+-            - DATABASE_NAME=${DATABASE_NAME}
+-            - DATABASE_USER=${DATABASE_USER}
+-            - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+-            - APIKEY_PATH=${APIKEY_PATH}
+-            - SECRETKEY_PATH=${SECRETKEY_PATH}
+-            - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE}
+-            - LOG_LEVEL=${LOG_LEVEL}
+-            - LOG_PATH=${LOG_PATH}
+-        ports:
+-            - '${PORT}:${PORT}'
+-        volumes:
+-            - ~/.flowise:/root/.flowise
+-        command: /bin/sh -c "sleep 3; flowise start"
+diff --git a/docker/docker-compose.yml.template b/docker/docker-compose.yml.template
+new file mode 100644
+index 00000000000..39606b3c8c6
+--- /dev/null
++++ b/docker/docker-compose.yml.template
+@@ -0,0 +1,57 @@
++version: '3.8'
++# -------------------
++# "Service", "image" and "container" named the same to easely access via bash cli
++# Ex: docker exec -it flowise bash
++# -------------------
++# Values commented out to avoid errors when running the docker container
++# Uncomment when in use by the ENV
++# -------------------
++services:
++    flowise:
++        build:
++            context: .
++            dockerfile: ./docker/Dockerfile
++            args:
++                DOCKER_WORKSPACE_DIR: ${DOCKER_WORKSPACE_DIR}
++        image: flowise
++        container_name: flowise
++        hostname: flowise
++        restart: always
++        tty: true
++        env_file: .env
++        working_dir: ${DOCKER_WORKSPACE_DIR}
++        environment:
++            - SERVICE_NAME=flowise
++            - PORT=${PORT}
++            # - FLOWISE_USERNAME=${FLOWISE_USERNAME}
++            # - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}
++            # - DEBUG=${DEBUG}
++            - DATABASE_PATH=${DATABASE_PATH}
++            # - DATABASE_TYPE=${DATABASE_TYPE}
++            # - DATABASE_PORT=${DATABASE_PORT}
++            # - DATABASE_HOST=${DATABASE_HOST}
++            # - DATABASE_NAME=${DATABASE_NAME}
++            # - DATABASE_USER=${DATABASE_USER}
++            # - DATABASE_PASSWORD=${DATABASE_PASSWORD}
++            - APIKEY_PATH=${APIKEY_PATH}
++            - SECRETKEY_PATH=${SECRETKEY_PATH}
++            # - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE}
++            # - LOG_LEVEL=${LOG_LEVEL}
++            # - LOG_PATH=${LOG_PATH}
++        ports:
++            - '${PORT}:${PORT}'
++        volumes:
++            - /.flowise:${DOCKER_WORKSPACE_DIR}/.flowise:delegated
++            # Avoids the need to "copy" file into the container
++            - ./:${DOCKER_WORKSPACE_DIR}:cached
++            # Share this folder with the dev folder to continue work
++            - ./data:${DOCKER_WORKSPACE_DIR}/data:delegated
++            # Keep the node_modules inside the container to avoid performance issues
++            - node_modules:${DOCKER_WORKSPACE_DIR}/node_modules
++        networks:
++            - flowise__network
++networks:
++    flowise__network:
++        driver: bridge
++volumes:
++    node_modules:
+diff --git a/docker/helpers.sh b/docker/helpers.sh
+new file mode 100644
+index 00000000000..355b051a341
+--- /dev/null
++++ b/docker/helpers.sh
+@@ -0,0 +1,41 @@
++# utility_functions.sh
++# @knighttower - https://github.com/knighttower
++
++# This function retrieves the value of a given environment variable from the .env file.
++function getEnv() {
++    local var=$1
++
++    if [[ -z "$var" ]]; then
++        echo "Error: No variable name specified."
++        exit 1
++    fi
++
++    VAR=$(grep -w "$var" "$rootDir/.env" | head -1)
++    IFS="=" read -ra VAR <<<"$VAR"
++    envVar="${VAR[1]}"
++
++    envVar=${envVar%$'\n'}   # Remove a trailing newline.
++    envVar=${envVar//$'\n'/} # Remove all newlines.
++    echo ${envVar} | tr -d '\040\011\012\015'
++}
++
++function testDockerRunning() {
++    if docker info >/dev/null 2>&1; then
++        return 0
++    else
++        return 1
++    fi
++}
++
++# This function prompts the user for a yes/no confirmation.
++function promptConfirmation() {
++    local message=$1
++    while true; do
++        read -p $'\e[33m'"${message}"$'\e[0m :: (Y/N or Enter to skip) : ' response
++        case $response in
++        [Yy]*) return 0 ;;
++        [Nn]* | "") return 1 ;;
++        *) echo "Please answer yes or no." ;;
++        esac
++    done
++}
+diff --git a/docker/start b/docker/start
+new file mode 100644
+index 00000000000..8e89d41ba7f
+--- /dev/null
++++ b/docker/start
+@@ -0,0 +1,76 @@
++#!/usr/bin/env bash
++# @knighttower - https://github.com/knighttower
++# ------------------
++# Docker Start Script
++# ------------------
++
++# DO NOT EDIT THIS FILE OR RUN IT DIRECTLY.
++# --> Use it executing from the root directory of the project: npm run docker:start
++# ------------------
++
++rootDir="$(pwd)"
++echo "$rootDir"
++dockerDir="$rootDir/docker"
++source "$dockerDir/helpers.sh"
++
++# -----------------------------------------------------
++# ----------------- Run the Start -----------------
++# ------------------
++# Copy the .env file
++if [ -f "$rootDir/.env" ]; then
++    echo -e "\e[32m ENV detected. ---->!\e[0m"
++    echo -e "\e[33m Make sure the ENV has the VARS from the 'docker' env.example file...\e[0m"
++else
++    cp "$rootDir/docker/.env.example" "$rootDir/.env"
++    echo -e "\e[32m ENV file created! ---->!\e[0m"
++fi
++
++# ------------------
++# Copy the docker file
++if [ -f "$rootDir/docker-compose.yml" ]; then
++    echo -e "\e[32m Docker file detected. ---->!\e[0m"
++else
++    cp "$rootDir/docker/docker-compose.yml.template" "$rootDir/docker-compose.yml"
++    echo -e "\e[32m Docker file created! ---->!\e[0m"
++fi
++
++# ------------------
++# Run the docker command
++dockerUser="$(getEnv DOCKER_USER)"
++# Check if it is empty and set the default value if it is
++# User and container will be the same. It avoid issues/confusions with permissions and allows easy access via bash cli.
++if [ "$dockerUser" = "" ]; then
++    dockerUser="flowise"
++fi
++echo -e "\e[32m Using dockerUser ----> $dockerUser!\e[0m"
++
++# Check if docker is running
++if testDockerRunning; then
++    echo -e "\e[32mDocker is running.\e[0m"
++else
++    echo -e "\e[91mDocker is not running.\e[0m"
++    echo -e "\e[91mDocker needs to be running to continue.\e[0m"
++
++    echo -e "\e[91m Please confirm if docker is running...\e[0m"
++    if promptConfirmation "is docker running?"; then
++        if testDockerRunning; then
++            echo -e "\e[32mDocker is running.\e[0m"
++            break
++        else
++            echo -e "\e[91mDocker is not running.\e[0m"
++            echo -e "\e[91mDocker needs to be running to continue.\e[0m"
++        fi
++    else
++        echo -e "\e[91mInstallation aborted\e[0m"
++        exit 1
++    fi
++fi
++
++echo -e "\e[33m ---> STARTING DOCKER... Please wait...\e[0m"
++docker-compose -p "$dockerUser" up -d
++echo -e "\e[32m ===> READY TO GO! docker is running\n\e[0m"
++
++echo -e "\e[33m ---> Running YARN stuff... Please wait...\n\n\e[0m"
++sleep 1
++docker exec -t $dockerUser bash -c 'yarn install && yarn build && yarn start'
++echo -e "\e[32m ===> go to http://localhost:3000 \e[0m"
+diff --git a/docker/stop b/docker/stop
+new file mode 100644
+index 00000000000..92285a58d46
+--- /dev/null
++++ b/docker/stop
+@@ -0,0 +1,21 @@
++#!/usr/bin/env bash
++# @knighttower - https://github.com/knighttower
++# ------------------
++# Docker Stop Script
++# ------------------
++rootDir="$(pwd)"
++dockerDir="$rootDir/docker"
++source "$dockerDir/helpers.sh"
++
++# ------------------
++# Run the docker command
++dockerUser="$(getEnv DOCKER_USER)"
++# Check if it is empty and set the default value if it is
++# User and container will be the same. It avoid issues/confusions with permissions and allows easy access via bash cli.
++if [ "$dockerUser" = "" ]; then
++    dockerUser="flowise"
++fi
++echo -e "\e[32m Using dockerUser ----> $dockerUser!\e[0m"
++
++# When multiple containers are running, is better to use the container name. Otherwise, it may not stop the container.
++docker-compose -p "$dockerUser" stop
+diff --git a/package.json b/package.json
+index 909eb345331..cabcc962546 100644
+--- a/package.json
++++ b/package.json
+@@ -23,7 +23,10 @@
+         "lint-fix": "yarn lint --fix",
+         "quick": "pretty-quick --staged",
+         "postinstall": "husky install",
+-        "migration:create": "yarn typeorm migration:create"
++        "migration:create": "yarn typeorm migration:create",
++        "docker:start": "sh ./docker/start",
++        "docker:stop": "sh ./docker/stop",
++        "docker:cli": "sh ./docker/cli"
+     },
+     "lint-staged": {
+         "*.{js,jsx,ts,tsx,json,md}": "eslint --fix"

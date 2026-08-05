@@ -1,0 +1,188 @@
+From 1adea51366af1905c6cb0de5e4d8bf0396d766c8 Mon Sep 17 00:00:00 2001
+From: Sahil Kamble <syk2448@gmail.com>
+Date: Tue, 2 Jun 2026 18:23:52 +0530
+Subject: [PATCH 1/2] Fix frontend axios error handling
+
+---
+ packages/ui/src/utils/errorHandler.js      | 24 ++++++++++
+ packages/ui/src/utils/errorHandler.test.js | 56 ++++++++++++++++++++++
+ packages/ui/src/views/tools/ToolDialog.jsx | 17 ++-----
+ 3 files changed, 85 insertions(+), 12 deletions(-)
+ create mode 100644 packages/ui/src/utils/errorHandler.test.js
+
+diff --git a/packages/ui/src/utils/errorHandler.js b/packages/ui/src/utils/errorHandler.js
+index 17aae836fd1..fd985faf057 100644
+--- a/packages/ui/src/utils/errorHandler.js
++++ b/packages/ui/src/utils/errorHandler.js
+@@ -14,6 +14,30 @@ const toErrorWithMessage = (maybeError) => {
+     }
+ }
+ 
++const getAxiosErrorMessage = (error) => {
++    const responseData = error?.response?.data
++
++    if (typeof responseData === 'string') return responseData
++
++    if (responseData && typeof responseData === 'object') {
++        if (typeof responseData.message === 'string') return responseData.message
++        if (typeof responseData.error === 'string') return responseData.error
++
++        try {
++            return JSON.stringify(responseData)
++        } catch {
++            return undefined
++        }
++    }
++
++    if (error?.response?.status) {
++        return `${error.response.status}${error.response.statusText ? ` ${error.response.statusText}` : ''}`
++    }
++}
++
+ export const getErrorMessage = (error) => {
++    const axiosErrorMessage = getAxiosErrorMessage(error)
++    if (axiosErrorMessage) return axiosErrorMessage
++
+     return toErrorWithMessage(error).message
+ }
+diff --git a/packages/ui/src/utils/errorHandler.test.js b/packages/ui/src/utils/errorHandler.test.js
+new file mode 100644
+index 00000000000..bb8028e3373
+--- /dev/null
++++ b/packages/ui/src/utils/errorHandler.test.js
+@@ -0,0 +1,56 @@
++import { getErrorMessage } from './errorHandler'
++
++describe('getErrorMessage', () => {
++    it('uses an axios response data message when available', () => {
++        const error = {
++            message: 'Request failed with status code 400',
++            response: {
++                data: {
++                    message: 'Tool name already exists'
++                }
++            }
++        }
++
++        expect(getErrorMessage(error)).toBe('Tool name already exists')
++    })
++
++    it('uses an axios response data error when message is unavailable', () => {
++        const error = {
++            message: 'Request failed with status code 400',
++            response: {
++                data: {
++                    error: 'Invalid tool schema'
++                }
++            }
++        }
++
++        expect(getErrorMessage(error)).toBe('Invalid tool schema')
++    })
++
++    it('uses a string axios response body', () => {
++        const error = {
++            message: 'Request failed with status code 500',
++            response: {
++                data: 'Internal server error'
++            }
++        }
++
++        expect(getErrorMessage(error)).toBe('Internal server error')
++    })
++
++    it('falls back to response status when response data is unavailable', () => {
++        const error = {
++            message: 'Request failed with status code 404',
++            response: {
++                status: 404,
++                statusText: 'Not Found'
++            }
++        }
++
++        expect(getErrorMessage(error)).toBe('404 Not Found')
++    })
++
++    it('falls back to a regular error message when axios response is unavailable', () => {
++        expect(getErrorMessage(new Error('Network Error'))).toBe('Network Error')
++    })
++})
+diff --git a/packages/ui/src/views/tools/ToolDialog.jsx b/packages/ui/src/views/tools/ToolDialog.jsx
+index b73b15ec19a..24781b79593 100644
+--- a/packages/ui/src/views/tools/ToolDialog.jsx
++++ b/packages/ui/src/views/tools/ToolDialog.jsx
+@@ -32,6 +32,7 @@ import useApi from '@/hooks/useApi'
+ // utils
+ import useNotifier from '@/utils/useNotifier'
+ import { generateRandomGradient, formatDataGridRows } from '@/utils/genericHelper'
++import { getErrorMessage } from '@/utils/errorHandler'
+ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ 
+ const exampleAPIFunc = `/*
+@@ -258,9 +259,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to export Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to export Tool: ${getErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -304,9 +303,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to add new Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to add new Tool: ${getErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -348,9 +345,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+             }
+         } catch (error) {
+             enqueueSnackbar({
+-                message: `Failed to save Tool: ${
+-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                }`,
++                message: `Failed to save Tool: ${getErrorMessage(error)}`,
+                 options: {
+                     key: new Date().getTime() + Math.random(),
+                     variant: 'error',
+@@ -395,9 +390,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
+                 }
+             } catch (error) {
+                 enqueueSnackbar({
+-                    message: `Failed to delete Tool: ${
+-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
+-                    }`,
++                    message: `Failed to delete Tool: ${getErrorMessage(error)}`,
+                     options: {
+                         key: new Date().getTime() + Math.random(),
+                         variant: 'error',
+
+From 3df51c0fba2d448f3df4af50f785f4efdbcc9aed Mon Sep 17 00:00:00 2001
+From: Sahil Yuvraj kamble <146337193+sahil2448@users.noreply.github.com>
+Date: Tue, 2 Jun 2026 18:31:01 +0530
+Subject: [PATCH 2/2] Update packages/ui/src/utils/errorHandler.js
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/ui/src/utils/errorHandler.js | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/ui/src/utils/errorHandler.js b/packages/ui/src/utils/errorHandler.js
+index fd985faf057..0ad1d3226ed 100644
+--- a/packages/ui/src/utils/errorHandler.js
++++ b/packages/ui/src/utils/errorHandler.js
+@@ -21,6 +21,7 @@ const getAxiosErrorMessage = (error) => {
+ 
+     if (responseData && typeof responseData === 'object') {
+         if (typeof responseData.message === 'string') return responseData.message
++        if (Array.isArray(responseData.message)) return responseData.message.join(', ')
+         if (typeof responseData.error === 'string') return responseData.error
+ 
+         try {

@@ -1,0 +1,122 @@
+From 06c2dbd0e11c486d856be72dad3f0ec96b9f25f3 Mon Sep 17 00:00:00 2001
+From: gaurav0107 <gauravdubey0107@gmail.com>
+Date: Sat, 4 Jul 2026 03:02:25 +0530
+Subject: [PATCH] fix(postgres): honor user-supplied ssl config in vector store
+ connection
+
+The Postgres vector store always uses the TypeORM driver, which set the
+connection `ssl` field from the boolean SSL toggle *after* spreading the
+user's Additional Configuration. Any richer `ssl` object supplied there
+(a custom CA or `rejectUnauthorized` flag) was silently clobbered, even
+though the field documents `ssl` as a supported option. This forced
+operators onto the global `NODE_TLS_REJECT_UNAUTHORIZED=0` workaround to
+reach AWS RDS or internal-corporate-CA Postgres databases, which disables
+TLS verification process-wide.
+
+Resolve `ssl` via a small helper so a value provided through Additional
+Configuration takes precedence over the boolean toggle, falling back to
+the toggle when absent. Default behaviour is unchanged. Adds a unit test
+for the resolution precedence.
+
+Closes #5292
+Closes #5351
+---
+ .../vectorstores/Postgres/driver/TypeORM.ts   |  6 +++-
+ .../vectorstores/Postgres/sslConfig.test.ts   | 30 +++++++++++++++++++
+ .../nodes/vectorstores/Postgres/sslConfig.ts  | 27 +++++++++++++++++
+ 3 files changed, 62 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/nodes/vectorstores/Postgres/sslConfig.test.ts
+ create mode 100644 packages/components/nodes/vectorstores/Postgres/sslConfig.ts
+
+diff --git a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+index e3e3c5a30a3..c45d2a53b29 100644
+--- a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
++++ b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+@@ -1,5 +1,6 @@
+ import { DataSourceOptions } from 'typeorm'
+ import { VectorStoreDriver } from './Base'
++import { resolvePostgresSSL } from '../sslConfig'
+ import { FLOWISE_CHATID, ICommonObject } from '../../../../src'
+ import { sanitizeDataSourceOptions } from '../../../../src/sanitizeDataSourceOptions'
+ import { TypeORMVectorStore, TypeORMVectorStoreArgs, TypeORMVectorStoreDocument } from '@langchain/community/vectorstores/typeorm'
+@@ -36,7 +37,10 @@ export class TypeORMDriver extends VectorStoreDriver {
+                 type: 'postgres',
+                 host: this.getHost(),
+                 port: this.getPort(),
+-                ssl: this.getSSL(),
++                // A user-supplied `ssl` in Additional Configuration (e.g. a custom CA or
++                // rejectUnauthorized flag for AWS RDS / corporate CAs) takes precedence over
++                // the boolean SSL toggle; see resolvePostgresSSL. Falls back to the toggle.
++                ssl: resolvePostgresSSL(additionalConfiguration, this.getSSL()),
+                 username: user, // Required by TypeORMVectorStore
+                 user: user, // Required by Pool in similaritySearchVectorWithScore
+                 password: password,
+diff --git a/packages/components/nodes/vectorstores/Postgres/sslConfig.test.ts b/packages/components/nodes/vectorstores/Postgres/sslConfig.test.ts
+new file mode 100644
+index 00000000000..13ff538b97b
+--- /dev/null
++++ b/packages/components/nodes/vectorstores/Postgres/sslConfig.test.ts
+@@ -0,0 +1,30 @@
++import { resolvePostgresSSL } from './sslConfig'
++
++describe('resolvePostgresSSL', () => {
++    it('falls back to the boolean toggle when Additional Configuration has no ssl', () => {
++        expect(resolvePostgresSSL({}, true)).toBe(true)
++        expect(resolvePostgresSSL({}, false)).toBe(false)
++        expect(resolvePostgresSSL({ connectTimeout: 5000 }, true)).toBe(true)
++    })
++
++    it('falls back to the boolean toggle when Additional Configuration is undefined', () => {
++        expect(resolvePostgresSSL(undefined, true)).toBe(true)
++        expect(resolvePostgresSSL(undefined, false)).toBe(false)
++    })
++
++    it('prefers a user-supplied ssl object over the boolean toggle', () => {
++        const ssl = { rejectUnauthorized: true, ca: 'CERT' }
++        // custom CA must win even when the toggle is off (AWS RDS / corporate CA case)
++        expect(resolvePostgresSSL({ ssl }, false)).toBe(ssl)
++        expect(resolvePostgresSSL({ ssl }, true)).toBe(ssl)
++    })
++
++    it('respects an explicit ssl:false in Additional Configuration', () => {
++        expect(resolvePostgresSSL({ ssl: false }, true)).toBe(false)
++    })
++
++    it('respects rejectUnauthorized:false for self-signed certificates', () => {
++        const ssl = { rejectUnauthorized: false }
++        expect(resolvePostgresSSL({ ssl }, false)).toBe(ssl)
++    })
++})
+diff --git a/packages/components/nodes/vectorstores/Postgres/sslConfig.ts b/packages/components/nodes/vectorstores/Postgres/sslConfig.ts
+new file mode 100644
+index 00000000000..1e8f2ef2fca
+--- /dev/null
++++ b/packages/components/nodes/vectorstores/Postgres/sslConfig.ts
+@@ -0,0 +1,27 @@
++/**
++ * SSL configuration resolution for the Postgres vector store connection.
++ *
++ * Kept as a dependency-free leaf module (no barrel import) so it can be unit
++ * tested in isolation, mirroring `src/sanitizeDataSourceOptions.ts`.
++ */
++
++/**
++ * Resolves the SSL option used to open the Postgres connection.
++ *
++ * The node exposes a boolean "SSL" toggle, but the "Additional Configuration"
++ * field also documents `ssl` as a supported TypeORM connection option. When an
++ * operator needs a custom CA (AWS RDS, an internal corporate CA) or has to relax
++ * verification for a self-signed certificate, they supply a richer value there,
++ * e.g. `{ "ssl": { "ca": "<pem>" } }` or `{ "ssl": { "rejectUnauthorized": false } }`.
++ * That value must take precedence over the boolean toggle instead of being
++ * clobbered by it, otherwise operators are pushed onto the global
++ * `NODE_TLS_REJECT_UNAUTHORIZED=0` escape hatch, which disables TLS verification
++ * process-wide. Falls back to the boolean toggle when Additional Configuration
++ * does not specify `ssl`, preserving the existing default behaviour.
++ */
++export function resolvePostgresSSL(additionalConfig: Record<string, any> | undefined, sslToggle: boolean): boolean | Record<string, any> {
++    if (additionalConfig != null && Object.prototype.hasOwnProperty.call(additionalConfig, 'ssl')) {
++        return additionalConfig.ssl
++    }
++    return sslToggle
++}

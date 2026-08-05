@@ -1,0 +1,382 @@
+From 600a2adf4a84f77dc1226ac963365bb215a8b086 Mon Sep 17 00:00:00 2001
+From: AKKO89 <emdelivery@qq.com>
+Date: Thu, 9 Jul 2026 04:35:51 +0800
+Subject: [PATCH 1/2] feat: add TokenLab chat model
+
+---
+ .../credentials/TokenLabApi.credential.ts     |  24 +++
+ packages/components/models.json               |  85 ++++++++
+ .../chatmodels/ChatTokenLab/ChatTokenLab.ts   | 182 ++++++++++++++++++
+ .../chatmodels/ChatTokenLab/tokenlab.svg      |   5 +
+ 4 files changed, 296 insertions(+)
+ create mode 100644 packages/components/credentials/TokenLabApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatTokenLab/tokenlab.svg
+
+diff --git a/packages/components/credentials/TokenLabApi.credential.ts b/packages/components/credentials/TokenLabApi.credential.ts
+new file mode 100644
+index 00000000000..e849f5c571a
+--- /dev/null
++++ b/packages/components/credentials/TokenLabApi.credential.ts
+@@ -0,0 +1,24 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class TokenLabApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'TokenLab API'
++        this.name = 'tokenLabApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'TokenLab API Key',
++                name: 'tokenLabApiKey',
++                type: 'password',
++                description: 'Create an API key from https://tokenlab.sh/dashboard'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: TokenLabApi }
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6b8ce72d5b8..76406c85ef3 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -1758,6 +1758,91 @@
+                 }
+             ]
+         },
++        {
++            "name": "chatTokenLab",
++            "models": [
++                {
++                    "label": "gpt-5.5",
++                    "name": "gpt-5.5",
++                    "description": "TokenLab hosted GPT 5.5 model"
++                },
++                {
++                    "label": "gpt-5.4",
++                    "name": "gpt-5.4",
++                    "description": "TokenLab hosted GPT 5.4 model"
++                },
++                {
++                    "label": "gpt-5.4-mini",
++                    "name": "gpt-5.4-mini",
++                    "description": "TokenLab hosted GPT 5.4 mini model"
++                },
++                {
++                    "label": "claude-opus-4-8",
++                    "name": "claude-opus-4-8",
++                    "description": "TokenLab hosted Claude Opus 4.8 model"
++                },
++                {
++                    "label": "claude-sonnet-5",
++                    "name": "claude-sonnet-5",
++                    "description": "TokenLab hosted Claude Sonnet 5 model"
++                },
++                {
++                    "label": "claude-fable-5",
++                    "name": "claude-fable-5",
++                    "description": "TokenLab hosted Claude Fable 5 model"
++                },
++                {
++                    "label": "gemini-3.5-flash",
++                    "name": "gemini-3.5-flash",
++                    "description": "TokenLab hosted Gemini 3.5 Flash model"
++                },
++                {
++                    "label": "gemini-3.1-flash-lite",
++                    "name": "gemini-3.1-flash-lite",
++                    "description": "TokenLab hosted Gemini 3.1 Flash Lite model"
++                },
++                {
++                    "label": "grok-4.3",
++                    "name": "grok-4.3",
++                    "description": "TokenLab hosted Grok 4.3 model"
++                },
++                {
++                    "label": "grok-4-fast",
++                    "name": "grok-4-fast",
++                    "description": "TokenLab hosted Grok 4 Fast model"
++                },
++                {
++                    "label": "qwen3.7-max",
++                    "name": "qwen3.7-max",
++                    "description": "TokenLab hosted Qwen 3.7 Max model"
++                },
++                {
++                    "label": "deepseek-v4-pro",
++                    "name": "deepseek-v4-pro",
++                    "description": "TokenLab hosted DeepSeek V4 Pro model"
++                },
++                {
++                    "label": "deepseek-v4-flash",
++                    "name": "deepseek-v4-flash",
++                    "description": "TokenLab hosted DeepSeek V4 Flash model"
++                },
++                {
++                    "label": "glm-5.2",
++                    "name": "glm-5.2",
++                    "description": "TokenLab hosted GLM 5.2 model"
++                },
++                {
++                    "label": "minimax-m3",
++                    "name": "minimax-m3",
++                    "description": "TokenLab hosted MiniMax M3 model"
++                },
++                {
++                    "label": "kimi-k2.7-code",
++                    "name": "kimi-k2.7-code",
++                    "description": "TokenLab hosted Kimi K2.7 Code model"
++                }
++            ]
++        },
+         {
+             "name": "chatOpenAI",
+             "models": [
+diff --git a/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts b/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
+new file mode 100644
+index 00000000000..abfa89351ae
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
+@@ -0,0 +1,182 @@
++import { BaseCache } from '@langchain/core/caches'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class ChatTokenLab_ChatModels implements INode {
++    readonly baseURL: string = 'https://api.tokenlab.sh/v1'
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'TokenLab'
++        this.name = 'chatTokenLab'
++        this.version = 1.0
++        this.type = 'ChatTokenLab'
++        this.icon = 'tokenlab.svg'
++        this.category = 'Chat Models'
++        this.description = 'Wrapper around TokenLab chat models using the OpenAI-compatible endpoint'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['tokenLabApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                default: 'gpt-5.4-mini',
++                description:
++                    'Enter a TokenLab model name, for example gpt-5.4-mini, claude-sonnet-5, gemini-3.5-flash, or deepseek-v4-pro.'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout',
++                name: 'timeout',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                additionalParams: true,
++                description: 'Additional options to pass to the TokenLab client. This should be a JSON object.'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const timeout = nodeData.inputs?.timeout as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const baseOptions = nodeData.inputs?.baseOptions
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        if (nodeData.inputs?.credentialId) {
++            nodeData.credential = nodeData.inputs?.credentialId
++        }
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const tokenLabApiKey = getCredentialParam('tokenLabApiKey', credentialData, nodeData)
++
++        if (!tokenLabApiKey || tokenLabApiKey.trim() === '') {
++            throw new Error('TokenLab API Key is missing or empty. Please provide a valid TokenLab API key in the credential configuration.')
++        }
++
++        if (!modelName || modelName.trim() === '') {
++            throw new Error('Model Name is required. Please enter a valid TokenLab model name, for example gpt-5.4-mini.')
++        }
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            modelName,
++            openAIApiKey: tokenLabApiKey,
++            apiKey: tokenLabApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (timeout) obj.timeout = parseInt(timeout, 10)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                if (parsedBaseOptions.baseURL) {
++                    console.warn("The 'baseURL' parameter is not allowed when using the ChatTokenLab node.")
++                    parsedBaseOptions.baseURL = undefined
++                }
++            } catch (exception) {
++                throw new Error('Invalid JSON in the BaseOptions: ' + exception)
++            }
++        }
++
++        const model = new ChatOpenAI({
++            ...obj,
++            configuration: {
++                baseURL: this.baseURL,
++                ...parsedBaseOptions
++            }
++        })
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatTokenLab_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatTokenLab/tokenlab.svg b/packages/components/nodes/chatmodels/ChatTokenLab/tokenlab.svg
+new file mode 100644
+index 00000000000..99011c8bfca
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatTokenLab/tokenlab.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="TokenLab">
++  <rect width="48" height="48" rx="10" fill="#111827"/>
++  <path d="M12 13h24v6H27v16h-6V19h-9z" fill="#f9fafb"/>
++  <path d="M31 25h5v10H20v-5h11z" fill="#38bdf8"/>
++</svg>
+
+From 00ef1e480c41baf8264c8e3f6ca5d884d9b77bdc Mon Sep 17 00:00:00 2001
+From: hedging8563 <cryptoninja2008@gmail.com>
+Date: Fri, 10 Jul 2026 00:53:06 +0800
+Subject: [PATCH 2/2] fix: harden TokenLab chat model options
+
+---
+ .../nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts          | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts b/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
+index abfa89351ae..e34d5bf24ee 100644
+--- a/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
++++ b/packages/components/nodes/chatmodels/ChatTokenLab/ChatTokenLab.ts
+@@ -139,14 +139,16 @@ class ChatTokenLab_ChatModels implements INode {
+             throw new Error('Model Name is required. Please enter a valid TokenLab model name, for example gpt-5.4-mini.')
+         }
+ 
++        const parsedTemperature = temperature !== undefined && temperature !== '' ? parseFloat(temperature) : undefined
++
+         const obj: ChatOpenAIFields = {
+-            temperature: parseFloat(temperature),
+             modelName,
+             openAIApiKey: tokenLabApiKey,
+             apiKey: tokenLabApiKey,
+             streaming: streaming ?? true
+         }
+ 
++        if (parsedTemperature !== undefined && !Number.isNaN(parsedTemperature)) obj.temperature = parsedTemperature
+         if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
+         if (topP) obj.topP = parseFloat(topP)
+         if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
+@@ -159,6 +161,9 @@ class ChatTokenLab_ChatModels implements INode {
+         if (baseOptions) {
+             try {
+                 parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                if (!parsedBaseOptions || typeof parsedBaseOptions !== 'object' || Array.isArray(parsedBaseOptions)) {
++                    throw new Error('BaseOptions must be a JSON object.')
++                }
+                 if (parsedBaseOptions.baseURL) {
+                     console.warn("The 'baseURL' parameter is not allowed when using the ChatTokenLab node.")
+                     parsedBaseOptions.baseURL = undefined

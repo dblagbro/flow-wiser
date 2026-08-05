@@ -1,0 +1,190 @@
+From 52763302cb12cbe90d59dcbb1434b86f86c10103 Mon Sep 17 00:00:00 2001
+From: sawenaa <aleksandr.werenicz@gmail.com>
+Date: Sat, 31 May 2025 16:41:58 +0200
+Subject: [PATCH 1/5] Update Dockerfile
+
+---
+ Dockerfile | 41 +++++++++++++++--------------------------
+ 1 file changed, 15 insertions(+), 26 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index dfbf58d1bd0..f6055832517 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,34 +1,23 @@
+-# Build local monorepo image
+-# docker build --no-cache -t  flowise .
++# Wersja Node.js (dostosuj w razie potrzeby)
++FROM node:18
+ 
+-# Run image
+-# docker run -d -p 3000:3000 flowise
++# Ustaw katalog roboczy
++WORKDIR /usr/src/app
+ 
+-FROM node:20-alpine
+-RUN apk add --update libc6-compat python3 make g++
+-# needed for pdfjs-dist
+-RUN apk add --no-cache build-base cairo-dev pango-dev
++# Skopiuj pliki package.json i package-lock.json
++COPY package*.json ./
+ 
+-# Install Chromium
+-RUN apk add --no-cache chromium
++# Instalacja zależności
++RUN npm install
+ 
+-#install PNPM globaly
+-RUN npm install -g pnpm
+-
+-ENV PUPPETEER_SKIP_DOWNLOAD=true
+-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+-
+-ENV NODE_OPTIONS=--max-old-space-size=8192
+-
+-WORKDIR /usr/src
+-
+-# Copy app source
++# Skopiuj resztę aplikacji
+ COPY . .
+ 
+-RUN pnpm install
+-
+-RUN pnpm build
+-
++# Upewnij się, że Flowise będzie widoczny na odpowiednim porcie (domyślnie 3000)
+ EXPOSE 3000
+ 
+-CMD [ "pnpm", "start" ]
++# Ustaw zmienną środowiskową DATABASE_URL (Render ustawia ją automatycznie, ale warto ją jawnie przekazać)
++ENV DATABASE_URL=${DATABASE_URL}
++
++# Uruchom aplikację
++CMD ["npm", "run", "start"]
+
+From 4332b55cba367c40f2c64e4066313afefce39efc Mon Sep 17 00:00:00 2001
+From: sawenaa <aleksandr.werenicz@gmail.com>
+Date: Sat, 31 May 2025 16:49:49 +0200
+Subject: [PATCH 2/5] Update Dockerfile
+
+
+From 2f8da13275bf6b477408e5132da30c5dc8176f29 Mon Sep 17 00:00:00 2001
+From: sawenaa <aleksandr.werenicz@gmail.com>
+Date: Sat, 31 May 2025 16:50:01 +0200
+Subject: [PATCH 3/5] Update Dockerfile
+
+---
+ Dockerfile | 9 ---------
+ 1 file changed, 9 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index f6055832517..6bf44d2bc6a 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,23 +1,14 @@
+-# Wersja Node.js (dostosuj w razie potrzeby)
+ FROM node:18
+ 
+-# Ustaw katalog roboczy
+ WORKDIR /usr/src/app
+ 
+-# Skopiuj pliki package.json i package-lock.json
+ COPY package*.json ./
+-
+-# Instalacja zależności
+ RUN npm install
+ 
+-# Skopiuj resztę aplikacji
+ COPY . .
+ 
+-# Upewnij się, że Flowise będzie widoczny na odpowiednim porcie (domyślnie 3000)
+ EXPOSE 3000
+ 
+-# Ustaw zmienną środowiskową DATABASE_URL (Render ustawia ją automatycznie, ale warto ją jawnie przekazać)
+ ENV DATABASE_URL=${DATABASE_URL}
+ 
+-# Uruchom aplikację
+ CMD ["npm", "run", "start"]
+
+From 360524b03677f350b60ee1ad0690df22717e15a4 Mon Sep 17 00:00:00 2001
+From: sawenaa <aleksandr.werenicz@gmail.com>
+Date: Sat, 31 May 2025 17:03:51 +0200
+Subject: [PATCH 4/5] Update Dockerfile
+
+---
+ Dockerfile | 38 +++++++++++++++++++++++++++++++-------
+ 1 file changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index 6bf44d2bc6a..a824b7f8090 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,14 +1,38 @@
+-FROM node:18
++# Build local monorepo image
++# docker build --no-cache -t  flowise .
+ 
+-WORKDIR /usr/src/app
++# Run image
++# docker run -d -p 3000:3000 flowise
+ 
+-COPY package*.json ./
+-RUN npm install
++FROM node:20-alpine
++RUN apk add --update libc6-compat python3 make g++
++# needed for pdfjs-dist
++RUN apk add --no-cache build-base cairo-dev pango-dev
+ 
++# Install Chromium
++RUN apk add --no-cache chromium
++
++# Install curl for container-level health checks
++# Fixes: https://github.com/FlowiseAI/Flowise/issues/4126
++RUN apk add --no-cache curl
++
++#install PNPM globaly
++RUN npm install -g pnpm
++
++ENV PUPPETEER_SKIP_DOWNLOAD=true
++ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
++
++ENV NODE_OPTIONS=--max-old-space-size=8192
++
++WORKDIR /usr/src
++
++# Copy app source
+ COPY . .
+ 
+-EXPOSE 3000
++RUN pnpm install
+ 
+-ENV DATABASE_URL=${DATABASE_URL}
++RUN pnpm build
++
++EXPOSE 3000
+ 
+-CMD ["npm", "run", "start"]
++CMD [ "pnpm", "start" ]
+
+From 4d8aa7a30cbb83743f0abaa47ec94dd85246e2a4 Mon Sep 17 00:00:00 2001
+From: sawenaa <aleksandr.werenicz@gmail.com>
+Date: Sat, 31 May 2025 17:04:19 +0200
+Subject: [PATCH 5/5] Update Dockerfile
+
+---
+ Dockerfile | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Dockerfile b/Dockerfile
+index a824b7f8090..476791688f1 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -24,6 +24,8 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ 
+ ENV NODE_OPTIONS=--max-old-space-size=8192
+ 
++ENV DATABASE_URL=${DATABASE_URL}
++
+ WORKDIR /usr/src
+ 
+ # Copy app source

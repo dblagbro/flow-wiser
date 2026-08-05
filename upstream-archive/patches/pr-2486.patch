@@ -1,0 +1,431 @@
+From 859ff6c43ea7dba487ea998c03099a1c278e6a76 Mon Sep 17 00:00:00 2001
+From: kaixinzhang <zhangkaixin1009@gmail.com>
+Date: Mon, 20 May 2024 21:11:52 -0700
+Subject: [PATCH 1/5] Add test cases for parsePrompt, add readme for test file
+
+---
+ packages/server/test/README.md           |  39 ++++++
+ packages/server/test/parsePrompt.test.js | 151 +++++++++++++++++++++++
+ packages/server/tsconfig.json            |   8 +-
+ 3 files changed, 197 insertions(+), 1 deletion(-)
+ create mode 100644 packages/server/test/README.md
+ create mode 100644 packages/server/test/parsePrompt.test.js
+
+diff --git a/packages/server/test/README.md b/packages/server/test/README.md
+new file mode 100644
+index 00000000000..3155f873300
+--- /dev/null
++++ b/packages/server/test/README.md
+@@ -0,0 +1,39 @@
++# Running `parsePrompt.test.js`
++
++This project includes a unit test for the `parsePrompt` function. Follow the steps below to run the test.
++
++## Prerequisites
++
++- Ensure you have [Node.js](https://nodejs.org/) installed on your system.
++
++## Steps to Run `parsePrompt.test.js`
++
++1. **Compile TypeScript Files**
++ 
++If your project includes TypeScript files, you need to compile them to JavaScript before running the test. Ensure you have a `tsconfig.json` file configured correctly.
++
++   Run the TypeScript compiler:
++
++   ```sh
++tsc
++   ```
++   This will generate the compiled JavaScript files in the dist directory (or the directory specified in your tsconfig.json).
++
++2. **Run the test**
++
++Navigate to the directory containing your test file and run:
++```sh
++node test/parsePrompt.test.js
++   ```
++Ensure the import path in the parsePrompt.test.js file is correct and points to the compiled JavaScript file.
++
++## Output
++If the test passes, you should see output similar to:
++````
++Test passed: System message prompt
++````
++If the test fails, the output will show which test failed and the reason for the failure, helping you debug the issue.
++
++## Troubleshooting
++- Module Not Found: Ensure that your import paths are correct and that you have compiled your TypeScript files.
++- Compilation Errors: Check your tsconfig.json for correct configuration and ensure there are no TypeScript syntax errors in your code.
+\ No newline at end of file
+diff --git a/packages/server/test/parsePrompt.test.js b/packages/server/test/parsePrompt.test.js
+new file mode 100644
+index 00000000000..29a1cfff83d
+--- /dev/null
++++ b/packages/server/test/parsePrompt.test.js
+@@ -0,0 +1,151 @@
++const assert = require('assert')
++const { parsePrompt } = require('../dist/utils/hub')
++
++// Test: Parse system message prompts correctly
++const testSystemMessagePrompt = () => {
++    const prompt = JSON.stringify({
++        kwargs: {
++            messages: [
++                {
++                    id: 'SystemMessagePromptTemplate1',
++                    kwargs: {
++                        prompt: {
++                            kwargs: {
++                                template: 'System message template'
++                            }
++                        }
++                    }
++                }
++            ]
++        }
++    })
++
++    const result = parsePrompt(prompt)
++    const expected = [
++        {
++            type: 'systemMessagePrompt',
++            typeDisplay: 'System Message',
++            template: 'System message template'
++        }
++    ]
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: System message prompt')
++}
++
++// Test: Parse human message prompts correctly
++const testHumanMessagePrompt = () => {
++    const prompt = JSON.stringify({
++        kwargs: {
++            messages: [
++                {
++                    id: 'HumanMessagePromptTemplate1',
++                    kwargs: {
++                        prompt: {
++                            kwargs: {
++                                template: 'Human message template'
++                            }
++                        }
++                    }
++                }
++            ]
++        }
++    })
++
++    const result = parsePrompt(prompt)
++    const expected = [
++        {
++            type: 'humanMessagePrompt',
++            typeDisplay: 'Human Message',
++            template: 'Human message template'
++        }
++    ]
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: Human message prompt')
++}
++
++// Test: Parse AI message prompts correctly
++const testAIMessagePrompt = () => {
++    const prompt = JSON.stringify({
++        kwargs: {
++            messages: [
++                {
++                    id: 'AIMessagePromptTemplate1',
++                    kwargs: {
++                        prompt: {
++                            kwargs: {
++                                template: 'AI message template'
++                            }
++                        }
++                    }
++                }
++            ]
++        }
++    })
++
++    const result = parsePrompt(prompt)
++    const expected = [
++        {
++            type: 'aiMessagePrompt',
++            typeDisplay: 'AI Message',
++            template: 'AI message template'
++        }
++    ]
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: AI message prompt')
++}
++
++// Test: Parse template prompts correctly
++const testTemplatePrompt = () => {
++    const prompt = JSON.stringify({
++        kwargs: {
++            template: 'General template'
++        }
++    })
++
++    const result = parsePrompt(prompt)
++    const expected = [
++        {
++            type: 'template',
++            typeDisplay: 'Prompt',
++            template: 'General template'
++        }
++    ]
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: Template prompt')
++}
++
++// Test: Handle empty messages array
++const testEmptyMessages = () => {
++    const prompt = JSON.stringify({
++        kwargs: {
++            messages: []
++        }
++    })
++
++    const result = parsePrompt(prompt)
++    const expected = []
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: Empty messages array')
++}
++
++// Test: Handle invalid prompt structure
++const testInvalidPromptStructure = () => {
++    const prompt = JSON.stringify({})
++
++    const result = parsePrompt(prompt)
++    const expected = []
++    assert.deepStrictEqual(result, expected)
++    console.log('Test passed: Invalid prompt structure')
++}
++
++// Run all tests
++const runTests = () => {
++    testSystemMessagePrompt()
++    testHumanMessagePrompt()
++    testAIMessagePrompt()
++    testTemplatePrompt()
++    testEmptyMessages()
++    testInvalidPromptStructure()
++}
++
++runTests()
+diff --git a/packages/server/tsconfig.json b/packages/server/tsconfig.json
+index 693ee1b8759..923cea7f11f 100644
+--- a/packages/server/tsconfig.json
++++ b/packages/server/tsconfig.json
+@@ -14,5 +14,11 @@
+         "strictPropertyInitialization": false,
+         "declaration": true
+     },
+-    "include": ["src"]
++    "include": [
++        "src/**/*.ts"
++    ],
++    "exclude": [
++        "node_modules",
++        "**/*.test.ts"
++    ]
+ }
+
+From d31d1e3591800c692b05d8483dd62b488ba91509 Mon Sep 17 00:00:00 2001
+From: mingxinh <houmx0607@outlook.com>
+Date: Mon, 20 May 2024 21:25:45 -0700
+Subject: [PATCH 2/5] test file structure
+
+---
+ packages/server/test/{parsePrompt.test.js => utils/hub.test.js} | 0
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+ rename packages/server/test/{parsePrompt.test.js => utils/hub.test.js} (100%)
+
+diff --git a/packages/server/test/parsePrompt.test.js b/packages/server/test/utils/hub.test.js
+similarity index 100%
+rename from packages/server/test/parsePrompt.test.js
+rename to packages/server/test/utils/hub.test.js
+
+From 1addc473098391c6aae41f432827304da0856882 Mon Sep 17 00:00:00 2001
+From: mingxinh <houmx0607@outlook.com>
+Date: Mon, 20 May 2024 21:35:30 -0700
+Subject: [PATCH 3/5] modify tests
+
+---
+ packages/server/test/utils/hub.test.js | 13 +------------
+ 1 file changed, 1 insertion(+), 12 deletions(-)
+
+diff --git a/packages/server/test/utils/hub.test.js b/packages/server/test/utils/hub.test.js
+index 29a1cfff83d..80fe81d0117 100644
+--- a/packages/server/test/utils/hub.test.js
++++ b/packages/server/test/utils/hub.test.js
+@@ -1,5 +1,5 @@
+ const assert = require('assert')
+-const { parsePrompt } = require('../dist/utils/hub')
++const { parsePrompt } = require('../../dist/utils/hub')
+ 
+ // Test: Parse system message prompts correctly
+ const testSystemMessagePrompt = () => {
+@@ -128,16 +128,6 @@ const testEmptyMessages = () => {
+     console.log('Test passed: Empty messages array')
+ }
+ 
+-// Test: Handle invalid prompt structure
+-const testInvalidPromptStructure = () => {
+-    const prompt = JSON.stringify({})
+-
+-    const result = parsePrompt(prompt)
+-    const expected = []
+-    assert.deepStrictEqual(result, expected)
+-    console.log('Test passed: Invalid prompt structure')
+-}
+-
+ // Run all tests
+ const runTests = () => {
+     testSystemMessagePrompt()
+@@ -145,7 +135,6 @@ const runTests = () => {
+     testAIMessagePrompt()
+     testTemplatePrompt()
+     testEmptyMessages()
+-    testInvalidPromptStructure()
+ }
+ 
+ runTests()
+
+From c431fecc661d9119ff43838663eb6d7b17b1f08e Mon Sep 17 00:00:00 2001
+From: kaixinzhang <zhangkaixin1009@gmail.com>
+Date: Fri, 24 May 2024 15:03:06 -0700
+Subject: [PATCH 4/5] Add test cases for config.ts, change README.md
+
+---
+ packages/server/test/README.md            |  2 +-
+ packages/server/test/utils/config.test.js | 49 +++++++++++++++++++++++
+ 2 files changed, 50 insertions(+), 1 deletion(-)
+ create mode 100644 packages/server/test/utils/config.test.js
+
+diff --git a/packages/server/test/README.md b/packages/server/test/README.md
+index 3155f873300..2c231c970c3 100644
+--- a/packages/server/test/README.md
++++ b/packages/server/test/README.md
+@@ -23,7 +23,7 @@ tsc
+ 
+ Navigate to the directory containing your test file and run:
+ ```sh
+-node test/parsePrompt.test.js
++node test/hub.test.js
+    ```
+ Ensure the import path in the parsePrompt.test.js file is correct and points to the compiled JavaScript file.
+ 
+diff --git a/packages/server/test/utils/config.test.js b/packages/server/test/utils/config.test.js
+new file mode 100644
+index 00000000000..abc5a5a124f
+--- /dev/null
++++ b/packages/server/test/utils/config.test.js
+@@ -0,0 +1,49 @@
++const assert = require('assert')
++const path = require('path')
++
++// Mock dotenv to control the environment variables for testing
++require('dotenv').config = ({ path, override }) => {
++    process.env.LOG_PATH = '/custom/log/path'
++    process.env.LOG_LEVEL = 'debug'
++}
++
++// Mocked path join to control paths for testing
++const originalPathJoin = path.join
++path.join = (...args) => {
++    if (args.includes('logs')) {
++        return '/default/log/path'
++    }
++    return originalPathJoin(...args)
++}
++
++// Import the configuration module
++const config = require('../../dist/utils/config').default
++
++// Restore path.join after the test
++path.join = originalPathJoin
++
++// Test cases
++function testLoggingConfig() {
++    const loggingConfig = config.logging
++
++    // Check if LOG_PATH environment variable is considered
++    assert.strictEqual(loggingConfig.dir, '/custom/log/path', 'Logging directory should match the LOG_PATH environment variable')
++
++    // Check if LOG_LEVEL environment variable is considered
++    assert.strictEqual(loggingConfig.server.level, 'debug', 'Server log level should match the LOG_LEVEL environment variable')
++    assert.strictEqual(loggingConfig.express.level, 'debug', 'Express log level should match the LOG_LEVEL environment variable')
++
++    // Check the default filenames
++    assert.strictEqual(loggingConfig.server.filename, 'server.log', 'Server log filename should be server.log')
++    assert.strictEqual(loggingConfig.server.errorFilename, 'server-error.log', 'Server error log filename should be server-error.log')
++    assert.strictEqual(
++        loggingConfig.express.filename,
++        'server-requests.log.jsonl',
++        'Express log filename should be server-requests.log.jsonl'
++    )
++
++    console.log('All config tests passed')
++}
++
++// Run the tests
++testLoggingConfig()
+
+From 2412e42e56c175a0147951352fc53960d6dbad0c Mon Sep 17 00:00:00 2001
+From: Henry Heng <henryheng@flowiseai.com>
+Date: Wed, 29 May 2024 18:03:09 +0100
+Subject: [PATCH 5/5] Delete packages/server/test/README.md
+
+---
+ packages/server/test/README.md | 39 ----------------------------------
+ 1 file changed, 39 deletions(-)
+ delete mode 100644 packages/server/test/README.md
+
+diff --git a/packages/server/test/README.md b/packages/server/test/README.md
+deleted file mode 100644
+index 2c231c970c3..00000000000
+--- a/packages/server/test/README.md
++++ /dev/null
+@@ -1,39 +0,0 @@
+-# Running `parsePrompt.test.js`
+-
+-This project includes a unit test for the `parsePrompt` function. Follow the steps below to run the test.
+-
+-## Prerequisites
+-
+-- Ensure you have [Node.js](https://nodejs.org/) installed on your system.
+-
+-## Steps to Run `parsePrompt.test.js`
+-
+-1. **Compile TypeScript Files**
+- 
+-If your project includes TypeScript files, you need to compile them to JavaScript before running the test. Ensure you have a `tsconfig.json` file configured correctly.
+-
+-   Run the TypeScript compiler:
+-
+-   ```sh
+-tsc
+-   ```
+-   This will generate the compiled JavaScript files in the dist directory (or the directory specified in your tsconfig.json).
+-
+-2. **Run the test**
+-
+-Navigate to the directory containing your test file and run:
+-```sh
+-node test/hub.test.js
+-   ```
+-Ensure the import path in the parsePrompt.test.js file is correct and points to the compiled JavaScript file.
+-
+-## Output
+-If the test passes, you should see output similar to:
+-````
+-Test passed: System message prompt
+-````
+-If the test fails, the output will show which test failed and the reason for the failure, helping you debug the issue.
+-
+-## Troubleshooting
+-- Module Not Found: Ensure that your import paths are correct and that you have compiled your TypeScript files.
+-- Compilation Errors: Check your tsconfig.json for correct configuration and ensure there are no TypeScript syntax errors in your code.
+\ No newline at end of file

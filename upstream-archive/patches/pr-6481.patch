@@ -1,0 +1,142 @@
+From 8095fa56cd5f15a38f2eb06633694e7e151922a0 Mon Sep 17 00:00:00 2001
+From: Sanidhya Singh <singhsanidhya741@gmail.com>
+Date: Sat, 6 Jun 2026 01:35:26 +0530
+Subject: [PATCH 1/2] fix: detect uploaded file type for uppercase file
+ extensions
+
+mapExtToInputField matched extensions with a case-sensitive switch, so an
+uppercase extension like ".PDF" fell through to the default 'txtFile' and the
+uploaded file was handled by the text loader instead of the correct loader
+(e.g. the PDF loader). Lowercase the extension before matching so file type
+detection is case-insensitive.
+
+Also fix the MIME-type fallback in createFileAttachment: the branch assigned
+fileInputFieldFromExt (which is always 'txtFile' there) instead of
+fileInputFieldFromMimeType, so the fallback never selected the field derived
+from the MIME type.
+
+Fixes #5029
+---
+ packages/components/src/utils.test.ts         | 29 ++++++++++++++++++-
+ packages/components/src/utils.ts              |  2 +-
+ packages/server/src/utils/createAttachment.ts |  2 +-
+ 3 files changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/src/utils.test.ts b/packages/components/src/utils.test.ts
+index 97fa0842627..5a87937e40d 100644
+--- a/packages/components/src/utils.test.ts
++++ b/packages/components/src/utils.test.ts
+@@ -3,7 +3,8 @@ import {
+     convertRequireToImport,
+     COMMONJS_REQUIRE_REGEX,
+     IMPORT_EXTRACTION_REGEX,
+-    executeJavaScriptCode
++    executeJavaScriptCode,
++    mapExtToInputField
+ } from './utils'
+ 
+ describe('removeInvalidImageMarkdown', () => {
+@@ -287,3 +288,29 @@ describe('NodeVM sandbox — availableDependencies allowlist', () => {
+         expect(result).toBe('function')
+     }, 15000)
+ })
++
++describe('mapExtToInputField', () => {
++    it('maps known lowercase extensions to their input field', () => {
++        expect(mapExtToInputField('.pdf')).toBe('pdfFile')
++        expect(mapExtToInputField('.txt')).toBe('txtFile')
++        expect(mapExtToInputField('.json')).toBe('jsonFile')
++        expect(mapExtToInputField('.csv')).toBe('csvFile')
++        expect(mapExtToInputField('.docx')).toBe('docxFile')
++    })
++
++    it('maps uppercase extensions to the same input field (case-insensitive)', () => {
++        expect(mapExtToInputField('.PDF')).toBe('pdfFile')
++        expect(mapExtToInputField('.TXT')).toBe('txtFile')
++        expect(mapExtToInputField('.JSON')).toBe('jsonFile')
++        expect(mapExtToInputField('.DOCX')).toBe('docxFile')
++    })
++
++    it('maps mixed-case extensions to the same input field', () => {
++        expect(mapExtToInputField('.Pdf')).toBe('pdfFile')
++        expect(mapExtToInputField('.Csv')).toBe('csvFile')
++    })
++
++    it('falls back to txtFile for unknown extensions', () => {
++        expect(mapExtToInputField('.unknown')).toBe('txtFile')
++    })
++})
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index b8b39cbc2d3..e91c48b6945 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -1063,7 +1063,7 @@ export const getVersion: () => Promise<{ version: string }> = async () => {
+  * @returns {string}
+  */
+ export const mapExtToInputField = (ext: string) => {
+-    switch (ext) {
++    switch (ext.toLowerCase()) {
+         case '.txt':
+             return 'txtFile'
+         case '.pdf':
+diff --git a/packages/server/src/utils/createAttachment.ts b/packages/server/src/utils/createAttachment.ts
+index 2daec1e2e1d..2cc759c2bf2 100644
+--- a/packages/server/src/utils/createAttachment.ts
++++ b/packages/server/src/utils/createAttachment.ts
+@@ -177,7 +177,7 @@ export const createFileAttachment = async (req: Request) => {
+             if (fileInputFieldFromExt !== 'txtFile') {
+                 fileInputField = fileInputFieldFromExt
+             } else if (fileInputFieldFromMimeType !== 'txtFile') {
+-                fileInputField = fileInputFieldFromExt
++                fileInputField = fileInputFieldFromMimeType
+             }
+ 
+             await removeSpecificFileFromUpload(file.path ?? file.key)
+
+From bba203ec6f7bc21305ce28822d3df37b34484e81 Mon Sep 17 00:00:00 2001
+From: Sanidhya Singh <singhsanidhya741@gmail.com>
+Date: Sat, 6 Jun 2026 01:40:14 +0530
+Subject: [PATCH 2/2] fix: guard mapExtToInputField against nullish extension
+
+Use optional chaining so a null/undefined/empty extension falls through to
+the existing 'txtFile' default instead of throwing on .toLowerCase(), while
+keeping the string return type intact for callers.
+---
+ packages/components/src/utils.test.ts | 6 ++++++
+ packages/components/src/utils.ts      | 6 +++---
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/src/utils.test.ts b/packages/components/src/utils.test.ts
+index 5a87937e40d..45f6009c271 100644
+--- a/packages/components/src/utils.test.ts
++++ b/packages/components/src/utils.test.ts
+@@ -313,4 +313,10 @@ describe('mapExtToInputField', () => {
+     it('falls back to txtFile for unknown extensions', () => {
+         expect(mapExtToInputField('.unknown')).toBe('txtFile')
+     })
++
++    it('falls back to txtFile for empty or nullish extensions', () => {
++        expect(mapExtToInputField('')).toBe('txtFile')
++        expect(mapExtToInputField(undefined)).toBe('txtFile')
++        expect(mapExtToInputField(null as unknown as string)).toBe('txtFile')
++    })
+ })
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index e91c48b6945..8ff6a66f849 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -1059,11 +1059,11 @@ export const getVersion: () => Promise<{ version: string }> = async () => {
+ 
+ /**
+  * Map Ext to InputField
+- * @param {string} ext
++ * @param {string} [ext] File extension (case-insensitive), e.g. ".pdf"
+  * @returns {string}
+  */
+-export const mapExtToInputField = (ext: string) => {
+-    switch (ext.toLowerCase()) {
++export const mapExtToInputField = (ext?: string) => {
++    switch (ext?.toLowerCase()) {
+         case '.txt':
+             return 'txtFile'
+         case '.pdf':

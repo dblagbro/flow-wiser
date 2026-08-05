@@ -1,0 +1,123 @@
+From b4e0e461628c3e1cc08d92bc39501969bc071024 Mon Sep 17 00:00:00 2001
+From: fengfeng-zi <xuf718@163.com>
+Date: Sun, 3 May 2026 15:52:12 +0800
+Subject: [PATCH] feat(stt): allow custom Azure speech transcription endpoint
+
+---
+ packages/components/src/speechToText.ts       | 21 ++++++++++--
+ packages/components/src/utils.test.ts         | 32 +++++++++++++++++++
+ .../ui-component/extended/SpeechToText.jsx    |  9 ++++++
+ 3 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/src/speechToText.ts b/packages/components/src/speechToText.ts
+index e59368a5eae..c7964088101 100644
+--- a/packages/components/src/speechToText.ts
++++ b/packages/components/src/speechToText.ts
+@@ -14,6 +14,19 @@ const SpeechToTextType = {
+     GROQ_WHISPER: 'groqWhisper'
+ }
+ 
++export const buildAzureSpeechToTextUrl = (serviceRegion: string, apiVersion: string, baseUrl?: string) => {
++    const trimmedBaseUrl = baseUrl?.trim()
++    const base = trimmedBaseUrl
++        ? trimmedBaseUrl.replace(/\/+$/, '')
++        : `https://${serviceRegion}.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe`
++
++    if (/[?&]api-version=/.test(base)) {
++        return base
++    }
++
++    return `${base}${base.includes('?') ? '&' : '?'}api-version=${encodeURIComponent(apiVersion)}`
++}
++
+ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfig: ICommonObject, options: ICommonObject) => {
+     if (speechToTextConfig) {
+         const credentialId = speechToTextConfig.credentialId as string
+@@ -76,8 +89,12 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+             }
+             case SpeechToTextType.AZURE_COGNITIVE: {
+                 try {
+-                    const baseUrl = `https://${credentialData.serviceRegion}.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe`
+                     const apiVersion = credentialData.apiVersion || '2024-05-15-preview'
++                    const azureSpeechToTextUrl = buildAzureSpeechToTextUrl(
++                        credentialData.serviceRegion,
++                        apiVersion,
++                        speechToTextConfig?.baseUrl
++                    )
+ 
+                     const formData = new FormData()
+                     const audioBlob = new Blob([new Uint8Array(audio_file)], { type: upload.type })
+@@ -93,7 +110,7 @@ export const convertSpeechToText = async (upload: IFileUpload, speechToTextConfi
+                     }
+                     formData.append('definition', JSON.stringify(definition))
+ 
+-                    const response = await axios.post(`${baseUrl}?api-version=${apiVersion}`, formData, {
++                    const response = await axios.post(azureSpeechToTextUrl, formData, {
+                         headers: {
+                             'Ocp-Apim-Subscription-Key': credentialData.azureSubscriptionKey,
+                             Accept: 'application/json'
+diff --git a/packages/components/src/utils.test.ts b/packages/components/src/utils.test.ts
+index ba8238ee049..ae2633c779b 100644
+--- a/packages/components/src/utils.test.ts
++++ b/packages/components/src/utils.test.ts
+@@ -1,4 +1,5 @@
+ import { removeInvalidImageMarkdown, convertRequireToImport, COMMONJS_REQUIRE_REGEX, IMPORT_EXTRACTION_REGEX } from './utils'
++import { buildAzureSpeechToTextUrl } from './speechToText'
+ 
+ describe('removeInvalidImageMarkdown', () => {
+     describe('strips non-http/https image markdown', () => {
+@@ -229,3 +230,34 @@ describe('Import extraction regex (utils.ts line 1596 pattern)', () => {
+         expect(extractModules('console.log("hello")')).toEqual([])
+     })
+ })
++
++describe('buildAzureSpeechToTextUrl', () => {
++    it('builds default regional URL', () => {
++        const url = buildAzureSpeechToTextUrl('eastus', '2024-05-15-preview')
++        expect(url).toBe(
++            'https://eastus.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2024-05-15-preview'
++        )
++    })
++
++    it('uses custom baseUrl and appends api-version', () => {
++        const url = buildAzureSpeechToTextUrl(
++            'eastus',
++            '2024-05-15-preview',
++            'https://custom.example.com/speechtotext/transcriptions:transcribe/'
++        )
++        expect(url).toBe(
++            'https://custom.example.com/speechtotext/transcriptions:transcribe?api-version=2024-05-15-preview'
++        )
++    })
++
++    it('keeps existing api-version in custom baseUrl', () => {
++        const url = buildAzureSpeechToTextUrl(
++            'eastus',
++            '2024-05-15-preview',
++            'https://custom.example.com/speechtotext/transcriptions:transcribe?api-version=2023-10-01'
++        )
++        expect(url).toBe(
++            'https://custom.example.com/speechtotext/transcriptions:transcribe?api-version=2023-10-01'
++        )
++    })
++})
+diff --git a/packages/ui/src/ui-component/extended/SpeechToText.jsx b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+index 2ca7fd95c28..313318db243 100644
+--- a/packages/ui/src/ui-component/extended/SpeechToText.jsx
++++ b/packages/ui/src/ui-component/extended/SpeechToText.jsx
+@@ -165,6 +165,15 @@ const speechToTextProviders = {
+                 placeholder: 'en-US',
+                 optional: true
+             },
++            {
++                label: 'Base URL',
++                name: 'baseUrl',
++                type: 'string',
++                description:
++                    'Optional custom Azure Speech endpoint URL. Leave blank to use the default regional endpoint.',
++                placeholder: 'https://{region}.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe',
++                optional: true
++            },
+             {
+                 label: 'Profanity Filter Mode',
+                 name: 'profanityFilterMode',

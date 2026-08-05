@@ -1,0 +1,35 @@
+From 355eaac5d2e0af3d06edcee0046c9aac8810c98d Mon Sep 17 00:00:00 2001
+From: dymux <putramkti@users.noreply.github.com>
+Date: Wed, 24 Jun 2026 09:08:15 +0800
+Subject: [PATCH] fix: preserve credential on document store loader update
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When updating a document store loader's settings (e.g. changing the
+confluence credential), the new credential sent in the request body
+was unconditionally overwritten by the stored credential from the
+database. This caused credential updates to silently fail — the loader
+continued using the old credential, resulting in 403 errors on refresh.
+
+Fix: only fall back to the stored credential when the request does not
+provide one.
+
+Closes #6550
+---
+ packages/server/src/services/documentstore/index.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/services/documentstore/index.ts b/packages/server/src/services/documentstore/index.ts
+index a7dc444f1d6..2335e171e66 100644
+--- a/packages/server/src/services/documentstore/index.ts
++++ b/packages/server/src/services/documentstore/index.ts
+@@ -785,7 +785,7 @@ const saveProcessingLoader = async (
+             if (!data.splitterId) data.splitterId = found.splitterId
+             if (!data.splitterName) data.splitterName = found.splitterName
+             if (!data.splitterConfig) data.splitterConfig = found.splitterConfig
+-            if (found.credential) {
++            if (!data.credential && found.credential) {
+                 data.credential = found.credential
+             }
+ 

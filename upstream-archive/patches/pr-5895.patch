@@ -1,0 +1,103 @@
+From a5219f82c5dbeec079d3402c02b833f228e49734 Mon Sep 17 00:00:00 2001
+From: beliga44 <beliga44@gmail.com>
+Date: Wed, 4 Mar 2026 22:47:42 +0700
+Subject: [PATCH 1/2] feat(agentflow): allow CustomFunction node to return JSON
+ objects directly
+
+Previously, object return values were automatically stringified before being
+passed downstream. Now objects are returned as-is, with stringification only
+applied when updating flow state template variables. Also adds freeSolo support
+for the state key field and updates the example comment accordingly.
+
+Co-Authored-By: beliga44 <beliga44@users.noreply.github.com>
+---
+ .../agentflow/CustomFunction/CustomFunction.ts   | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts b/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
+index f9a7949f2ea..ff4e594850a 100644
+--- a/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
++++ b/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
+@@ -21,7 +21,7 @@ const exampleFunc = `/*
+ * You can use properties specified in Input Variables with the prefix $. For example: $foo
+ * You can get default flow config: $flow.sessionId, $flow.chatId, $flow.chatflowId, $flow.input, $flow.state
+ * You can get global variables: $vars.<variable-name>
+-* Must return a string value at the end of function
++* You can return a string value or a JSON object at the end of function
+ */
+ 
+ const fetch = require('node-fetch');
+@@ -32,6 +32,7 @@ const options = {
+         'Content-Type': 'application/json'
+     }
+ };
++
+ try {
+     const response = await fetch(url, options);
+     const text = await response.text();
+@@ -60,7 +61,7 @@ class CustomFunction_Agentflow implements INode {
+     constructor() {
+         this.label = 'Custom Function'
+         this.name = 'customFunctionAgentflow'
+-        this.version = 1.1
++        this.version = 1.2
+         this.type = 'CustomFunction'
+         this.category = 'Agent Flows'
+         this.description = 'Execute custom function'
+@@ -107,7 +108,8 @@ class CustomFunction_Agentflow implements INode {
+                         label: 'Key',
+                         name: 'key',
+                         type: 'asyncOptions',
+-                        loadMethod: 'listRuntimeStateKeys'
++                        loadMethod: 'listRuntimeStateKeys',
++                        freeSolo: true
+                     },
+                     {
+                         label: 'Value',
+@@ -183,10 +185,7 @@ class CustomFunction_Agentflow implements INode {
+                 streamOutput
+             })
+ 
+-            let finalOutput = response
+-            if (typeof response === 'object') {
+-                finalOutput = JSON.stringify(response, null, 2)
+-            }
++            const finalOutput = response
+ 
+             // Update flow state if needed
+             let newState = { ...state }
+@@ -194,7 +193,8 @@ class CustomFunction_Agentflow implements INode {
+                 newState = updateFlowState(state, _customFunctionUpdateState)
+             }
+ 
+-            newState = processTemplateVariables(newState, finalOutput)
++            const outputForState = typeof finalOutput === 'object' ? JSON.stringify(finalOutput, null, 2) : finalOutput
++            newState = processTemplateVariables(newState, outputForState)
+ 
+             const returnOutput = {
+                 id: nodeData.id,
+
+From 4dba42fb35a5ceaffa7097af5bd75c5cd7779af8 Mon Sep 17 00:00:00 2001
+From: Beliga <beliga44@gmail.com>
+Date: Wed, 4 Mar 2026 23:19:22 +0700
+Subject: [PATCH 2/2] update(CustomFunction): handle null values for
+ finalOutput
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ .../components/nodes/agentflow/CustomFunction/CustomFunction.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts b/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
+index ff4e594850a..d84b6a2e81b 100644
+--- a/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
++++ b/packages/components/nodes/agentflow/CustomFunction/CustomFunction.ts
+@@ -193,7 +193,7 @@ class CustomFunction_Agentflow implements INode {
+                 newState = updateFlowState(state, _customFunctionUpdateState)
+             }
+ 
+-            const outputForState = typeof finalOutput === 'object' ? JSON.stringify(finalOutput, null, 2) : finalOutput
++            const outputForState = typeof finalOutput === 'object' && finalOutput !== null ? JSON.stringify(finalOutput, null, 2) : finalOutput
+             newState = processTemplateVariables(newState, outputForState)
+ 
+             const returnOutput = {

@@ -1,0 +1,52 @@
+From 1ca15f2a7058904fd6cafda52e4ee37c216b076c Mon Sep 17 00:00:00 2001
+From: Vedant Madane <6527493+VedantMadane@users.noreply.github.com>
+Date: Thu, 26 Mar 2026 15:23:26 +0530
+Subject: [PATCH 1/2] feat: allow custom Cohere rerank model names
+
+Change the Model Name field from a hardcoded dropdown to a free-text
+input with a default of rerank-v3.5. This allows users with custom
+fine-tuned Cohere rerank models to enter their model name directly.
+
+Fixes #4086
+
+Signed-off-by: Vedant Madane <6527493+VedantMadane@users.noreply.github.com>
+---
+ .../CohereRerankRetriever.ts                  | 19 ++++---------------
+ 1 file changed, 4 insertions(+), 15 deletions(-)
+
+diff --git a/packages/components/nodes/retrievers/CohereRerankRetriever/CohereRerankRetriever.ts b/packages/components/nodes/retrievers/CohereRerankRetriever/CohereRerankRetriever.ts
+index 24f43a492f7..d46fa433050 100644
+--- a/packages/components/nodes/retrievers/CohereRerankRetriever/CohereRerankRetriever.ts
++++ b/packages/components/nodes/retrievers/CohereRerankRetriever/CohereRerankRetriever.ts
+@@ -43,21 +43,10 @@ class CohereRerankRetriever_Retrievers implements INode {
+             {
+                 label: 'Model Name',
+                 name: 'model',
+-                type: 'options',
+-                options: [
+-                    {
+-                        label: 'rerank-v3.5',
+-                        name: 'rerank-v3.5'
+-                    },
+-                    {
+-                        label: 'rerank-english-v3.0',
+-                        name: 'rerank-english-v3.0'
+-                    },
+-                    {
+-                        label: 'rerank-multilingual-v3.0',
+-                        name: 'rerank-multilingual-v3.0'
+-                    }
+-                ],
++                type: 'string',
++                placeholder: 'rerank-v3.5',
++                description:
++                    'Name of the Cohere rerank model. Defaults to rerank-v3.5. Supports custom fine-tuned rerank models.',
+                 default: 'rerank-v3.5',
+                 optional: true
+             },
+
+From 7fbcd164e42ab2ecae0b8d492e0390ee3350685a Mon Sep 17 00:00:00 2001
+From: Vedant Madane <vedantnm@gmail.com>
+Date: Sat, 2 May 2026 16:28:18 +0000
+Subject: [PATCH 2/2] chore: refresh PR status
+

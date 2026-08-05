@@ -1,0 +1,65 @@
+From 65dac9ac9027bab5dbd2d68cfc004c0904775fde Mon Sep 17 00:00:00 2001
+From: Yu Yang <ylctyuy@gmail.com>
+Date: Wed, 11 Mar 2026 21:20:04 +0800
+Subject: [PATCH 1/2] fix: Prevent duplicate chat message rendering caused by
+ React StrictMode double-invocation
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index d2f30d41fe3..cb71e73b591 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1304,7 +1304,12 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+                     obj.agentFlowExecutedData = JSON.parse(message.execution.executionData)
+                 return obj
+             })
+-            setMessages((prevMessages) => [...prevMessages, ...loadedMessages])
++            // Use functional update to filter out previously loaded history messages (by id) before appending,
++            // preventing duplicate messages when the API is called multiple times (e.g. React StrictMode)
++            setMessages((prevMessages) => {
++                const initialMessages = prevMessages.filter((msg) => !msg.id || !loadedMessages.some((lm) => lm.id === msg.id))
++                return [...initialMessages, ...loadedMessages]
++            })
+             setLocalStorageChatflow(chatflowid, chatId)
+         }
+ 
+@@ -1324,7 +1329,12 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+                 }
+                 return obj
+             })
+-            setMessages((prevMessages) => [...prevMessages, ...loadedMessages])
++            // Filter out previously loaded execution messages (by id) before appending,
++            // preventing duplicates when the API is called multiple times (e.g. React StrictMode)
++            setMessages((prevMessages) => {
++                const initialMessages = prevMessages.filter((msg) => !msg.id || !loadedMessages.some((lm) => lm.id === msg.id))
++                return [...initialMessages, ...loadedMessages]
++            })
+             setLocalStorageChatflow(chatflowid, chatId)
+         }
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+
+From 0312f4c3600e37c758d916f585778e81120044d3 Mon Sep 17 00:00:00 2001
+From: yuyang <ylctyuy@gmail.com>
+Date: Thu, 12 Mar 2026 10:30:41 +0800
+Subject: [PATCH 2/2] fix: adding a comment to clarify that the !msg.id
+ condition ensures that messages without an ID are always included.
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index cb71e73b591..88c154e512d 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -1331,6 +1331,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+             })
+             // Filter out previously loaded execution messages (by id) before appending,
+             // preventing duplicates when the API is called multiple times (e.g. React StrictMode)
++            // Messages without an ID (e.g., initial welcome message, in-progress user messages) are always preserved.
+             setMessages((prevMessages) => {
+                 const initialMessages = prevMessages.filter((msg) => !msg.id || !loadedMessages.some((lm) => lm.id === msg.id))
+                 return [...initialMessages, ...loadedMessages]

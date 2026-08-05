@@ -1,0 +1,135 @@
+From 6214137ed7d203fb28f6fff9533952779d09ae23 Mon Sep 17 00:00:00 2001
+From: Dev Shah <way2devs2302@gmail.com>
+Date: Thu, 12 Feb 2026 10:37:36 +0000
+Subject: [PATCH 1/2] Fix ArrowUp/ArrowDown and History Behavior in chat input
+
+---
+ .../ui/src/views/chatmessage/ChatMessage.jsx  | 61 +++++++++++--------
+ 1 file changed, 36 insertions(+), 25 deletions(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index d2f30d41fe3..561ad390084 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -975,19 +975,21 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+         }
+ 
+         let input = userInput
+-
+-        if (typeof selectedInput === 'string') {
+-            if (selectedInput !== undefined && selectedInput.trim() !== '') input = selectedInput
+-
+-            if (input.trim()) {
+-                inputHistory.addToHistory(input)
++        if (selectedInput !== undefined) {
++            if (typeof selectedInput === 'string' && selectedInput.trim() !== '') {
++                input = selectedInput
++            } else if (typeof selectedInput === 'object') {
++                input = Object.entries(selectedInput)
++                    .map(([key, value]) => `${key}: ${value}`)
++                    .join('\n')
+             }
+-        } else if (typeof selectedInput === 'object') {
+-            input = Object.entries(selectedInput)
+-                .map(([key, value]) => `${key}: ${value}`)
+-                .join('\n')
+         }
+ 
++         if (input.trim()) {
++            inputHistory.addToHistory(input)
++        }
++
++        
+         setLoading(true)
+         clearAgentflowNodeStatus()
+ 
+@@ -1184,24 +1186,33 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+             scrollToBottom()
+         }, 100)
+     }
+-    // Prevent blank submissions and allow for multiline input
++
+     const handleEnter = (e) => {
+-        // Check if IME composition is in progress
+         const isIMEComposition = e.isComposing || e.keyCode === 229
+-        if (e.key === 'ArrowUp' && !isIMEComposition) {
+-            e.preventDefault()
+-            const previousInput = inputHistory.getPreviousInput(userInput)
+-            setUserInput(previousInput)
+-        } else if (e.key === 'ArrowDown' && !isIMEComposition) {
+-            e.preventDefault()
+-            const nextInput = inputHistory.getNextInput()
+-            setUserInput(nextInput)
+-        } else if (e.key === 'Enter' && userInput && !isIMEComposition) {
+-            if (!e.shiftKey && userInput) {
+-                handleSubmit(e)
++        const textarea = e.target
++
++        if (isIMEComposition) return
++
++        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
++            const cursorAtStart = textarea.selectionStart === 0
++            const cursorAtEnd = textarea.selectionStart === textarea.value.length
++
++            // Only navigate input history if cursor is at start (ArrowUp) or end (ArrowDown)
++            if ((e.key === 'ArrowUp' && cursorAtStart) || (e.key === 'ArrowDown' && cursorAtEnd)) {
++                e.preventDefault()
++                const newInput =
++                    e.key === 'ArrowUp'
++                        ? inputHistory.getPreviousInput(userInput)
++                        : inputHistory.getNextInput()
++                setUserInput(newInput)
+             }
+-        } else if (e.key === 'Enter') {
+-            e.preventDefault()
++            
++            // Otherwise, let the arrow key move the cursor normally
++            return
++        }
++
++        if (e.key === 'Enter'&& !e.shiftKey ) {
++                handleSubmit(e)
+         }
+     }
+ 
+
+From 550614fa6284005175c60cc6532862d3cbe07cc9 Mon Sep 17 00:00:00 2001
+From: Dev Shah <way2devs2302@gmail.com>
+Date: Thu, 12 Feb 2026 11:20:46 +0000
+Subject: [PATCH 2/2] Fix formatting in handleEnter function
+
+---
+ packages/ui/src/views/chatmessage/ChatMessage.jsx | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/packages/ui/src/views/chatmessage/ChatMessage.jsx b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+index 561ad390084..0055133e32e 100644
+--- a/packages/ui/src/views/chatmessage/ChatMessage.jsx
++++ b/packages/ui/src/views/chatmessage/ChatMessage.jsx
+@@ -988,8 +988,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+          if (input.trim()) {
+             inputHistory.addToHistory(input)
+         }
+-
+-        
++  
+         setLoading(true)
+         clearAgentflowNodeStatus()
+ 
+@@ -1206,13 +1205,12 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
+                         : inputHistory.getNextInput()
+                 setUserInput(newInput)
+             }
+-            
++
+             // Otherwise, let the arrow key move the cursor normally
+             return
+         }
+-
+-        if (e.key === 'Enter'&& !e.shiftKey ) {
+-                handleSubmit(e)
++        if (e.key === 'Enter' && !e.shiftKey) {
++            handleSubmit(e)
+         }
+     }
+ 

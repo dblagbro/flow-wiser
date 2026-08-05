@@ -1,0 +1,258 @@
+From fab8aacc9227bbdc817ff21effb7ceb8ac919c33 Mon Sep 17 00:00:00 2001
+From: Eleo Basili <eleonel.basili@gmail.com>
+Date: Tue, 12 Dec 2023 22:29:59 +0900
+Subject: [PATCH 1/2] Added initial code for collapsible nodes feature.
+
+---
+ packages/ui/src/views/canvas/CanvasNode.js | 142 ++++++++++++---------
+ packages/ui/src/views/canvas/index.css     |  11 ++
+ 2 files changed, 94 insertions(+), 59 deletions(-)
+
+diff --git a/packages/ui/src/views/canvas/CanvasNode.js b/packages/ui/src/views/canvas/CanvasNode.js
+index e52de640cbc..26e024ecf97 100644
+--- a/packages/ui/src/views/canvas/CanvasNode.js
++++ b/packages/ui/src/views/canvas/CanvasNode.js
+@@ -1,6 +1,7 @@
+ import PropTypes from 'prop-types'
+ import { useContext, useState, useEffect } from 'react'
+ import { useSelector } from 'react-redux'
++import { useUpdateNodeInternals, useEdgesState } from 'reactflow'
+ 
+ // material-ui
+ import { styled, useTheme } from '@mui/material/styles'
+@@ -22,9 +23,7 @@ import { flowContext } from 'store/context/ReactFlowContext'
+ const CardWrapper = styled(MainCard)(({ theme }) => ({
+     background: theme.palette.card.main,
+     color: theme.darkTextPrimary,
+-    border: 'solid 1px',
+-    borderColor: theme.palette.primary[200] + 75,
+-    width: '300px',
++    maxWidth: '100%',
+     height: 'auto',
+     padding: '10px',
+     boxShadow: '0 2px 14px 0 rgb(32 40 45 / 8%)',
+@@ -54,6 +53,30 @@ const CanvasNode = ({ data }) => {
+     const [infoDialogProps, setInfoDialogProps] = useState({})
+     const [warningMessage, setWarningMessage] = useState('')
+     const [open, setOpen] = useState(false)
++    const updateNodeInternals = useUpdateNodeInternals()
++    const [isCollapsed, setIsCollapsed] = useState(false)
++    const [setEdges] = useEdgesState()
++    const { reactFlowInstance } = useContext(flowContext)
++
++    const handleDoubleClick = () => {
++        setIsCollapsed(!isCollapsed)
++    }
++
++    useEffect(() => {
++        if (data.id && reactFlowInstance) {
++            setTimeout(() => {
++                updateNodeInternals(data.id)
++
++                const updatedEdges = reactFlowInstance.getEdges().map((edge) => {
++                    if (edge.source === data.id || edge.target === data.id) {
++                        return { ...edge, dummyProperty: Date.now() }
++                    }
++                    return edge
++                })
++                setEdges(updatedEdges)
++            }, 100)
++        }
++    }, [isCollapsed, data.id, updateNodeInternals, reactFlowInstance, setEdges])
+ 
+     const handleClose = () => {
+         setOpen(false)
+@@ -150,7 +173,7 @@ const CanvasNode = ({ data }) => {
+                     placement='right-start'
+                 >
+                     <Box>
+-                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
++                        <div className='header' onDoubleClick={handleDoubleClick}>
+                             <Box style={{ width: 50, marginRight: 10, padding: 5 }}>
+                                 <div
+                                     style={{
+@@ -190,62 +213,63 @@ const CanvasNode = ({ data }) => {
+                                 </>
+                             )}
+                         </div>
+-                        {(data.inputAnchors.length > 0 || data.inputParams.length > 0) && (
+-                            <>
+-                                <Divider />
+-                                <Box sx={{ background: theme.palette.asyncSelect.main, p: 1 }}>
+-                                    <Typography
+-                                        sx={{
+-                                            fontWeight: 500,
+-                                            textAlign: 'center'
+-                                        }}
+-                                    >
+-                                        Inputs
+-                                    </Typography>
+-                                </Box>
+-                                <Divider />
+-                            </>
+-                        )}
+-                        {data.inputAnchors.map((inputAnchor, index) => (
+-                            <NodeInputHandler key={index} inputAnchor={inputAnchor} data={data} />
+-                        ))}
+-                        {data.inputParams
+-                            .filter((inputParam) => !inputParam.hidden)
+-                            .map((inputParam, index) => (
+-                                <NodeInputHandler key={index} inputParam={inputParam} data={data} />
++                        <div className={isCollapsed ? 'collapsed details' : 'details'}>
++                            {(data.inputAnchors.length > 0 || data.inputParams.length > 0) && (
++                                <>
++                                    <Divider />
++                                    <Box sx={{ background: theme.palette.asyncSelect.main, p: 1 }}>
++                                        <Typography
++                                            sx={{
++                                                fontWeight: 500,
++                                                textAlign: 'center'
++                                            }}
++                                        >
++                                            Input
++                                        </Typography>
++                                    </Box>
++                                    <Divider />
++                                </>
++                            )}
++                            {data.inputAnchors.map((inputAnchor, index) => (
++                                <NodeInputHandler key={index} inputAnchor={inputAnchor} data={data} />
+                             ))}
+-                        {data.inputParams.find((param) => param.additionalParams) && (
+-                            <div
+-                                style={{
+-                                    textAlign: 'center',
+-                                    marginTop:
+-                                        data.inputParams.filter((param) => param.additionalParams).length ===
+-                                        data.inputParams.length + data.inputAnchors.length
+-                                            ? 20
+-                                            : 0
+-                                }}
+-                            >
+-                                <Button sx={{ borderRadius: 25, width: '90%', mb: 2 }} variant='outlined' onClick={onDialogClicked}>
+-                                    Additional Parameters
+-                                </Button>
+-                            </div>
+-                        )}
+-                        <Divider />
+-                        <Box sx={{ background: theme.palette.asyncSelect.main, p: 1 }}>
+-                            <Typography
+-                                sx={{
+-                                    fontWeight: 500,
+-                                    textAlign: 'center'
+-                                }}
+-                            >
+-                                Output
+-                            </Typography>
+-                        </Box>
+-                        <Divider />
+-
+-                        {data.outputAnchors.map((outputAnchor, index) => (
+-                            <NodeOutputHandler key={index} outputAnchor={outputAnchor} data={data} />
+-                        ))}
++                            {data.inputParams
++                                .filter((inputParam) => !inputParam.hidden)
++                                .map((inputParam, index) => (
++                                    <NodeInputHandler key={index} inputParam={inputParam} data={data} />
++                                ))}
++                            {data.inputParams.find((param) => param.additionalParams) && (
++                                <div
++                                    style={{
++                                        textAlign: 'center',
++                                        marginTop:
++                                            data.inputParams.filter((param) => param.additionalParams).length ===
++                                            data.inputParams.length + data.inputAnchors.length
++                                                ? 20
++                                                : 0
++                                    }}
++                                >
++                                    <Button sx={{ borderRadius: 25, width: '90%', mb: 2 }} variant='outlined' onClick={onDialogClicked}>
++                                        Additional Parameters
++                                    </Button>
++                                </div>
++                            )}
++                            <Divider />
++                            <Box sx={{ background: theme.palette.asyncSelect.main, p: 1 }}>
++                                <Typography
++                                    sx={{
++                                        fontWeight: 500,
++                                        textAlign: 'center'
++                                    }}
++                                >
++                                    Output
++                                </Typography>
++                            </Box>
++                            <Divider />
++                            {data.outputAnchors.map((outputAnchor, index) => (
++                                <NodeOutputHandler key={index} outputAnchor={outputAnchor} data={data} />
++                            ))}
++                        </div>
+                     </Box>
+                 </LightTooltip>
+             </CardWrapper>
+diff --git a/packages/ui/src/views/canvas/index.css b/packages/ui/src/views/canvas/index.css
+index 851dee5b923..b16720b9e8c 100644
+--- a/packages/ui/src/views/canvas/index.css
++++ b/packages/ui/src/views/canvas/index.css
+@@ -35,3 +35,14 @@
+     flex-grow: 1;
+     height: 100%;
+ }
++
++div.details.collapsed {
++    visibility: hidden;
++    height: 0;
++}
++
++div.details.collapsed * {
++    height: 0;
++    top: 50% !important;
++    position: absolute;
++}
+
+From 8d9f02802c8488629455c0b63b12d28b9e9850b5 Mon Sep 17 00:00:00 2001
+From: Eleo Basili <eleonel.basili@gmail.com>
+Date: Tue, 12 Dec 2023 22:48:41 +0900
+Subject: [PATCH 2/2] Fix undesire changes
+
+---
+ packages/ui/src/views/canvas/CanvasNode.js | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/packages/ui/src/views/canvas/CanvasNode.js b/packages/ui/src/views/canvas/CanvasNode.js
+index 26e024ecf97..39aa9171f69 100644
+--- a/packages/ui/src/views/canvas/CanvasNode.js
++++ b/packages/ui/src/views/canvas/CanvasNode.js
+@@ -23,7 +23,9 @@ import { flowContext } from 'store/context/ReactFlowContext'
+ const CardWrapper = styled(MainCard)(({ theme }) => ({
+     background: theme.palette.card.main,
+     color: theme.darkTextPrimary,
+-    maxWidth: '100%',
++    border: 'solid 1px',
++    borderColor: theme.palette.primary[200] + 75,
++    width: '300px',
+     height: 'auto',
+     padding: '10px',
+     boxShadow: '0 2px 14px 0 rgb(32 40 45 / 8%)',
+@@ -173,7 +175,11 @@ const CanvasNode = ({ data }) => {
+                     placement='right-start'
+                 >
+                     <Box>
+-                        <div className='header' onDoubleClick={handleDoubleClick}>
++                        <div
++                            style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}
++                            className='header'
++                            onDoubleClick={handleDoubleClick}
++                        >
+                             <Box style={{ width: 50, marginRight: 10, padding: 5 }}>
+                                 <div
+                                     style={{
+@@ -224,7 +230,7 @@ const CanvasNode = ({ data }) => {
+                                                 textAlign: 'center'
+                                             }}
+                                         >
+-                                            Input
++                                            Inputs
+                                         </Typography>
+                                     </Box>
+                                     <Divider />

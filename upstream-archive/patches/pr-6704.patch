@@ -1,0 +1,51 @@
+From 2586141cb2fece2998554b247a57b41240d445ff Mon Sep 17 00:00:00 2001
+From: Shantanav <shantanav7@gmail.com>
+Date: Tue, 4 Aug 2026 18:06:51 +0530
+Subject: [PATCH] fix(docker): set the runtime home directory for node
+
+---
+ Dockerfile               | 4 ++++
+ docker/Dockerfile        | 2 ++
+ docker/worker/Dockerfile | 2 ++
+ 3 files changed, 8 insertions(+)
+
+diff --git a/Dockerfile b/Dockerfile
+index ca27175c8bb..d9550485183 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -27,6 +27,10 @@ ENV NODE_OPTIONS=--max-old-space-size=8192
+ 
+ WORKDIR /usr/src/flowise
+ 
++# Keep Node's home directory aligned with the non-root runtime user. Flowise
++# stores its default data under ~/.flowise.
++ENV HOME=/home/node
++
+ # Copy app source
+ COPY . .
+ 
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+index 8d92c4042ca..3b4e0908165 100644
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -21,6 +21,8 @@ RUN npm install -g flowise && npm --prefix "$(npm root -g)/flowise" dedupe
+ # Stage 2: Runtime stage
+ FROM node:${NODE_VERSION}-alpine
+ 
++ENV HOME=/home/node
++
+ # Install runtime dependencies
+ RUN apk add --no-cache chromium git python3 py3-pip make g++ build-base cairo-dev pango-dev curl
+ 
+diff --git a/docker/worker/Dockerfile b/docker/worker/Dockerfile
+index f8a43e83e90..6d635f46d47 100644
+--- a/docker/worker/Dockerfile
++++ b/docker/worker/Dockerfile
+@@ -1,5 +1,7 @@
+ FROM node:24-alpine
+ 
++ENV HOME=/home/node
++
+ RUN apk add --update libc6-compat python3 make g++
+ # needed for pdfjs-dist
+ RUN apk add --no-cache build-base cairo-dev pango-dev

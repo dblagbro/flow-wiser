@@ -1,0 +1,284 @@
+From 141f495cb544253946c39979cbf643e800439677 Mon Sep 17 00:00:00 2001
+From: Thiago Assis <thiago.assis@go9.tech>
+Date: Sun, 6 Oct 2024 10:37:48 -0300
+Subject: [PATCH 1/2] baseURL
+
+---
+ CONTRIBUTING.md                        |  1 +
+ i18n/CONTRIBUTING-ZH.md                |  1 +
+ packages/server/src/index.ts           | 27 ++++++++++++++++++++++++++
+ packages/ui/index.html                 |  3 ++-
+ packages/ui/public/index.html          |  3 ++-
+ packages/ui/src/index.jsx              |  3 ++-
+ packages/ui/src/store/constant.js      |  7 +++++--
+ packages/ui/src/utils/genericHelper.js | 16 +++++++++++++++
+ packages/ui/vite.config.js             |  3 ++-
+ 9 files changed, 58 insertions(+), 6 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 35365219c54..4f9f2cf325e 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -158,6 +158,7 @@ Flowise support different environment variables to configure your instance. You
+ | S3_STORAGE_REGION            | Region for S3 bucket                                                                            | String                                           |                                     |
+ | S3_ENDPOINT_URL              | Custom Endpoint for S3                                                                          | String                                           |                                     |
+ | SHOW_COMMUNITY_NODES         | Show nodes created by community                                                                 | Boolean                                          |                                     |
++| BASE_HREF                    | Sets the base URL for React Router’s basename and should only be defined dynamically at runtime | String                                           |                                     |
+ 
+ You can also specify the env variables when using `npx`. For example:
+ 
+diff --git a/i18n/CONTRIBUTING-ZH.md b/i18n/CONTRIBUTING-ZH.md
+index de1870ba691..c7de51ffb70 100644
+--- a/i18n/CONTRIBUTING-ZH.md
++++ b/i18n/CONTRIBUTING-ZH.md
+@@ -151,6 +151,7 @@ Flowise 支持不同的环境变量来配置您的实例。您可以在 `package
+ | S3_STORAGE_REGION            | S3 存储地区                                                          | 字符串                                          |                                     |
+ | S3_ENDPOINT_URL              | S3 端点 URL                                                          | 字符串                                          |                                     |
+ | SHOW_COMMUNITY_NODES         | 显示由社区创建的节点                                                 | 布尔值                                          |                                     |
++| BASE_HREF                    | 设置React路由器的basename的基本URL，并且只能在运行时动态定义             | 字符串                                           |                                     |
+ 
+ 您也可以在使用 `npx` 时指定环境变量。例如：
+ 
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index b14c83cf7be..9ffe1033bb5 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -1,5 +1,6 @@
+ import express from 'express'
+ import { Request, Response } from 'express'
++import fs from 'fs';
+ import path from 'path'
+ import cors from 'cors'
+ import http from 'http'
+@@ -31,6 +32,29 @@ declare global {
+     }
+ }
+ 
++function replaceBaseHref(filePath:string) {
++    const backupPath = `${filePath}.tpl`;
++    let sourceFile = filePath;
++
++    // If index.html.tpl exists, use it as the source file and skip creating the backup
++    if (fs.existsSync(backupPath)) {
++        sourceFile = backupPath;
++    } else {
++        // Create a backup if it doesn't exist
++        fs.copyFileSync(filePath, backupPath);
++    }
++
++    // Read the source file
++    const content = fs.readFileSync(sourceFile, 'utf8');
++
++    // Replace %BASE_HREF% with the value of BASE_HREF or '/' if not set
++    const baseHref = process.env.BASE_HREF || '/';
++    const updatedContent = content.replace(/%BASE_HREF%/g, baseHref);
++
++    // Write the updated content back to index.html
++    fs.writeFileSync(filePath, updatedContent, 'utf8');
++}
++
+ export class App {
+     app: express.Application
+     nodesPool: NodesPool
+@@ -222,6 +246,9 @@ export class App {
+         const uiBuildPath = path.join(packagePath, 'build')
+         const uiHtmlPath = path.join(packagePath, 'build', 'index.html')
+ 
++        // replace index.html BASE_HREF env variable to support custom basename
++        replaceBaseHref(uiHtmlPath);
++
+         this.app.use('/', express.static(uiBuildPath))
+ 
+         // All other requests not handled will return React app
+diff --git a/packages/ui/index.html b/packages/ui/index.html
+index 64875b7bd08..09ae7deed00 100644
+--- a/packages/ui/index.html
++++ b/packages/ui/index.html
+@@ -1,9 +1,10 @@
+ <!DOCTYPE html>
+ <html lang="en">
+     <head>
++        <base href="%BASE_HREF%" />
+         <title>Flowise - Low-code LLM apps builder</title>
+         <link rel="icon" href="favicon.ico" />
+-        <!-- Meta Tags-->
++        <!-- Meta Tags -->
+         <meta charset="utf-8" />
+         <meta name="viewport" content="width=device-width, initial-scale=1" />
+         <meta name="theme-color" content="#2296f3" />
+diff --git a/packages/ui/public/index.html b/packages/ui/public/index.html
+index 4f8cd033c14..d939132cbbd 100644
+--- a/packages/ui/public/index.html
++++ b/packages/ui/public/index.html
+@@ -1,9 +1,10 @@
+ <!DOCTYPE html>
+ <html lang="en">
+     <head>
++        <base href="%BASE_HREF%" />
+         <title>Flowise - Low-code LLM apps builder</title>
+         <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+-        <!-- Meta Tags-->
++        <!-- Meta Tags -->
+         <meta charset="utf-8" />
+         <meta name="viewport" content="width=device-width, initial-scale=1" />
+         <meta name="theme-color" content="#2296f3" />
+diff --git a/packages/ui/src/index.jsx b/packages/ui/src/index.jsx
+index bf2d49b0e1e..96c81106dda 100644
+--- a/packages/ui/src/index.jsx
++++ b/packages/ui/src/index.jsx
+@@ -12,6 +12,7 @@ import { Provider } from 'react-redux'
+ import { SnackbarProvider } from 'notistack'
+ import ConfirmContextProvider from '@/store/context/ConfirmContextProvider'
+ import { ReactFlowContext } from '@/store/context/ReactFlowContext'
++import { baseName } from '@/store/constant'
+ 
+ const container = document.getElementById('root')
+ const root = createRoot(container)
+@@ -19,7 +20,7 @@ const root = createRoot(container)
+ root.render(
+     <React.StrictMode>
+         <Provider store={store}>
+-            <BrowserRouter>
++            <BrowserRouter basename={baseName}>
+                 <SnackbarProvider>
+                     <ConfirmContextProvider>
+                         <ReactFlowContext>
+diff --git a/packages/ui/src/store/constant.js b/packages/ui/src/store/constant.js
+index 02556d778de..c2034a7203f 100644
+--- a/packages/ui/src/store/constant.js
++++ b/packages/ui/src/store/constant.js
+@@ -1,10 +1,13 @@
++import { getBasename } from '@/utils/genericHelper'
++
+ // constant
+ export const gridSpacing = 3
+ export const drawerWidth = 260
+ export const appDrawerWidth = 320
+ export const headerHeight = 80
+ export const maxScroll = 100000
+-export const baseURL = window.location.origin
+-export const uiBaseURL = window.location.origin
++export const baseName = getBasename()
++export const baseURL = window.location.origin + baseName
++export const uiBaseURL = window.location.origin + baseName
+ export const FLOWISE_CREDENTIAL_ID = 'FLOWISE_CREDENTIAL_ID'
+ export const REDACTED_CREDENTIAL_VALUE = '_FLOWISE_BLANK_07167752-1a71-43b1-bf8f-4f32252165db'
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 4243f9a433c..9236ba188c0 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -945,3 +945,19 @@ export const getCustomConditionOutputs = (value, nodeId, existingEdges, isDataGr
+ 
+     return { outputAnchors, toBeRemovedEdgeIds }
+ }
++
++export const getBasename = () => {
++    try {
++        const baseTag = document.querySelector('base')
++        let baseHref = !!baseTag ? baseTag.getAttribute('href') || '/' : '/'
++        if (baseHref === '%BASE_HREF%') {
++            baseHref = '/'
++        }
++        if (baseHref.endsWith('/')) {
++            baseHref = baseHref.slice(0, -1)
++        }
++        return baseHref
++    } catch (error) {
++        throw new Error(`basenameHelper.getBasename ${getErrorMessage(error)}`)
++    }
++}
+diff --git a/packages/ui/vite.config.js b/packages/ui/vite.config.js
+index 346d605686e..a062a80fcb1 100644
+--- a/packages/ui/vite.config.js
++++ b/packages/ui/vite.config.js
+@@ -39,6 +39,7 @@ export default defineConfig(async ({ mode }) => {
+             proxy,
+             port: process.env.VITE_PORT ?? 8080,
+             host: process.env.VITE_HOST
+-        }
++        },
++        base: './'
+     }
+ })
+
+From 6dbc4a401841c6e1af1273527fc86c6c9e16404d Mon Sep 17 00:00:00 2001
+From: Henry <hzj94@hotmail.com>
+Date: Thu, 17 Oct 2024 02:07:02 +0100
+Subject: [PATCH 2/2] lint fix
+
+---
+ packages/server/src/index.ts           | 22 +++++++++++-----------
+ packages/ui/src/utils/genericHelper.js |  2 +-
+ 2 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index f737102d692..0e7fc0564b1 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -1,6 +1,6 @@
+ import express from 'express'
+ import { Request, Response } from 'express'
+-import fs from 'fs';
++import fs from 'fs'
+ import path from 'path'
+ import cors from 'cors'
+ import http from 'http'
+@@ -32,27 +32,27 @@ declare global {
+     }
+ }
+ 
+-function replaceBaseHref(filePath:string) {
+-    const backupPath = `${filePath}.tpl`;
+-    let sourceFile = filePath;
++function replaceBaseHref(filePath: string) {
++    const backupPath = `${filePath}.tpl`
++    let sourceFile = filePath
+ 
+     // If index.html.tpl exists, use it as the source file and skip creating the backup
+     if (fs.existsSync(backupPath)) {
+-        sourceFile = backupPath;
++        sourceFile = backupPath
+     } else {
+         // Create a backup if it doesn't exist
+-        fs.copyFileSync(filePath, backupPath);
++        fs.copyFileSync(filePath, backupPath)
+     }
+ 
+     // Read the source file
+-    const content = fs.readFileSync(sourceFile, 'utf8');
++    const content = fs.readFileSync(sourceFile, 'utf8')
+ 
+     // Replace %BASE_HREF% with the value of BASE_HREF or '/' if not set
+-    const baseHref = process.env.BASE_HREF || '/';
+-    const updatedContent = content.replace(/%BASE_HREF%/g, baseHref);
++    const baseHref = process.env.BASE_HREF || '/'
++    const updatedContent = content.replace(/%BASE_HREF%/g, baseHref)
+ 
+     // Write the updated content back to index.html
+-    fs.writeFileSync(filePath, updatedContent, 'utf8');
++    fs.writeFileSync(filePath, updatedContent, 'utf8')
+ }
+ 
+ export class App {
+@@ -248,7 +248,7 @@ export class App {
+         const uiHtmlPath = path.join(packagePath, 'build', 'index.html')
+ 
+         // replace index.html BASE_HREF env variable to support custom basename
+-        replaceBaseHref(uiHtmlPath);
++        replaceBaseHref(uiHtmlPath)
+ 
+         this.app.use('/', express.static(uiBuildPath))
+ 
+diff --git a/packages/ui/src/utils/genericHelper.js b/packages/ui/src/utils/genericHelper.js
+index 9236ba188c0..f38036dd2de 100644
+--- a/packages/ui/src/utils/genericHelper.js
++++ b/packages/ui/src/utils/genericHelper.js
+@@ -949,7 +949,7 @@ export const getCustomConditionOutputs = (value, nodeId, existingEdges, isDataGr
+ export const getBasename = () => {
+     try {
+         const baseTag = document.querySelector('base')
+-        let baseHref = !!baseTag ? baseTag.getAttribute('href') || '/' : '/'
++        let baseHref = baseTag ? baseTag.getAttribute('href') || '/' : '/'
+         if (baseHref === '%BASE_HREF%') {
+             baseHref = '/'
+         }

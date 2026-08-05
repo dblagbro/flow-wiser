@@ -1,0 +1,27 @@
+From 7650e3bc2bc846e5f66c24310283b578572f16d0 Mon Sep 17 00:00:00 2001
+From: Josh Arnzen <jarnzen137@gmail.com>
+Date: Sun, 7 Jun 2026 21:32:30 -0500
+Subject: [PATCH] fix(retrievers): handle Voyage AI rerank API response format
+ change
+
+The Voyage AI rerank API may return results under `data.data` instead
+of `data.results`. Fall back to `data.results` for backward compatibility.
+---
+ .../nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts       | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+index 6e7e62b5ad6..d9ac7baff1a 100644
+--- a/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
++++ b/packages/components/nodes/retrievers/VoyageAIRetriever/VoyageAIRerank.ts
+@@ -38,8 +38,9 @@ export class VoyageAIRerank extends BaseDocumentCompressor {
+         }
+         try {
+             let returnedDocs = await axios.post(this.VOYAGEAI_RERANK_API_URL, data, config)
++            const results = returnedDocs.data.data ?? returnedDocs.data.results
+             const finalResults: Document<Record<string, any>>[] = []
+-            returnedDocs.data.results.forEach((result: any) => {
++            results.forEach((result: any) => {
+                 const doc = documents[result.index]
+                 doc.metadata.relevance_score = result.relevance_score
+                 finalResults.push(doc)

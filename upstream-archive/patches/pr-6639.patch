@@ -1,0 +1,494 @@
+From 62959f4711ec3d8cb80913f437e4f88b931c1ade Mon Sep 17 00:00:00 2001
+From: Mateusz <169154504+donbagger@users.noreply.github.com>
+Date: Fri, 17 Jul 2026 12:53:14 +0200
+Subject: [PATCH 1/2] feat: add DexPaprika tool node (keyless DEX market data)
+
+Adds a new tool node under packages/components/nodes/tools/DexPaprika with
+three agent tools backed by the free, keyless DexPaprika API:
+
+- dexpaprika_get_token_price: token price and market stats by contract address
+- dexpaprika_search_pools: pools on a network with ordering and token filter
+- dexpaprika_get_pool_ohlcv: historical OHLCV candles for a pool
+
+No credential input: the API needs no key, so the node works with zero
+configuration. Follows the existing multi-action tool pattern (core.ts with
+DynamicStructuredTool subclasses plus a factory). Co-located jest tests
+included. All endpoint parameters and enums verified against the live API.
+---
+ .../nodes/tools/DexPaprika/DexPaprika.test.ts | 151 +++++++++++++++
+ .../nodes/tools/DexPaprika/DexPaprika.ts      |  56 ++++++
+ .../components/nodes/tools/DexPaprika/core.ts | 173 ++++++++++++++++++
+ .../nodes/tools/DexPaprika/dexpaprika.svg     |  11 ++
+ 4 files changed, 391 insertions(+)
+ create mode 100644 packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
+ create mode 100644 packages/components/nodes/tools/DexPaprika/DexPaprika.ts
+ create mode 100644 packages/components/nodes/tools/DexPaprika/core.ts
+ create mode 100644 packages/components/nodes/tools/DexPaprika/dexpaprika.svg
+
+diff --git a/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts b/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
+new file mode 100644
+index 00000000000..81c90fc0ae6
+--- /dev/null
++++ b/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
+@@ -0,0 +1,151 @@
++import { INodeData } from '../../../src/Interface'
++import { GetTokenPriceTool, SearchPoolsTool, GetPoolOhlcvTool } from './core'
++
++const { nodeClass: DexPaprika_Tools } = require('./DexPaprika')
++
++jest.mock('node-fetch', () => jest.fn())
++const mockedFetch = require('node-fetch') as jest.Mock
++
++function createNodeData(inputs: any): INodeData {
++    return {
++        id: 'dexPaprika_0',
++        label: 'DexPaprika',
++        name: 'dexPaprika',
++        type: 'DexPaprika',
++        icon: 'dexpaprika.svg',
++        version: 1.0,
++        category: 'Tools',
++        baseClasses: ['DexPaprika', 'Tool'],
++        inputs
++    }
++}
++
++function mockJsonResponse(body: string, ok = true, status = 200, statusText = 'OK') {
++    mockedFetch.mockResolvedValueOnce({
++        ok,
++        status,
++        statusText,
++        text: async () => body
++    })
++}
++
++describe('DexPaprika node', () => {
++    beforeEach(() => {
++        mockedFetch.mockReset()
++    })
++
++    describe('Node initialization', () => {
++        it('should expose all three tools when no actions are selected', async () => {
++            const nodeClass = new DexPaprika_Tools()
++            const tools = await nodeClass.init(createNodeData({}))
++
++            expect(Array.isArray(tools)).toBe(true)
++            expect(tools.map((t: any) => t.name)).toEqual([
++                'dexpaprika_get_token_price',
++                'dexpaprika_search_pools',
++                'dexpaprika_get_pool_ohlcv'
++            ])
++        })
++
++        it('should only expose selected actions', async () => {
++            const nodeClass = new DexPaprika_Tools()
++            const tools = await nodeClass.init(createNodeData({ dexPaprikaActions: '["searchPools"]' }))
++
++            expect(tools.map((t: any) => t.name)).toEqual(['dexpaprika_search_pools'])
++        })
++
++        it('should not require a credential', () => {
++            const nodeClass = new DexPaprika_Tools()
++            expect(nodeClass.credential).toBeUndefined()
++        })
++    })
++
++    describe('GetTokenPriceTool', () => {
++        it('should call the token endpoint and strip the long-form description', async () => {
++            mockJsonResponse(
++                JSON.stringify({
++                    id: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
++                    symbol: 'WETH',
++                    description: 'A very long project description',
++                    summary: { price_usd: 1840.53 }
++                })
++            )
++
++            const tool = new GetTokenPriceTool()
++            const result = await tool._call({
++                network: 'ethereum',
++                tokenAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
++            })
++
++            expect(mockedFetch).toHaveBeenCalledWith(
++                'https://api.dexpaprika.com/networks/ethereum/tokens/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
++                expect.objectContaining({ method: 'GET' })
++            )
++            const parsed = JSON.parse(result)
++            expect(parsed.symbol).toBe('WETH')
++            expect(parsed.summary.price_usd).toBe(1840.53)
++            expect(parsed.description).toBeUndefined()
++        })
++
++        it('should throw a descriptive error on a non-OK response', async () => {
++            mockJsonResponse('', false, 404, 'Not Found')
++
++            const tool = new GetTokenPriceTool()
++            await expect(tool._call({ network: 'notachain', tokenAddress: '0x0' })).rejects.toThrow('DexPaprika API error 404: Not Found')
++        })
++    })
++
++    describe('SearchPoolsTool', () => {
++        it('should build the search URL with filters and omit the token filter when unset', async () => {
++            mockJsonResponse('{"results":[]}')
++
++            const tool = new SearchPoolsTool()
++            await tool._call({ network: 'solana', orderBy: 'liquidity_usd', sort: 'desc', limit: 5 })
++
++            const calledUrl = new URL(mockedFetch.mock.calls[0][0])
++            expect(calledUrl.pathname).toBe('/networks/solana/pools/search')
++            expect(calledUrl.searchParams.get('order_by')).toBe('liquidity_usd')
++            expect(calledUrl.searchParams.get('sort')).toBe('desc')
++            expect(calledUrl.searchParams.get('limit')).toBe('5')
++            expect(calledUrl.searchParams.has('token_address')).toBe(false)
++        })
++
++        it('should pass the token filter when set', async () => {
++            mockJsonResponse('{"results":[]}')
++
++            const tool = new SearchPoolsTool()
++            await tool._call({
++                network: 'ethereum',
++                tokenAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
++                orderBy: 'volume_usd_24h',
++                sort: 'desc',
++                limit: 10
++            })
++
++            const calledUrl = new URL(mockedFetch.mock.calls[0][0])
++            expect(calledUrl.searchParams.get('token_address')).toBe('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2')
++        })
++    })
++
++    describe('GetPoolOhlcvTool', () => {
++        it('should build the OHLCV URL with start, interval and limit', async () => {
++            mockJsonResponse('[]')
++
++            const tool = new GetPoolOhlcvTool()
++            await tool._call({
++                network: 'ethereum',
++                poolAddress: '0xf6e72db5454dd049d0788e411b06cfaf16853042',
++                start: '2026-07-10',
++                interval: '1h',
++                limit: 24
++            })
++
++            const calledUrl = new URL(mockedFetch.mock.calls[0][0])
++            expect(calledUrl.pathname).toBe('/networks/ethereum/pools/0xf6e72db5454dd049d0788e411b06cfaf16853042/ohlcv')
++            expect(calledUrl.searchParams.get('start')).toBe('2026-07-10')
++            expect(calledUrl.searchParams.get('interval')).toBe('1h')
++            expect(calledUrl.searchParams.get('limit')).toBe('24')
++            expect(calledUrl.searchParams.has('end')).toBe(false)
++        })
++    })
++})
+diff --git a/packages/components/nodes/tools/DexPaprika/DexPaprika.ts b/packages/components/nodes/tools/DexPaprika/DexPaprika.ts
+new file mode 100644
+index 00000000000..1de71fca127
+--- /dev/null
++++ b/packages/components/nodes/tools/DexPaprika/DexPaprika.ts
+@@ -0,0 +1,56 @@
++import { INode, INodeData, INodeParams } from '../../../src/Interface'
++import { convertMultiOptionsToStringArray } from '../../../src/utils'
++import { createDexPaprikaTools, desc } from './core'
++
++class DexPaprika_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'DexPaprika'
++        this.name = 'dexPaprika'
++        this.version = 1.0
++        this.type = 'DexPaprika'
++        this.icon = 'dexpaprika.svg'
++        this.category = 'Tools'
++        this.description = desc
++        this.baseClasses = [this.type, 'Tool']
++        this.inputs = [
++            {
++                label: 'Actions',
++                name: 'dexPaprikaActions',
++                type: 'multiOptions',
++                description: 'Actions the agent can perform. Leave empty to enable all actions',
++                options: [
++                    {
++                        label: 'Get Token Price',
++                        name: 'getTokenPrice'
++                    },
++                    {
++                        label: 'Search Pools',
++                        name: 'searchPools'
++                    },
++                    {
++                        label: 'Get Pool OHLCV',
++                        name: 'getPoolOhlcv'
++                    }
++                ],
++                optional: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData): Promise<any> {
++        const actions = convertMultiOptionsToStringArray(nodeData.inputs?.dexPaprikaActions)
++        return createDexPaprikaTools({ actions })
++    }
++}
++
++module.exports = { nodeClass: DexPaprika_Tools }
+diff --git a/packages/components/nodes/tools/DexPaprika/core.ts b/packages/components/nodes/tools/DexPaprika/core.ts
+new file mode 100644
+index 00000000000..25e748d5c79
+--- /dev/null
++++ b/packages/components/nodes/tools/DexPaprika/core.ts
+@@ -0,0 +1,173 @@
++import { z } from 'zod/v3'
++import fetch from 'node-fetch'
++import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
++
++export const desc = `Get onchain DEX market data from DexPaprika: token prices, liquidity pools and OHLCV candles across 36 blockchain networks. No API key required.`
++
++const BASE_URL = 'https://api.dexpaprika.com'
++
++const NETWORK_DESCRIPTION = `Network id in lowercase, e.g. "ethereum", "solana", "base", "arbitrum", "bsc", "polygon". Full list at ${BASE_URL}/networks`
++
++export interface DexPaprikaToolParameters {
++    actions?: string[]
++}
++
++// Schema for fetching a token price by contract address
++const GetTokenPriceSchema = z.object({
++    network: z.string().describe(NETWORK_DESCRIPTION),
++    tokenAddress: z.string().describe('Token contract address on the given network (mint address on Solana)')
++})
++
++// Schema for searching pools on a network
++const SearchPoolsSchema = z.object({
++    network: z.string().describe(NETWORK_DESCRIPTION),
++    tokenAddress: z
++        .string()
++        .optional()
++        .describe('Optional token contract address. When set, only pools that include this token are returned'),
++    orderBy: z
++        .enum([
++            'volume_usd_24h',
++            'volume_usd_7d',
++            'volume_usd_30d',
++            'liquidity_usd',
++            'txns_24h',
++            'created_at',
++            'price_usd',
++            'price_change_percentage_24h'
++        ])
++        .optional()
++        .default('volume_usd_24h')
++        .describe('Field to order results by'),
++    sort: z.enum(['asc', 'desc']).optional().default('desc').describe('Sort direction'),
++    limit: z.number().int().min(1).max(100).optional().default(10).describe('Number of pools to return, 1 to 100')
++})
++
++// Schema for fetching OHLCV candles of a pool
++const GetPoolOhlcvSchema = z.object({
++    network: z.string().describe(NETWORK_DESCRIPTION),
++    poolAddress: z.string().describe('Pool contract address on the given network'),
++    start: z.string().describe('Start of the time range, e.g. "2026-07-01" or RFC3339 like "2026-07-01T00:00:00Z". Required'),
++    end: z.string().optional().describe('Optional end of the time range, same formats as start'),
++    interval: z.enum(['1m', '5m', '10m', '15m', '30m', '1h', '6h', '12h', '24h']).optional().default('1h').describe('Candle interval'),
++    limit: z.number().int().min(1).max(366).optional().default(24).describe('Number of candles to return, 1 to 366')
++})
++
++class BaseDexPaprikaTool extends DynamicStructuredTool {
++    async makeRequest(path: string, params?: Record<string, string | number | undefined>): Promise<string> {
++        const url = new URL(`${BASE_URL}${path}`)
++        if (params) {
++            for (const [key, value] of Object.entries(params)) {
++                if (value !== undefined && value !== '') {
++                    url.searchParams.append(key, String(value))
++                }
++            }
++        }
++
++        const response = await fetch(url.toString(), {
++            method: 'GET',
++            headers: { Accept: 'application/json', ...this.headers }
++        })
++
++        if (!response.ok) {
++            const errorText = await response.text()
++            throw new Error(`DexPaprika API error ${response.status}: ${errorText || response.statusText}`)
++        }
++
++        return await response.text()
++    }
++}
++
++export class GetTokenPriceTool extends BaseDexPaprikaTool {
++    constructor() {
++        super({
++            name: 'dexpaprika_get_token_price',
++            description:
++                'Get the current USD price and market stats (fully diluted valuation, liquidity, 24h volume and transactions) of a token by its contract address',
++            schema: GetTokenPriceSchema,
++            baseUrl: BASE_URL,
++            method: 'GET',
++            headers: {}
++        })
++    }
++
++    async _call(arg: z.infer<typeof GetTokenPriceSchema>): Promise<string> {
++        const data = await this.makeRequest(`/networks/${encodeURIComponent(arg.network)}/tokens/${encodeURIComponent(arg.tokenAddress)}`)
++        try {
++            const parsed = JSON.parse(data)
++            // The long-form project description adds noise without market data value
++            delete parsed.description
++            return JSON.stringify(parsed)
++        } catch {
++            return data
++        }
++    }
++}
++
++export class SearchPoolsTool extends BaseDexPaprikaTool {
++    constructor() {
++        super({
++            name: 'dexpaprika_search_pools',
++            description:
++                'List liquidity pools on a network ordered by volume, liquidity, transactions or price change. Optionally filter to pools that contain a specific token address',
++            schema: SearchPoolsSchema,
++            baseUrl: BASE_URL,
++            method: 'GET',
++            headers: {}
++        })
++    }
++
++    async _call(arg: z.infer<typeof SearchPoolsSchema>): Promise<string> {
++        return await this.makeRequest(`/networks/${encodeURIComponent(arg.network)}/pools/search`, {
++            token_address: arg.tokenAddress,
++            order_by: arg.orderBy,
++            sort: arg.sort,
++            limit: arg.limit
++        })
++    }
++}
++
++export class GetPoolOhlcvTool extends BaseDexPaprikaTool {
++    constructor() {
++        super({
++            name: 'dexpaprika_get_pool_ohlcv',
++            description:
++                'Get historical OHLCV (open, high, low, close, volume) candles for a liquidity pool. Useful for price history and technical analysis',
++            schema: GetPoolOhlcvSchema,
++            baseUrl: BASE_URL,
++            method: 'GET',
++            headers: {}
++        })
++    }
++
++    async _call(arg: z.infer<typeof GetPoolOhlcvSchema>): Promise<string> {
++        return await this.makeRequest(`/networks/${encodeURIComponent(arg.network)}/pools/${encodeURIComponent(arg.poolAddress)}/ohlcv`, {
++            start: arg.start,
++            end: arg.end,
++            interval: arg.interval,
++            limit: arg.limit
++        })
++    }
++}
++
++export const createDexPaprikaTools = (params?: DexPaprikaToolParameters): DynamicStructuredTool[] => {
++    const actions = params?.actions ?? []
++    const tools: DynamicStructuredTool[] = []
++
++    // When no actions are selected, enable all of them so the node works with zero configuration
++    const enableAll = actions.length === 0
++
++    if (enableAll || actions.includes('getTokenPrice')) {
++        tools.push(new GetTokenPriceTool())
++    }
++
++    if (enableAll || actions.includes('searchPools')) {
++        tools.push(new SearchPoolsTool())
++    }
++
++    if (enableAll || actions.includes('getPoolOhlcv')) {
++        tools.push(new GetPoolOhlcvTool())
++    }
++
++    return tools
++}
+diff --git a/packages/components/nodes/tools/DexPaprika/dexpaprika.svg b/packages/components/nodes/tools/DexPaprika/dexpaprika.svg
+new file mode 100644
+index 00000000000..facb53d1fac
+--- /dev/null
++++ b/packages/components/nodes/tools/DexPaprika/dexpaprika.svg
+@@ -0,0 +1,11 @@
++<svg width="315" height="315" viewBox="0 0 315 315" fill="none" xmlns="http://www.w3.org/2000/svg">
++<g clip-path="url(#clip0_597_228)">
++<path d="M76.01 187.74C77.3 187.19 78.6999 186.97 80.0899 187.09C82.5699 187.11 85.03 187.59 87.32 188.51C92.18 190.54 97.3699 191.6 102.63 191.65C116.66 191.65 127.96 183.46 138.89 175.53L139.99 174.1C140.88 172.94 141.75 171.79 142.63 170.62C145.09 163.97 147.68 157.03 149.98 150.88C155.85 135.16 161.93 118.89 167.6 102.78C168.63 98.92 170.87 95.49 173.98 92.99C177.09 90.49 180.93 89.05 184.91 88.87H185.98C191.9 85.94 198.39 84.33 204.99 84.14C206.61 84.14 208.22 84.26 209.82 84.5L209.93 84.43C213.5 82.83 216.6 80.34 218.92 77.19C221.25 74.04 222.73 70.35 223.21 66.47C223 64.16 221.92 62.02 220.18 60.47C218.38 58.32 215.82 56.95 213.03 56.61C210.76 56.61 209.12 58.16 208.32 61.09C207.33 64.72 205.99 66.56 204.34 66.56C202.97 66.37 201.74 65.64 200.9 64.54C199.94 63.42 199.44 61.97 199.51 60.49C199.57 59.01 200.2 57.62 201.26 56.58C203.3 54.52 205.72 52.89 208.38 51.77C211.05 50.65 213.91 50.07 216.8 50.06H217.97C219.75 50.21 221.49 50.71 223.07 51.54C224.65 52.37 226.05 53.51 227.18 54.89C229.02 57.34 230.32 60.15 230.99 63.13C231.66 66.11 231.7 69.21 231.09 72.21C230.91 73.93 230.64 75.64 230.37 77.3C229.6 81.42 229.21 85.6 229.2 89.79C229.24 91.59 229.3 93.21 229.39 94.8C231.37 96.58 233.24 98.46 235.11 100.52C238.29 103.77 240.64 107.72 241.99 112.05C243.56 119.56 243.74 127.28 242.54 134.86C241.6 154.01 234.65 172.37 222.69 187.36C210.5 201.8 195.19 213.3 177.92 220.98C165.69 226.91 152.27 230.03 138.67 230.09C119.04 229.76 99.92 223.71 83.67 212.69L82.8 212.16C80.45 210.96 78.35 209.34 76.6 207.37C74.92 206.07 73.77 204.19 73.39 202.1C72.31 200.33 71.68 198.31 71.55 196.24C71.43 194.16 71.81 192.09 72.67 190.2C73.56 189.12 74.7 188.27 75.99 187.72L76.01 187.74Z" fill="#00FF75"/>
++<path d="M14.31 250.39C14.31 278.05 36.73 300.47 64.39 300.47H103.74V314.78H64.39L61.08 314.7C27.06 312.98 0 284.85 0 250.4V221.78H14.31V250.4V250.39ZM314.78 250.39C314.78 285.95 285.95 314.78 250.39 314.78H218.2V300.47H250.39C278.05 300.47 300.47 278.05 300.47 250.39V221.77H314.78V250.39ZM103.73 14.31H64.38C36.72 14.31 14.3 36.73 14.3 64.39V107.31H0V64.39C0 29.94 27.05 1.81 61.08 0.08L64.39 0H103.74V14.31H103.73ZM250.39 0C285.95 0 314.78 28.83 314.78 64.39V107.31H300.47V64.39C300.47 36.73 278.05 14.31 250.39 14.31H218.2V0H250.39Z" fill="#00FF75"/>
++</g>
++<defs>
++<clipPath id="clip0_597_228">
++<rect width="314.78" height="314.78" fill="white"/>
++</clipPath>
++</defs>
++</svg>
+
+From 1b4f83341a4070b9da9f17fa4c9d76c8cc30eade Mon Sep 17 00:00:00 2001
+From: Mateusz Sroka <sroka.koloron@gmail.com>
+Date: Wed, 22 Jul 2026 13:51:12 +0200
+Subject: [PATCH 2/2] Guard non-object responses in GetTokenPriceTool before
+ delete
+
+If the token endpoint returns null or a primitive, delete parsed.description
+would throw. Return the raw payload unchanged instead, which keeps the
+agent flow alive and matches the existing catch behavior. Adds a test for
+the null case.
+---
+ .../nodes/tools/DexPaprika/DexPaprika.test.ts          | 10 ++++++++++
+ packages/components/nodes/tools/DexPaprika/core.ts     |  4 ++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts b/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
+index 81c90fc0ae6..11b9fdd0f86 100644
+--- a/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
++++ b/packages/components/nodes/tools/DexPaprika/DexPaprika.test.ts
+@@ -87,6 +87,16 @@ describe('DexPaprika node', () => {
+             expect(parsed.description).toBeUndefined()
+         })
+ 
++        it('should return the raw payload unchanged when the response is not a JSON object', async () => {
++            // A null or primitive body must not crash the description-stripping step
++            mockJsonResponse('null')
++
++            const tool = new GetTokenPriceTool()
++            const result = await tool._call({ network: 'ethereum', tokenAddress: '0x0' })
++
++            expect(result).toBe('null')
++        })
++
+         it('should throw a descriptive error on a non-OK response', async () => {
+             mockJsonResponse('', false, 404, 'Not Found')
+ 
+diff --git a/packages/components/nodes/tools/DexPaprika/core.ts b/packages/components/nodes/tools/DexPaprika/core.ts
+index 25e748d5c79..53a2a2e4a80 100644
+--- a/packages/components/nodes/tools/DexPaprika/core.ts
++++ b/packages/components/nodes/tools/DexPaprika/core.ts
+@@ -95,6 +95,10 @@ export class GetTokenPriceTool extends BaseDexPaprikaTool {
+         const data = await this.makeRequest(`/networks/${encodeURIComponent(arg.network)}/tokens/${encodeURIComponent(arg.tokenAddress)}`)
+         try {
+             const parsed = JSON.parse(data)
++            if (parsed === null || typeof parsed !== 'object') {
++                // Not the object response we expect; hand back the raw payload unchanged
++                return data
++            }
+             // The long-form project description adds noise without market data value
+             delete parsed.description
+             return JSON.stringify(parsed)

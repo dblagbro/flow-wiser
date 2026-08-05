@@ -1,0 +1,54 @@
+From 6a44f9c09f83955800f69e1220d14bdf2632cf74 Mon Sep 17 00:00:00 2001
+From: ZeroIce <zeroicework@163.com>
+Date: Tue, 23 Jun 2026 01:59:21 +0800
+Subject: [PATCH 1/2] Update documented Node requirement
+
+---
+ README.md | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/README.md b/README.md
+index 72e4081c6b6..9a105ff68e6 100644
+--- a/README.md
++++ b/README.md
+@@ -36,7 +36,7 @@ English | [繁體中文](./i18n/README-TW.md) | [简体中文](./i18n/README-ZH.
+ 
+ ## ⚡Quick Start
+ 
+-Download and Install [NodeJS](https://nodejs.org/en/download) >= 20.0.0
++Download and install [NodeJS](https://nodejs.org/en/download) 24.x
+ 
+ 1. Install Flowise
+     ```bash
+@@ -92,7 +92,7 @@ Flowise has 3 different modules in a single mono repository.
+ 
+ ### Prerequisite
+ 
+--   Install [PNPM](https://pnpm.io/installation)
++-   Install [PNPM](https://pnpm.io/installation) 10.26.0
+     ```bash
+     npm i -g pnpm
+     ```
+
+From 34791da6be131032ac3591eb0b02eeb19fe5fc2b Mon Sep 17 00:00:00 2001
+From: ZeroIce <zeroicework@163.com>
+Date: Tue, 23 Jun 2026 02:10:42 +0800
+Subject: [PATCH 2/2] Clarify pnpm minimum version
+
+---
+ README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 9a105ff68e6..8b62f28476e 100644
+--- a/README.md
++++ b/README.md
+@@ -92,7 +92,7 @@ Flowise has 3 different modules in a single mono repository.
+ 
+ ### Prerequisite
+ 
+--   Install [PNPM](https://pnpm.io/installation) 10.26.0
++-   Install [PNPM](https://pnpm.io/installation) >= 10.26.0
+     ```bash
+     npm i -g pnpm
+     ```

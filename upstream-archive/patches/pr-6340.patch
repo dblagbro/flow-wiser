@@ -1,0 +1,30 @@
+From 6b97953c776e3793eda8c2f874da205e2927978c Mon Sep 17 00:00:00 2001
+From: Naga Venkata Sai Siva Varshith Chanda
+ <152100109+ChandaVarshith@users.noreply.github.com>
+Date: Tue, 5 May 2026 05:26:25 +0530
+Subject: [PATCH] docs: add missing JSDoc comment for getGlobalVariable utility
+ function
+
+---
+ packages/server/src/utils/index.ts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 3e48c6a1156..98dd2187215 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -806,6 +806,14 @@ export const clearSessionMemory = async (
+     }
+ }
+ 
++/**
++ * Get global variables from available variables and override config
++ * @param {ICommonObject} overrideConfig
++ * @param {IVariable[]} availableVariables
++ * @param {ICommonObject[]} variableOverrides
++ * @returns {Promise<object>}
++ */
++
+ export const getGlobalVariable = async (
+     overrideConfig?: ICommonObject,
+     availableVariables: IVariable[] = [],

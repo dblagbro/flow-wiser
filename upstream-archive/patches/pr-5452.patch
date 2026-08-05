@@ -1,0 +1,2821 @@
+From a1a8e4d023f694ab1879bbfc32a417a023c7966b Mon Sep 17 00:00:00 2001
+From: Dave Hampton <david.hampton@gmail.com>
+Date: Fri, 7 Nov 2025 13:30:40 -0800
+Subject: [PATCH 1/8] feat: add Zendesk document loader and credential
+ integration
+
+Introduce a new Zendesk document loader and corresponding credential class to facilitate the extraction of articles from the Zendesk Knowledge Base. This includes configuration validation, error handling, and support for chunking large articles. Additionally, a new SVG icon for Zendesk is added, along with comprehensive tests to ensure functionality.
+---
+ .../credentials/ZendeskApi.credential.ts      |  34 +
+ .../nodes/documentloaders/Zendesk/Zendesk.ts  | 465 +++++++++++++
+ .../nodes/documentloaders/Zendesk/zendesk.svg |   8 +
+ .../documentloaders/Zendesk/zendesk.test.ts   | 650 ++++++++++++++++++
+ 4 files changed, 1157 insertions(+)
+ create mode 100644 packages/components/credentials/ZendeskApi.credential.ts
+ create mode 100644 packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+ create mode 100644 packages/components/nodes/documentloaders/Zendesk/zendesk.svg
+ create mode 100644 packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
+
+diff --git a/packages/components/credentials/ZendeskApi.credential.ts b/packages/components/credentials/ZendeskApi.credential.ts
+new file mode 100644
+index 00000000000..d2be833e2d5
+--- /dev/null
++++ b/packages/components/credentials/ZendeskApi.credential.ts
+@@ -0,0 +1,34 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class ZendeskApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Zendesk API'
++        this.name = 'zendeskApi'
++        this.version = 1.0
++        this.description =
++            'Refer to <a target="_blank" href="https://support.zendesk.com/hc/en-us/articles/4408843597850-Generating-a-new-API-token">official guide</a> on how to get API token from Zendesk'
++        this.inputs = [
++            {
++                label: 'User Name',
++                name: 'user',
++                type: 'string',
++                placeholder: 'user@example.com'
++            },
++            {
++                label: 'API Token',
++                name: 'token',
++                type: 'password',
++                placeholder: '<ZENDESK_API_TOKEN>'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: ZendeskApi }
++
+diff --git a/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+new file mode 100644
+index 00000000000..d5ce4f9a701
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+@@ -0,0 +1,465 @@
++import { omit } from 'lodash'
++import axios from 'axios'
++import { ICommonObject, IDocument, INode, INodeData, INodeParams, INodeOutputsValue } from '../../../src/Interface'
++import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++
++interface ZendeskConfig {
++    zendeskDomain: string
++    user?: string
++    token?: string
++    brandId?: string
++    publishedArticlesOnly: boolean
++    locales: string[]
++    charsPerToken: number
++    api: {
++        protocol: string
++        helpCenterPath: string
++        articlesEndpoint: string
++        publicPath: string
++    }
++    defaultTitle: string
++    chunking: {
++        maxTokens: number
++        chunkSize: number
++        overlap: number
++    }
++}
++
++interface Chunk {
++    content: string
++    index: number
++    tokenSize: number
++}
++
++interface ZendeskArticle {
++    id: number
++    name?: string
++    title?: string
++    body?: string
++}
++
++interface ZendeskArticlesResponse {
++    articles?: ZendeskArticle[]
++    next_page?: string
++}
++
++class Zendesk_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'Zendesk'
++        this.name = 'zendesk'
++        this.version = 1.0
++        this.type = 'Document'
++        this.icon = 'zendesk.svg'
++        this.category = 'Document Loaders'
++        this.description = `Load articles from Zendesk Knowledge Base`
++        this.baseClasses = [this.type]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            description: 'Zendesk API Credential',
++            credentialNames: ['zendeskApi']
++        }
++        this.inputs = [
++            {
++                label: 'Zendesk Domain',
++                name: 'zendeskDomain',
++                type: 'string',
++                placeholder: 'example.zendesk.com',
++                description: 'Your Zendesk domain (e.g., example.zendesk.com)'
++            },
++            {
++                label: 'Brand ID',
++                name: 'brandId',
++                type: 'string',
++                optional: true,
++                placeholder: '123456',
++                description: 'Optional brand ID to filter articles'
++            },
++            {
++                label: 'Locale',
++                name: 'locale',
++                type: 'string',
++                placeholder: 'en-us',
++                description: 'Locale code for articles (e.g., en-us, en-gb)'
++            },
++            {
++                label: 'Published Articles Only',
++                name: 'publishedArticlesOnly',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                description: 'Only load published articles'
++            },
++            {
++                label: 'Characters Per Token',
++                name: 'charsPerToken',
++                type: 'number',
++                default: 4,
++                optional: true,
++                description: 'Approximate characters per token for size estimation',
++                step: 1
++            },
++            {
++                label: 'Additional Metadata',
++                name: 'metadata',
++                type: 'json',
++                description: 'Additional metadata to be added to the extracted documents',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Omit Metadata Keys',
++                name: 'omitMetadataKeys',
++                type: 'string',
++                rows: 4,
++                description:
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
++                placeholder: 'key1, key2, key3.nestedKey1',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    /**
++     * Validate configuration
++     */
++    private validateConfig(config: Partial<ZendeskConfig>): void {
++        const errors: string[] = []
++
++        if (!config.zendeskDomain) {
++            errors.push('Zendesk domain is required')
++        } else if (!config.zendeskDomain.match(/^.+\.zendesk\.com$/)) {
++            errors.push('Zendesk domain must be a valid zendesk.com domain (e.g., example.zendesk.com)')
++        }
++
++        if (!config.token) {
++            errors.push('Zendesk auth token is required')
++        }
++
++        if (config.user && !config.user.includes('@')) {
++            errors.push('Zendesk auth user must be a valid email address')
++        }
++
++        if (config.brandId && !/^\d+$/.test(config.brandId)) {
++            errors.push('Brand ID must be a numeric string')
++        }
++
++        if (errors.length > 0) {
++            const errorMessage = 'Configuration validation failed:\n  • ' + errors.join('\n  • ')
++            throw new Error(errorMessage)
++        }
++    }
++
++    /**
++     * Helper to fetch all articles with pagination
++     */
++    private async fetchAllArticles(
++        locale: string,
++        brandId: string | undefined,
++        config: ZendeskConfig,
++        axiosHeaders: Record<string, string>
++    ): Promise<ZendeskArticle[]> {
++        const allArticles: ZendeskArticle[] = []
++        let page = 1
++        let hasMore = true
++        const baseUri = `${config.api.protocol}${config.zendeskDomain}${config.api.helpCenterPath}`
++
++        while (hasMore) {
++            let articlesUri = `${baseUri}${config.api.articlesEndpoint}?locale=${locale}&page=${page}`
++
++            // Add status filter if publishedOnly is true
++            if (config.publishedArticlesOnly) {
++                articlesUri += '&status=published'
++            }
++
++            if (brandId) {
++                articlesUri += `&brand_id=${brandId}`
++            }
++
++            try {
++                const resp = await axios.get<ZendeskArticlesResponse>(articlesUri, { headers: axiosHeaders })
++                const data = resp.data
++
++                if (data.articles && data.articles.length > 0) {
++                    allArticles.push(...data.articles)
++                    page++
++                    hasMore = !!data.next_page
++                } else {
++                    hasMore = false
++                }
++            } catch (error: any) {
++                if (error.response) {
++                    const status = error.response.status
++                    const statusText = error.response.statusText
++
++                    if (status === 401) {
++                        throw new Error(`Authentication failed (${status}): Please check your Zendesk credentials`)
++                    } else if (status === 403) {
++                        throw new Error(
++                            `Access forbidden (${status}): You don't have permission to access this Zendesk instance`
++                        )
++                    } else if (status === 404) {
++                        throw new Error(`Not found (${status}): The Zendesk URL or brand ID may be incorrect`)
++                    } else if (status >= 500) {
++                        throw new Error(`Zendesk server error (${status}): ${statusText}. Please try again later`)
++                    } else {
++                        throw new Error(`HTTP error (${status}): ${statusText}`)
++                    }
++                } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
++                    throw new Error(
++                        `Network error: Cannot connect to Zendesk. Please check the domain: ${config.zendeskDomain}`
++                    )
++                } else {
++                    throw new Error(`Request failed: ${error.message}`)
++                }
++            }
++        }
++
++        return allArticles
++    }
++
++    /**
++     * Build article URL from domain and article details
++     */
++    private buildArticleUrl(config: ZendeskConfig, locale: string, articleId: number): string | null {
++        if (!config.zendeskDomain || !articleId) {
++            return null
++        }
++
++        return `${config.api.protocol}${config.zendeskDomain}${config.api.publicPath}${locale}/articles/${articleId}`
++    }
++
++    /**
++     * Chunk text content based on token limits
++     */
++    private chunkContent(content: string, chunkSize: number, overlap: number, charsPerToken: number): Chunk[] {
++        const chunks: Chunk[] = []
++        const contentLength = content.length
++        const chunkCharSize = chunkSize * charsPerToken
++        const overlapCharSize = overlap * charsPerToken
++
++        let start = 0
++        let chunkIndex = 0
++
++        while (start < contentLength) {
++            const end = Math.min(start + chunkCharSize, contentLength)
++            const chunk = content.substring(start, end)
++
++            chunks.push({
++                content: chunk,
++                index: chunkIndex,
++                tokenSize: Math.ceil(chunk.length / charsPerToken)
++            })
++
++            chunkIndex++
++
++            // Move start position, accounting for overlap
++            if (end >= contentLength) break
++            start = end - overlapCharSize
++        }
++
++        return chunks
++    }
++
++    /**
++     * Transform article to required format with chunking support
++     */
++    private transformArticle(article: ZendeskArticle, config: ZendeskConfig, locale: string): IDocument[] {
++        const articleUrl = this.buildArticleUrl(config, locale, article.id)
++        const content = article.body || ''
++        const tokenSize = Math.ceil(content.length / config.charsPerToken)
++        const title = article.name || article.title || config.defaultTitle
++        const articleId = String(article.id)
++
++        // If article is small enough, return as single document
++        if (tokenSize <= config.chunking.maxTokens) {
++            return [
++                {
++                    pageContent: content,
++                    metadata: {
++                        title: title,
++                        url: articleUrl,
++                        id: articleId
++                    }
++                }
++            ]
++        }
++
++        // Article needs chunking
++        const chunks = this.chunkContent(
++            content,
++            config.chunking.chunkSize,
++            config.chunking.overlap,
++            config.charsPerToken
++        )
++
++        return chunks.map((chunk) => ({
++            pageContent: chunk.content,
++            metadata: {
++                title: title,
++                url: articleUrl,
++                id: `${articleId}-${chunk.index + 1}`
++            }
++        }))
++    }
++
++    /**
++     * Extract all articles from Zendesk
++     */
++    private async extractAllArticles(config: ZendeskConfig): Promise<IDocument[]> {
++        const allTransformedArticles: IDocument[] = []
++
++        // Setup authentication headers
++        let axiosHeaders: Record<string, string> = {}
++        if (config.user && config.token) {
++            const authString = `${config.user}/token:${config.token}`
++            const encoded = Buffer.from(authString).toString('base64')
++            axiosHeaders = {
++                Authorization: `Basic ${encoded}`
++            }
++        }
++
++        // Process each locale
++        for (const locale of config.locales) {
++            try {
++                const articles = await this.fetchAllArticles(locale, config.brandId || undefined, config, axiosHeaders)
++                // Transform each article to the required format
++                for (const article of articles) {
++                    const transformedChunks = this.transformArticle(article, config, locale)
++                    // Process each chunk (will be 1 chunk for small articles)
++                    for (const chunk of transformedChunks) {
++                        allTransformedArticles.push(chunk)
++                    }
++                }
++            } catch (error: any) {
++                // Continue with other locales if one fails
++                throw new Error(`Error processing locale ${locale}: ${error.message}`)
++            }
++        }
++
++        return allTransformedArticles
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const zendeskDomain = nodeData.inputs?.zendeskDomain as string
++        const brandId = nodeData.inputs?.brandId as string
++        const locale = nodeData.inputs?.locale as string
++        const publishedArticlesOnly = (nodeData.inputs?.publishedArticlesOnly as boolean) ?? true
++        const charsPerToken = (nodeData.inputs?.charsPerToken as number) ?? 4
++        const metadata = nodeData.inputs?.metadata
++        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
++        const output = nodeData.outputs?.output as string
++
++        let omitMetadataKeys: string[] = []
++        if (_omitMetadataKeys) {
++            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
++        }
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const user = getCredentialParam('user', credentialData, nodeData)
++        const token = getCredentialParam('token', credentialData, nodeData)
++
++        // Build configuration
++        const config: ZendeskConfig = {
++            zendeskDomain,
++            user,
++            token,
++            brandId,
++            publishedArticlesOnly,
++            locales: [locale],
++            charsPerToken,
++            api: {
++                protocol: 'https://',
++                helpCenterPath: '/api/v2/help_center/',
++                articlesEndpoint: 'articles.json',
++                publicPath: '/hc/'
++            },
++            defaultTitle: 'Untitled',
++            chunking: {
++                maxTokens: 3000,
++                chunkSize: 1000,
++                overlap: 200
++            }
++        }
++
++        // Validate configuration
++        this.validateConfig(config)
++
++        // Extract articles
++        let docs: IDocument[] = await this.extractAllArticles(config)
++
++        // Apply metadata handling
++        if (metadata) {
++            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            docs = docs.map((doc) => ({
++                ...doc,
++                metadata:
++                    _omitMetadataKeys === '*'
++                        ? {
++                              ...parsedMetadata
++                          }
++                        : omit(
++                              {
++                                  ...doc.metadata,
++                                  ...parsedMetadata
++                              },
++                              omitMetadataKeys
++                          )
++            }))
++        } else {
++            docs = docs.map((doc) => ({
++                ...doc,
++                metadata:
++                    _omitMetadataKeys === '*'
++                        ? {}
++                        : omit(
++                              {
++                                  ...doc.metadata
++                              },
++                              omitMetadataKeys
++                          )
++            }))
++        }
++
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++}
++
++module.exports = { nodeClass: Zendesk_DocumentLoaders }
++
+diff --git a/packages/components/nodes/documentloaders/Zendesk/zendesk.svg b/packages/components/nodes/documentloaders/Zendesk/zendesk.svg
+new file mode 100644
+index 00000000000..cc7edc68ce2
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Zendesk/zendesk.svg
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
++<svg width="800px" height="800px" viewBox="0 -30.5 256 256" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" preserveAspectRatio="xMidYMid">
++    <g>
++        <path d="M118.249172,51.2326115 L118.249172,194.005605 L0,194.005605 L118.249172,51.2326115 Z M118.249172,2.84217094e-14 C118.249172,32.6440764 91.7686624,59.124586 59.124586,59.124586 C26.4805096,59.124586 0,32.6440764 0,2.84217094e-14 L118.249172,2.84217094e-14 Z M137.750828,194.005605 C137.750828,161.328917 164.198726,134.881019 196.875414,134.881019 C229.552102,134.881019 256,161.361529 256,194.005605 L137.750828,194.005605 Z M137.750828,142.740382 L137.750828,0 L256,0 L137.750828,142.740382 Z" fill="#03363D">
++</path>
++    </g>
++</svg>
+\ No newline at end of file
+diff --git a/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts b/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
+new file mode 100644
+index 00000000000..1d4fbfc5189
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
+@@ -0,0 +1,650 @@
++const { nodeClass: Zendesk_DocumentLoaders } = require('./Zendesk')
++import { INodeData } from '../../../src/Interface'
++import axios from 'axios'
++
++// Mock axios
++jest.mock('axios')
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++// Mock credential helpers
++jest.mock('../../../src', () => ({
++    getCredentialData: jest.fn(),
++    getCredentialParam: jest.fn(),
++    handleEscapeCharacters: jest.fn((str: string) => str)
++}))
++
++const { getCredentialData, getCredentialParam } = require('../../../src')
++
++// Helper function to create a valid INodeData object
++function createNodeData(id: string, inputs: any, credential?: string): INodeData {
++    return {
++        id: id,
++        label: 'Zendesk',
++        name: 'zendesk',
++        type: 'Document',
++        icon: 'zendesk.svg',
++        version: 1.0,
++        category: 'Document Loaders',
++        baseClasses: ['Document'],
++        inputs: inputs,
++        credential: credential,
++        outputs: {
++            output: 'document'
++        }
++    }
++}
++
++describe('Zendesk', () => {
++    let nodeClass: any
++
++    beforeEach(() => {
++        nodeClass = new Zendesk_DocumentLoaders()
++        jest.clearAllMocks()
++
++        // Default credential mocks
++        ;(getCredentialData as jest.Mock).mockResolvedValue({})
++        ;(getCredentialParam as jest.Mock).mockImplementation((param: string) => {
++            if (param === 'user') return 'user@example.com'
++            if (param === 'token') return 'test-token'
++            return undefined
++        })
++    })
++
++    describe('Configuration Validation', () => {
++        it('should throw error when zendeskDomain is not provided', async () => {
++            const nodeData = createNodeData('test-1', {
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Configuration validation failed'
++            )
++        })
++
++        it('should throw error when locale is not provided', async () => {
++            const nodeData = createNodeData('test-2', {
++                zendeskDomain: 'example.zendesk.com'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow()
++        })
++
++        it('should throw error when zendeskDomain is invalid', async () => {
++            const nodeData = createNodeData('test-3', {
++                zendeskDomain: 'invalid-domain.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Zendesk domain must be a valid zendesk.com domain'
++            )
++        })
++
++        it('should throw error when token is not provided', async () => {
++            ;(getCredentialParam as jest.Mock).mockImplementation((param: string) => {
++                if (param === 'user') return 'user@example.com'
++                return undefined
++            })
++
++            const nodeData = createNodeData('test-4', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Zendesk auth token is required'
++            )
++        })
++
++        it('should throw error when user is not a valid email', async () => {
++            ;(getCredentialParam as jest.Mock).mockImplementation((param: string) => {
++                if (param === 'user') return 'invalid-user'
++                if (param === 'token') return 'test-token'
++                return undefined
++            })
++
++            const nodeData = createNodeData('test-5', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Zendesk auth user must be a valid email address'
++            )
++        })
++
++        it('should throw error when brandId is not numeric', async () => {
++            const nodeData = createNodeData('test-6', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                brandId: 'invalid-id'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Brand ID must be a numeric string'
++            )
++        })
++
++        it('should accept valid configuration', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Test content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-7', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toBeDefined()
++            expect(Array.isArray(result)).toBe(true)
++        })
++    })
++
++    describe('Article Fetching', () => {
++        it('should fetch articles successfully', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Article 1',
++                            body: 'Content 1'
++                        },
++                        {
++                            id: 2,
++                            name: 'Article 2',
++                            body: 'Content 2'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-8', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toHaveLength(2)
++            expect(result[0].pageContent).toBe('Content 1')
++            expect(result[0].metadata.title).toBe('Article 1')
++            expect(result[0].metadata.id).toBe('1')
++        })
++
++        it('should handle pagination', async () => {
++            const firstPage = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Article 1',
++                            body: 'Content 1'
++                        }
++                    ],
++                    next_page: 'https://example.zendesk.com/api/v2/help_center/articles.json?page=2'
++                }
++            }
++
++            const secondPage = {
++                data: {
++                    articles: [
++                        {
++                            id: 2,
++                            name: 'Article 2',
++                            body: 'Content 2'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage)
++
++            const nodeData = createNodeData('test-9', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toHaveLength(2)
++            expect(mockedAxios.get).toHaveBeenCalledTimes(2)
++        })
++
++        it('should add status filter when publishedArticlesOnly is true', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Article 1',
++                            body: 'Content 1'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-10', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                publishedArticlesOnly: true
++            })
++
++            await nodeClass.init(nodeData, '', {})
++            const callUrl = mockedAxios.get.mock.calls[0][0] as string
++            expect(callUrl).toContain('status=published')
++        })
++
++        it('should add brand_id filter when brandId is provided', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Article 1',
++                            body: 'Content 1'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-11', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                brandId: '123456'
++            })
++
++            await nodeClass.init(nodeData, '', {})
++            const callUrl = mockedAxios.get.mock.calls[0][0] as string
++            expect(callUrl).toContain('brand_id=123456')
++        })
++    })
++
++    describe('Error Handling', () => {
++        it('should handle 401 authentication error', async () => {
++            const error = {
++                response: {
++                    status: 401,
++                    statusText: 'Unauthorized'
++                }
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-12', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Authentication failed (401)'
++            )
++        })
++
++        it('should handle 403 forbidden error', async () => {
++            const error = {
++                response: {
++                    status: 403,
++                    statusText: 'Forbidden'
++                }
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-13', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Access forbidden (403)'
++            )
++        })
++
++        it('should handle 404 not found error', async () => {
++            const error = {
++                response: {
++                    status: 404,
++                    statusText: 'Not Found'
++                }
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-14', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Not found (404)'
++            )
++        })
++
++        it('should handle 500 server error', async () => {
++            const error = {
++                response: {
++                    status: 500,
++                    statusText: 'Internal Server Error'
++                }
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-15', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Zendesk server error (500)'
++            )
++        })
++
++        it('should handle network error (ENOTFOUND)', async () => {
++            const error = {
++                code: 'ENOTFOUND',
++                message: 'getaddrinfo ENOTFOUND'
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-16', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Network error: Cannot connect to Zendesk'
++            )
++        })
++
++        it('should handle network error (ECONNREFUSED)', async () => {
++            const error = {
++                code: 'ECONNREFUSED',
++                message: 'Connection refused'
++            }
++
++            mockedAxios.get.mockRejectedValueOnce(error)
++
++            const nodeData = createNodeData('test-17', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow(
++                'Network error: Cannot connect to Zendesk'
++            )
++        })
++    })
++
++    describe('Chunking Logic', () => {
++        it('should not chunk small articles', async () => {
++            const smallContent = 'a'.repeat(1000) // Small content
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Small Article',
++                            body: smallContent
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-18', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                charsPerToken: 4
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toHaveLength(1)
++            expect(result[0].metadata.id).toBe('1')
++        })
++
++        it('should chunk large articles', async () => {
++            // Create content that exceeds maxTokens (3000 * 4 = 12000 chars)
++            const largeContent = 'a'.repeat(15000)
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Large Article',
++                            body: largeContent
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-19', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                charsPerToken: 4
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result.length).toBeGreaterThan(1)
++            expect(result[0].metadata.id).toContain('1-')
++        })
++
++        it('should maintain article title across chunks', async () => {
++            const largeContent = 'a'.repeat(15000)
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Large Article Title',
++                            body: largeContent
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-20', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                charsPerToken: 4
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result.length).toBeGreaterThan(1)
++            result.forEach((doc: any) => {
++                expect(doc.metadata.title).toBe('Large Article Title')
++            })
++        })
++    })
++
++    describe('Metadata Handling', () => {
++        it('should include article URL in metadata', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 123,
++                            name: 'Test Article',
++                            body: 'Content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-21', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result[0].metadata.url).toBe('https://example.zendesk.com/hc/en-us/articles/123')
++        })
++
++        it('should handle additional metadata', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-22', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                metadata: JSON.stringify({ customKey: 'customValue' })
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result[0].metadata.customKey).toBe('customValue')
++            expect(result[0].metadata.title).toBe('Test Article')
++        })
++
++        it('should omit specified metadata keys', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-23', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us',
++                omitMetadataKeys: 'url'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result[0].metadata.url).toBeUndefined()
++            expect(result[0].metadata.title).toBeDefined()
++            expect(result[0].metadata.id).toBeDefined()
++        })
++    })
++
++    describe('Output Modes', () => {
++        it('should return documents array when output is document', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-24', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++            nodeData.outputs = { output: 'document' }
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(Array.isArray(result)).toBe(true)
++            expect(result[0]).toHaveProperty('pageContent')
++            expect(result[0]).toHaveProperty('metadata')
++        })
++
++        it('should return concatenated text when output is text', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Article 1',
++                            body: 'Content 1'
++                        },
++                        {
++                            id: 2,
++                            name: 'Article 2',
++                            body: 'Content 2'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-25', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++            nodeData.outputs = { output: 'text' }
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(typeof result).toBe('string')
++            expect(result).toContain('Content 1')
++            expect(result).toContain('Content 2')
++        })
++    })
++
++    describe('Authentication', () => {
++        it('should set Authorization header with Basic auth', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
++            const nodeData = createNodeData('test-26', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us'
++            })
++
++            await nodeClass.init(nodeData, '', {})
++            const callConfig = mockedAxios.get.mock.calls[0][1]
++            expect(callConfig?.headers?.Authorization).toBeDefined()
++            expect(callConfig?.headers?.Authorization).toContain('Basic')
++        })
++    })
++})
++
+
+From 7d909863c25a56fdd6e68172f8dee3980565e5fe Mon Sep 17 00:00:00 2001
+From: Dave Hampton <david.hampton@gmail.com>
+Date: Fri, 7 Nov 2025 14:52:18 -0800
+Subject: [PATCH 2/8] feat: enhance Zendesk document loader with default locale
+ and multi-locale support
+
+Updated the Zendesk document loader to use a default locale ('en-us') when none is provided and to support comma-separated locales for fetching articles. Improved test cases to validate these changes, ensuring proper handling of multiple locales and default behavior. Enhanced error handling for locale validation and metadata processing.
+---
+ .../nodes/documentloaders/Zendesk/Zendesk.ts  | 93 ++++++++++---------
+ .../documentloaders/Zendesk/zendesk.test.ts   | 80 ++++++++++++++--
+ 2 files changed, 123 insertions(+), 50 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+index d5ce4f9a701..2841ffb6ba3 100644
+--- a/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
++++ b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+@@ -92,8 +92,10 @@ class Zendesk_DocumentLoaders implements INode {
+                 label: 'Locale',
+                 name: 'locale',
+                 type: 'string',
++                default: 'en-us',
++                optional: true,
+                 placeholder: 'en-us',
+-                description: 'Locale code for articles (e.g., en-us, en-gb)'
++                description: 'Locale code(s) for articles. Can be a single locale (e.g., en-us) or comma-separated list (e.g., en-us, en-gb, fr-fr). Defaults to en-us if not provided.'
+             },
+             {
+                 label: 'Published Articles Only',
+@@ -172,6 +174,10 @@ class Zendesk_DocumentLoaders implements INode {
+             errors.push('Brand ID must be a numeric string')
+         }
+ 
++        if (!config.locales || !config.locales.length || !config.locales[0]) {
++            errors.push('Locale is required')
++        }
++
+         if (errors.length > 0) {
+             const errorMessage = 'Configuration validation failed:\n  • ' + errors.join('\n  • ')
+             throw new Error(errorMessage)
+@@ -349,19 +355,14 @@ class Zendesk_DocumentLoaders implements INode {
+ 
+         // Process each locale
+         for (const locale of config.locales) {
+-            try {
+-                const articles = await this.fetchAllArticles(locale, config.brandId || undefined, config, axiosHeaders)
+-                // Transform each article to the required format
+-                for (const article of articles) {
+-                    const transformedChunks = this.transformArticle(article, config, locale)
+-                    // Process each chunk (will be 1 chunk for small articles)
+-                    for (const chunk of transformedChunks) {
+-                        allTransformedArticles.push(chunk)
+-                    }
++            const articles = await this.fetchAllArticles(locale, config.brandId || undefined, config, axiosHeaders)
++            // Transform each article to the required format
++            for (const article of articles) {
++                const transformedChunks = this.transformArticle(article, config, locale)
++                // Process each chunk (will be 1 chunk for small articles)
++                for (const chunk of transformedChunks) {
++                    allTransformedArticles.push(chunk)
+                 }
+-            } catch (error: any) {
+-                // Continue with other locales if one fails
+-                throw new Error(`Error processing locale ${locale}: ${error.message}`)
+             }
+         }
+ 
+@@ -371,7 +372,8 @@ class Zendesk_DocumentLoaders implements INode {
+     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+         const zendeskDomain = nodeData.inputs?.zendeskDomain as string
+         const brandId = nodeData.inputs?.brandId as string
+-        const locale = nodeData.inputs?.locale as string
++        const localeInputRaw = nodeData.inputs?.locale as string
++        const localeInput = (localeInputRaw && localeInputRaw.trim()) || 'en-us'
+         const publishedArticlesOnly = (nodeData.inputs?.publishedArticlesOnly as boolean) ?? true
+         const charsPerToken = (nodeData.inputs?.charsPerToken as number) ?? 4
+         const metadata = nodeData.inputs?.metadata
+@@ -383,6 +385,17 @@ class Zendesk_DocumentLoaders implements INode {
+             omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
+         }
+ 
++        // Parse comma-separated locales
++        const locales = localeInput
++            .split(',')
++            .map((loc) => loc.trim())
++            .filter((loc) => loc.length > 0)
++        
++        // Ensure at least one locale
++        if (locales.length === 0) {
++            locales.push('en-us')
++        }
++
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const user = getCredentialParam('user', credentialData, nodeData)
+         const token = getCredentialParam('token', credentialData, nodeData)
+@@ -394,7 +407,7 @@ class Zendesk_DocumentLoaders implements INode {
+             token,
+             brandId,
+             publishedArticlesOnly,
+-            locales: [locale],
++            locales,
+             charsPerToken,
+             api: {
+                 protocol: 'https://',
+@@ -417,38 +430,30 @@ class Zendesk_DocumentLoaders implements INode {
+         let docs: IDocument[] = await this.extractAllArticles(config)
+ 
+         // Apply metadata handling
++        let parsedMetadata = {}
++
+         if (metadata) {
+-            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
+-            docs = docs.map((doc) => ({
+-                ...doc,
+-                metadata:
+-                    _omitMetadataKeys === '*'
+-                        ? {
+-                              ...parsedMetadata
+-                          }
+-                        : omit(
+-                              {
+-                                  ...doc.metadata,
+-                                  ...parsedMetadata
+-                              },
+-                              omitMetadataKeys
+-                          )
+-            }))
+-        } else {
+-            docs = docs.map((doc) => ({
+-                ...doc,
+-                metadata:
+-                    _omitMetadataKeys === '*'
+-                        ? {}
+-                        : omit(
+-                              {
+-                                  ...doc.metadata
+-                              },
+-                              omitMetadataKeys
+-                          )
+-            }))
++            try {
++                parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            } catch (error) {
++                throw new Error(`Error parsing Additional Metadata: ${error.message}`)
++            }
+         }
+ 
++        docs = docs.map((doc) => ({
++            ...doc,
++            metadata:
++                _omitMetadataKeys === '*'
++                    ? { ...parsedMetadata }
++                    : omit(
++                          {
++                              ...doc.metadata,
++                              ...parsedMetadata
++                          },
++                          omitMetadataKeys
++                      )
++        }))
++
+         if (output === 'document') {
+             return docs
+         } else {
+diff --git a/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts b/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
+index 1d4fbfc5189..021ba4a96b2 100644
+--- a/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
++++ b/packages/components/nodes/documentloaders/Zendesk/zendesk.test.ts
+@@ -61,12 +61,31 @@ describe('Zendesk', () => {
+             )
+         })
+ 
+-        it('should throw error when locale is not provided', async () => {
++        it('should use default locale (en-us) when locale is not provided', async () => {
++            const mockArticles = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'Test Article',
++                            body: 'Test content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get.mockResolvedValueOnce(mockArticles)
++
+             const nodeData = createNodeData('test-2', {
+                 zendeskDomain: 'example.zendesk.com'
+             })
+ 
+-            await expect(nodeClass.init(nodeData, '', {})).rejects.toThrow()
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toBeDefined()
++            expect(Array.isArray(result)).toBe(true)
++            // Verify the API was called with en-us locale
++            const callUrl = mockedAxios.get.mock.calls[0][0] as string
++            expect(callUrl).toContain('locale=en-us')
+         })
+ 
+         it('should throw error when zendeskDomain is invalid', async () => {
+@@ -273,6 +292,49 @@ describe('Zendesk', () => {
+             const callUrl = mockedAxios.get.mock.calls[0][0] as string
+             expect(callUrl).toContain('brand_id=123456')
+         })
++
++        it('should handle comma-separated locales', async () => {
++            const mockArticlesEn = {
++                data: {
++                    articles: [
++                        {
++                            id: 1,
++                            name: 'English Article',
++                            body: 'English content'
++                        }
++                    ]
++                }
++            }
++
++            const mockArticlesFr = {
++                data: {
++                    articles: [
++                        {
++                            id: 2,
++                            name: 'French Article',
++                            body: 'French content'
++                        }
++                    ]
++                }
++            }
++
++            mockedAxios.get
++                .mockResolvedValueOnce(mockArticlesEn)
++                .mockResolvedValueOnce(mockArticlesFr)
++
++            const nodeData = createNodeData('test-11b', {
++                zendeskDomain: 'example.zendesk.com',
++                locale: 'en-us, fr-fr'
++            })
++
++            const result = await nodeClass.init(nodeData, '', {})
++            expect(result).toHaveLength(2)
++            expect(mockedAxios.get).toHaveBeenCalledTimes(2)
++            // Verify both locales were called
++            const callUrls = mockedAxios.get.mock.calls.map((call) => call[0] as string)
++            expect(callUrls[0]).toContain('locale=en-us')
++            expect(callUrls[1]).toContain('locale=fr-fr')
++        })
+     })
+ 
+     describe('Error Handling', () => {
+@@ -481,11 +543,12 @@ describe('Zendesk', () => {
+ 
+     describe('Metadata Handling', () => {
+         it('should include article URL in metadata', async () => {
++            const articleId = 123
+             const mockArticles = {
+                 data: {
+                     articles: [
+                         {
+-                            id: 123,
++                            id: articleId,
+                             name: 'Test Article',
+                             body: 'Content'
+                         }
+@@ -501,7 +564,9 @@ describe('Zendesk', () => {
+             })
+ 
+             const result = await nodeClass.init(nodeData, '', {})
+-            expect(result[0].metadata.url).toBe('https://example.zendesk.com/hc/en-us/articles/123')
++            expect(result[0].metadata.url).toBe(`https://example.zendesk.com/hc/en-us/articles/${articleId}`)
++            expect(result[0].metadata.id).toBe(String(articleId))
++            expect(result[0].pageContent).toBe('Content')
+         })
+ 
+         it('should handle additional metadata', async () => {
+@@ -614,8 +679,11 @@ describe('Zendesk', () => {
+ 
+             const result = await nodeClass.init(nodeData, '', {})
+             expect(typeof result).toBe('string')
+-            expect(result).toContain('Content 1')
+-            expect(result).toContain('Content 2')
++            // Check that both article contents are present in the concatenated text
++            // The result should be "Content 1\nContent 2\n" (or similar with escape handling)
++            const normalizedResult = result.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
++            expect(normalizedResult).toContain('Content 1')
++            expect(normalizedResult).toContain('Content 2')
+         })
+     })
+ 
+
+From 6fac1555d21be96936eb22f4ceae607c4b97a3a4 Mon Sep 17 00:00:00 2001
+From: Daniel Moon <32221114+moona3k@users.noreply.github.com>
+Date: Sat, 22 Nov 2025 04:54:59 -0800
+Subject: [PATCH 3/8] fix: OpenAI Assistant tool call failures masked as
+ success (#5504)
+
+Fix OpenAI Assistant tool error analytics
+---
+ .../nodes/agents/OpenAIAssistant/OpenAIAssistant.ts         | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/agents/OpenAIAssistant/OpenAIAssistant.ts b/packages/components/nodes/agents/OpenAIAssistant/OpenAIAssistant.ts
+index 75ca320f2d2..e8774549279 100644
+--- a/packages/components/nodes/agents/OpenAIAssistant/OpenAIAssistant.ts
++++ b/packages/components/nodes/agents/OpenAIAssistant/OpenAIAssistant.ts
+@@ -578,7 +578,7 @@ class OpenAIAssistant_Agents implements INode {
+                                         toolOutput
+                                     })
+                                 } catch (e) {
+-                                    await analyticHandlers.onToolEnd(toolIds, e)
++                                    await analyticHandlers.onToolError(toolIds, e)
+                                     console.error('Error executing tool', e)
+                                     throw new Error(
+                                         `Error executing tool. Tool: ${tool.name}. Thread ID: ${threadId}. Run ID: ${runThreadId}`
+@@ -703,7 +703,7 @@ class OpenAIAssistant_Agents implements INode {
+                                                 toolOutput
+                                             })
+                                         } catch (e) {
+-                                            await analyticHandlers.onToolEnd(toolIds, e)
++                                            await analyticHandlers.onToolError(toolIds, e)
+                                             console.error('Error executing tool', e)
+                                             clearInterval(timeout)
+                                             reject(
+@@ -1096,7 +1096,7 @@ async function handleToolSubmission(params: ToolSubmissionParams): Promise<ToolS
+                                 toolOutput
+                             })
+                         } catch (e) {
+-                            await analyticHandlers.onToolEnd(toolIds, e)
++                            await analyticHandlers.onToolError(toolIds, e)
+                             console.error('Error executing tool', e)
+                             throw new Error(`Error executing tool. Tool: ${tool.name}. Thread ID: ${threadId}. Run ID: ${runThreadId}`)
+                         }
+
+From 6360a82458804b51436ad425d5dd77256b8f6c97 Mon Sep 17 00:00:00 2001
+From: mskitroot <153523628+mskitroot@users.noreply.github.com>
+Date: Sat, 22 Nov 2025 14:55:16 +0200
+Subject: [PATCH 4/8] Add workspaceId in options if not already there. (#5503)
+
+* Add workspaceId in options if not already there.
+
+* Update packages/components/nodes/tools/MCP/CustomMCP/CustomMCP.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+
+---------
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ .../components/nodes/tools/MCP/CustomMCP/CustomMCP.ts     | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/CustomMCP/CustomMCP.ts b/packages/components/nodes/tools/MCP/CustomMCP/CustomMCP.ts
+index 09015a71096..eb65ecbdf7e 100644
+--- a/packages/components/nodes/tools/MCP/CustomMCP/CustomMCP.ts
++++ b/packages/components/nodes/tools/MCP/CustomMCP/CustomMCP.ts
+@@ -136,17 +136,17 @@ class Custom_MCP implements INode {
+         }
+ 
+         let sandbox: ICommonObject = {}
++        const workspaceId = options?.searchOptions?.workspaceId?._value || options?.workspaceId
+ 
+         if (mcpServerConfig.includes('$vars')) {
+             const appDataSource = options.appDataSource as DataSource
+             const databaseEntities = options.databaseEntities as IDatabaseEntity
+-
+-            const variables = await getVars(appDataSource, databaseEntities, nodeData, options)
++            // If options.workspaceId is not set, create a new options object with the workspaceId for getVars.
++            const optionsWithWorkspaceId = options.workspaceId ? options : { ...options, workspaceId }
++            const variables = await getVars(appDataSource, databaseEntities, nodeData, optionsWithWorkspaceId)
+             sandbox['$vars'] = prepareSandboxVars(variables)
+         }
+ 
+-        const workspaceId = options?.searchOptions?.workspaceId?._value || options?.workspaceId
+-
+         let canonicalConfig
+         try {
+             canonicalConfig = JSON.parse(mcpServerConfig)
+
+From f698c7a161c3dc159075edca8c94cf4a0e7273ab Mon Sep 17 00:00:00 2001
+From: Siddharth Chauhan <43745848+aibysid@users.noreply.github.com>
+Date: Sun, 23 Nov 2025 22:45:41 +0530
+Subject: [PATCH 5/8] fix: agentflow list refresh after deletion (Issue #5360)
+ (#5473)
+
+* fix: agentflow list refresh after deletion (Issue #5360)
+
+Root Cause:
+When deleting an Agentflow from the list view, updateFlowsApi.request() was called without pagination parameters. This caused the backend to return a plain array instead of the expected { data: [], total: 0 } format, leading to a TypeError when accessing .data.length.
+
+Solution:
+- Created refreshAgentflows callback that includes current pagination state
+- Passed callback through FlowListTable to FlowListMenu
+- Updated handleDelete to use callback instead of direct API call
+- Maintains backward compatibility for components without callback
+
+Fixes #5360
+
+* reverting
+
+* add pagination support to FlowListMenu and FlowListTable
+
+---------
+
+Co-authored-by: Henry <hzj94@hotmail.com>
+---
+ .../src/ui-component/button/FlowListMenu.jsx  | 36 +++++++++++++++----
+ .../src/ui-component/table/FlowListTable.jsx  | 10 ++++--
+ packages/ui/src/views/agentflows/index.jsx    |  2 ++
+ packages/ui/src/views/chatflows/index.jsx     |  2 ++
+ 4 files changed, 41 insertions(+), 9 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index d3c2e259be5..9ac85206fda 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -74,7 +74,7 @@ const StyledMenu = styled((props) => (
+     }
+ }))
+ 
+-export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, setError, updateFlowsApi }) {
++export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, setError, updateFlowsApi, currentPage, pageLimit }) {
+     const { confirm } = useConfirm()
+     const dispatch = useDispatch()
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+@@ -166,10 +166,16 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+         }
+         try {
+             await updateChatflowApi.request(chatflow.id, updateBody)
++            const params = {
++                page: currentPage,
++                limit: pageLimit
++            }
+             if (isAgentCanvas && isAgentflowV2) {
+-                await updateFlowsApi.request('AGENTFLOW')
++                await updateFlowsApi.request('AGENTFLOW', params)
++            } else if (isAgentCanvas) {
++                await updateFlowsApi.request('MULTIAGENT', params)
+             } else {
+-                await updateFlowsApi.request(isAgentCanvas ? 'MULTIAGENT' : undefined)
++                await updateFlowsApi.request(params)
+             }
+         } catch (error) {
+             if (setError) setError(error)
+@@ -209,7 +215,15 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+         }
+         try {
+             await updateChatflowApi.request(chatflow.id, updateBody)
+-            await updateFlowsApi.request(isAgentCanvas ? 'AGENTFLOW' : undefined)
++            const params = {
++                page: currentPage,
++                limit: pageLimit
++            }
++            if (isAgentCanvas) {
++                await updateFlowsApi.request('AGENTFLOW', params)
++            } else {
++                await updateFlowsApi.request(params)
++            }
+         } catch (error) {
+             if (setError) setError(error)
+             enqueueSnackbar({
+@@ -241,10 +255,16 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+         if (isConfirmed) {
+             try {
+                 await chatflowsApi.deleteChatflow(chatflow.id)
++                const params = {
++                    page: currentPage,
++                    limit: pageLimit
++                }
+                 if (isAgentCanvas && isAgentflowV2) {
+-                    await updateFlowsApi.request('AGENTFLOW')
++                    await updateFlowsApi.request('AGENTFLOW', params)
++                } else if (isAgentCanvas) {
++                    await updateFlowsApi.request('MULTIAGENT', params)
+                 } else {
+-                    await updateFlowsApi.request(isAgentCanvas ? 'MULTIAGENT' : undefined)
++                    await updateFlowsApi.request(params)
+                 }
+             } catch (error) {
+                 if (setError) setError(error)
+@@ -454,5 +474,7 @@ FlowListMenu.propTypes = {
+     isAgentCanvas: PropTypes.bool,
+     isAgentflowV2: PropTypes.bool,
+     setError: PropTypes.func,
+-    updateFlowsApi: PropTypes.object
++    updateFlowsApi: PropTypes.object,
++    currentPage: PropTypes.number,
++    pageLimit: PropTypes.number
+ }
+diff --git a/packages/ui/src/ui-component/table/FlowListTable.jsx b/packages/ui/src/ui-component/table/FlowListTable.jsx
+index a61df9ed2ed..2d1e0570472 100644
+--- a/packages/ui/src/ui-component/table/FlowListTable.jsx
++++ b/packages/ui/src/ui-component/table/FlowListTable.jsx
+@@ -59,7 +59,9 @@ export const FlowListTable = ({
+     updateFlowsApi,
+     setError,
+     isAgentCanvas,
+-    isAgentflowV2
++    isAgentflowV2,
++    currentPage,
++    pageLimit
+ }) => {
+     const { hasPermission } = useAuth()
+     const isActionsAvailable = isAgentCanvas
+@@ -331,6 +333,8 @@ export const FlowListTable = ({
+                                                         chatflow={row}
+                                                         setError={setError}
+                                                         updateFlowsApi={updateFlowsApi}
++                                                        currentPage={currentPage}
++                                                        pageLimit={pageLimit}
+                                                     />
+                                                 </Stack>
+                                             </StyledTableCell>
+@@ -355,5 +359,7 @@ FlowListTable.propTypes = {
+     updateFlowsApi: PropTypes.object,
+     setError: PropTypes.func,
+     isAgentCanvas: PropTypes.bool,
+-    isAgentflowV2: PropTypes.bool
++    isAgentflowV2: PropTypes.bool,
++    currentPage: PropTypes.number,
++    pageLimit: PropTypes.number
+ }
+diff --git a/packages/ui/src/views/agentflows/index.jsx b/packages/ui/src/views/agentflows/index.jsx
+index b82bfab8a76..c99bd6cf2d7 100644
+--- a/packages/ui/src/views/agentflows/index.jsx
++++ b/packages/ui/src/views/agentflows/index.jsx
+@@ -325,6 +325,8 @@ const Agentflows = () => {
+                                     filterFunction={filterFlows}
+                                     updateFlowsApi={getAllAgentflows}
+                                     setError={setError}
++                                    currentPage={currentPage}
++                                    pageLimit={pageLimit}
+                                 />
+                             )}
+                             {/* Pagination and Page Size Controls */}
+diff --git a/packages/ui/src/views/chatflows/index.jsx b/packages/ui/src/views/chatflows/index.jsx
+index 62e855f2b3e..ce213313dcb 100644
+--- a/packages/ui/src/views/chatflows/index.jsx
++++ b/packages/ui/src/views/chatflows/index.jsx
+@@ -208,6 +208,8 @@ const Chatflows = () => {
+                                     filterFunction={filterFlows}
+                                     updateFlowsApi={getAllChatflowsApi}
+                                     setError={setError}
++                                    currentPage={currentPage}
++                                    pageLimit={pageLimit}
+                                 />
+                             )}
+                             {/* Pagination and Page Size Controls */}
+
+From f9a84355e70646fdba2d61817fad6eafb67e78db Mon Sep 17 00:00:00 2001
+From: Dave Hampton <david.hampton@gmail.com>
+Date: Sun, 23 Nov 2025 17:40:02 -0800
+Subject: [PATCH 6/8] refactor: Extract Zendesk document loading logic into a
+ new `ZendeskLoader` class inheriting from `BaseDocumentLoader`.
+
+---
+ .../nodes/documentloaders/Zendesk/Zendesk.ts  | 202 ++++++++++--------
+ 1 file changed, 108 insertions(+), 94 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+index 2841ffb6ba3..e5d106ce153 100644
+--- a/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
++++ b/packages/components/nodes/documentloaders/Zendesk/Zendesk.ts
+@@ -2,6 +2,7 @@ import { omit } from 'lodash'
+ import axios from 'axios'
+ import { ICommonObject, IDocument, INode, INodeData, INodeParams, INodeOutputsValue } from '../../../src/Interface'
+ import { getCredentialData, getCredentialParam, handleEscapeCharacters } from '../../../src'
++import { BaseDocumentLoader } from 'langchain/document_loaders/base'
+ 
+ interface ZendeskConfig {
+     zendeskDomain: string
+@@ -150,6 +151,111 @@ class Zendesk_DocumentLoaders implements INode {
+         ]
+     }
+ 
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const zendeskDomain = nodeData.inputs?.zendeskDomain as string
++        const brandId = nodeData.inputs?.brandId as string
++        const localeInputRaw = nodeData.inputs?.locale as string
++        const localeInput = (localeInputRaw && localeInputRaw.trim()) || 'en-us'
++        const publishedArticlesOnly = (nodeData.inputs?.publishedArticlesOnly as boolean) ?? true
++        const charsPerToken = (nodeData.inputs?.charsPerToken as number) ?? 4
++        const metadata = nodeData.inputs?.metadata
++        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
++        const output = nodeData.outputs?.output as string
++
++        let omitMetadataKeys: string[] = []
++        if (_omitMetadataKeys) {
++            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
++        }
++
++        // Parse comma-separated locales
++        const locales = localeInput
++            .split(',')
++            .map((loc) => loc.trim())
++            .filter((loc) => loc.length > 0)
++
++        // Ensure at least one locale
++        if (locales.length === 0) {
++            locales.push('en-us')
++        }
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const user = getCredentialParam('user', credentialData, nodeData)
++        const token = getCredentialParam('token', credentialData, nodeData)
++
++        // Build configuration
++        const config: ZendeskConfig = {
++            zendeskDomain,
++            user,
++            token,
++            brandId,
++            publishedArticlesOnly,
++            locales,
++            charsPerToken,
++            api: {
++                protocol: 'https://',
++                helpCenterPath: '/api/v2/help_center/',
++                articlesEndpoint: 'articles.json',
++                publicPath: '/hc/'
++            },
++            defaultTitle: 'Untitled',
++            chunking: {
++                maxTokens: 3000,
++                chunkSize: 1000,
++                overlap: 200
++            }
++        }
++
++        const loader = new ZendeskLoader(config)
++
++        // Extract articles
++        let docs: IDocument[] = await loader.load()
++
++        // Apply metadata handling
++        let parsedMetadata = {}
++
++        if (metadata) {
++            try {
++                parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            } catch (error) {
++                throw new Error(`Error parsing Additional Metadata: ${error.message}`)
++            }
++        }
++
++        docs = docs.map((doc) => ({
++            ...doc,
++            metadata:
++                _omitMetadataKeys === '*'
++                    ? { ...parsedMetadata }
++                    : omit(
++                          {
++                              ...doc.metadata,
++                              ...parsedMetadata
++                          },
++                          omitMetadataKeys
++                      )
++        }))
++
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++}
++
++class ZendeskLoader extends BaseDocumentLoader {
++    private config: ZendeskConfig
++
++    constructor(config: ZendeskConfig) {
++        super()
++        this.config = config
++        this.validateConfig(this.config)
++    }
++
+     /**
+      * Validate configuration
+      */
+@@ -369,100 +475,8 @@ class Zendesk_DocumentLoaders implements INode {
+         return allTransformedArticles
+     }
+ 
+-    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
+-        const zendeskDomain = nodeData.inputs?.zendeskDomain as string
+-        const brandId = nodeData.inputs?.brandId as string
+-        const localeInputRaw = nodeData.inputs?.locale as string
+-        const localeInput = (localeInputRaw && localeInputRaw.trim()) || 'en-us'
+-        const publishedArticlesOnly = (nodeData.inputs?.publishedArticlesOnly as boolean) ?? true
+-        const charsPerToken = (nodeData.inputs?.charsPerToken as number) ?? 4
+-        const metadata = nodeData.inputs?.metadata
+-        const _omitMetadataKeys = nodeData.inputs?.omitMetadataKeys as string
+-        const output = nodeData.outputs?.output as string
+-
+-        let omitMetadataKeys: string[] = []
+-        if (_omitMetadataKeys) {
+-            omitMetadataKeys = _omitMetadataKeys.split(',').map((key) => key.trim())
+-        }
+-
+-        // Parse comma-separated locales
+-        const locales = localeInput
+-            .split(',')
+-            .map((loc) => loc.trim())
+-            .filter((loc) => loc.length > 0)
+-        
+-        // Ensure at least one locale
+-        if (locales.length === 0) {
+-            locales.push('en-us')
+-        }
+-
+-        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+-        const user = getCredentialParam('user', credentialData, nodeData)
+-        const token = getCredentialParam('token', credentialData, nodeData)
+-
+-        // Build configuration
+-        const config: ZendeskConfig = {
+-            zendeskDomain,
+-            user,
+-            token,
+-            brandId,
+-            publishedArticlesOnly,
+-            locales,
+-            charsPerToken,
+-            api: {
+-                protocol: 'https://',
+-                helpCenterPath: '/api/v2/help_center/',
+-                articlesEndpoint: 'articles.json',
+-                publicPath: '/hc/'
+-            },
+-            defaultTitle: 'Untitled',
+-            chunking: {
+-                maxTokens: 3000,
+-                chunkSize: 1000,
+-                overlap: 200
+-            }
+-        }
+-
+-        // Validate configuration
+-        this.validateConfig(config)
+-
+-        // Extract articles
+-        let docs: IDocument[] = await this.extractAllArticles(config)
+-
+-        // Apply metadata handling
+-        let parsedMetadata = {}
+-
+-        if (metadata) {
+-            try {
+-                parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
+-            } catch (error) {
+-                throw new Error(`Error parsing Additional Metadata: ${error.message}`)
+-            }
+-        }
+-
+-        docs = docs.map((doc) => ({
+-            ...doc,
+-            metadata:
+-                _omitMetadataKeys === '*'
+-                    ? { ...parsedMetadata }
+-                    : omit(
+-                          {
+-                              ...doc.metadata,
+-                              ...parsedMetadata
+-                          },
+-                          omitMetadataKeys
+-                      )
+-        }))
+-
+-        if (output === 'document') {
+-            return docs
+-        } else {
+-            let finaltext = ''
+-            for (const doc of docs) {
+-                finaltext += `${doc.pageContent}\n`
+-            }
+-            return handleEscapeCharacters(finaltext, false)
+-        }
++    async load(): Promise<IDocument[]> {
++        return await this.extractAllArticles(this.config)
+     }
+ }
+ 
+
+From de2a197230037ef1b697be3dfb7200577adc82df Mon Sep 17 00:00:00 2001
+From: chiragjagga <chiragjagga26@gmail.com>
+Date: Wed, 7 Jan 2026 21:34:12 +0530
+Subject: [PATCH 7/8] Added global region for chatGoogleVertexAI (#5581)
+
+* added global region for chatGoogleVertexAI
+
+* fix json formatting
+---
+ packages/components/models.json | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/packages/components/models.json b/packages/components/models.json
+index 6248ffd8700..9bfeea632e0 100644
+--- a/packages/components/models.json
++++ b/packages/components/models.json
+@@ -893,6 +893,7 @@
+                 }
+             ],
+             "regions": [
++                { "label": "global", "name": "global" },
+                 { "label": "us-east1", "name": "us-east1" },
+                 { "label": "us-east4", "name": "us-east4" },
+                 { "label": "us-central1", "name": "us-central1" },
+
+From 2542bdc6ea68299833991fd77aa7808a49c159cc Mon Sep 17 00:00:00 2001
+From: Ilango <ilango.rajagopal@flowiseai.com>
+Date: Thu, 8 Jan 2026 14:01:13 +0530
+Subject: [PATCH 8/8] Fix: Disclosures (#5562)
+
+* fix: remove hostname from log filename
+
+* fix: remove metrics endpoint from whitelist and require authentication
+
+* update: example prometheus configuration
+
+* fix: require authentication for bullmq dashboard
+
+* remove: get-upload-path route
+
+* update: move export chat messages logic to backend
+
+* update: auth method for bullmq dashboard
+
+* fix: hard-coded api key in example prometheus config
+
+* fix: unused imports
+
+* fix: duplicated try-catch blocks
+
+* fix: add rate-limiting to bullmq dashboard
+
+* fix: add rate-limiting to bullmq dashboard
+
+* update: use existing json parse method
+---
+ metrics/prometheus/prometheus.config.yml      |   6 +-
+ packages/server/.env.example                  |   1 -
+ .../src/controllers/export-import/index.ts    |  40 +++-
+ .../src/controllers/get-upload-path/index.ts  |  17 --
+ .../enterprise/middleware/passport/index.ts   |  28 +++
+ packages/server/src/index.ts                  |  14 +-
+ .../server/src/routes/export-import/index.ts  |   2 +
+ .../src/routes/get-upload-path/index.ts       |   8 -
+ packages/server/src/routes/index.ts           |   2 -
+ .../src/services/export-import/index.ts       | 185 ++++++++++++++++--
+ packages/server/src/utils/constants.ts        |   1 -
+ packages/server/src/utils/logger.ts           |   7 +-
+ packages/server/src/utils/rateLimit.ts        |   8 +
+ packages/ui/src/api/chatmessage.js            |   2 -
+ packages/ui/src/api/exportimport.js           |   4 +-
+ .../dialog/ViewMessagesDialog.jsx             | 134 +++++--------
+ 16 files changed, 315 insertions(+), 144 deletions(-)
+ delete mode 100644 packages/server/src/controllers/get-upload-path/index.ts
+ delete mode 100644 packages/server/src/routes/get-upload-path/index.ts
+
+diff --git a/metrics/prometheus/prometheus.config.yml b/metrics/prometheus/prometheus.config.yml
+index 82ae71fc7e4..32dd594a4a7 100644
+--- a/metrics/prometheus/prometheus.config.yml
++++ b/metrics/prometheus/prometheus.config.yml
+@@ -6,4 +6,8 @@ scrape_configs:
+       - targets: ["localhost:8080","localhost:3000"]
+ 
+     metrics_path: /api/v1/metrics/
+-    scheme: http
+\ No newline at end of file
++    scheme: http
++    
++    authorization:
++      type: Bearer
++      credentials_file: '/etc/prometheus/api_key.txt'
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 282e4cd33fc..0ed92a1336e 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -169,7 +169,6 @@ JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=43200
+ # REDIS_KEEP_ALIVE=
+ # ENABLE_BULLMQ_DASHBOARD=
+ 
+-
+ ############################################################################################################
+ ############################################## SECURITY ####################################################
+ ############################################################################################################
+diff --git a/packages/server/src/controllers/export-import/index.ts b/packages/server/src/controllers/export-import/index.ts
+index ae2a869283a..6e12c891865 100644
+--- a/packages/server/src/controllers/export-import/index.ts
++++ b/packages/server/src/controllers/export-import/index.ts
+@@ -49,7 +49,45 @@ const importData = async (req: Request, res: Response, next: NextFunction) => {
+     }
+ }
+ 
++const exportChatflowMessages = async (req: Request, res: Response, next: NextFunction) => {
++    try {
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: exportImportController.exportChatflowMessages - workspace ${workspaceId} not found!`
++            )
++        }
++
++        const { chatflowId, chatType, feedbackType, startDate, endDate } = req.body
++        if (!chatflowId) {
++            throw new InternalFlowiseError(
++                StatusCodes.BAD_REQUEST,
++                'Error: exportImportController.exportChatflowMessages - chatflowId is required!'
++            )
++        }
++
++        const apiResponse = await exportImportService.exportChatflowMessages(
++            chatflowId,
++            chatType,
++            feedbackType,
++            startDate,
++            endDate,
++            workspaceId
++        )
++
++        // Set headers for file download
++        res.setHeader('Content-Type', 'application/json')
++        res.setHeader('Content-Disposition', `attachment; filename="${chatflowId}-Message.json"`)
++
++        return res.json(apiResponse)
++    } catch (error) {
++        next(error)
++    }
++}
++
+ export default {
+     exportData,
+-    importData
++    importData,
++    exportChatflowMessages
+ }
+diff --git a/packages/server/src/controllers/get-upload-path/index.ts b/packages/server/src/controllers/get-upload-path/index.ts
+deleted file mode 100644
+index 05e76591f4b..00000000000
+--- a/packages/server/src/controllers/get-upload-path/index.ts
++++ /dev/null
+@@ -1,17 +0,0 @@
+-import { Request, Response, NextFunction } from 'express'
+-import { getStoragePath } from 'flowise-components'
+-
+-const getPathForUploads = async (req: Request, res: Response, next: NextFunction) => {
+-    try {
+-        const apiResponse = {
+-            storagePath: getStoragePath()
+-        }
+-        return res.json(apiResponse)
+-    } catch (error) {
+-        next(error)
+-    }
+-}
+-
+-export default {
+-    getPathForUploads
+-}
+diff --git a/packages/server/src/enterprise/middleware/passport/index.ts b/packages/server/src/enterprise/middleware/passport/index.ts
+index dc76580301d..c8d0896cbe2 100644
+--- a/packages/server/src/enterprise/middleware/passport/index.ts
++++ b/packages/server/src/enterprise/middleware/passport/index.ts
+@@ -429,6 +429,34 @@ export const verifyToken = (req: Request, res: Response, next: NextFunction) =>
+     })(req, res, next)
+ }
+ 
++export const verifyTokenForBullMQDashboard = (req: Request, res: Response, next: NextFunction) => {
++    passport.authenticate('jwt', { session: true }, (err: any, user: LoggedInUser, info: object) => {
++        if (err) {
++            return next(err)
++        }
++
++        // @ts-ignore
++        if (info && info.name === 'TokenExpiredError') {
++            if (req.cookies && req.cookies.refreshToken) {
++                return res.redirect('/signin?retry=true')
++            }
++            return res.redirect('/signin')
++        }
++
++        if (!user) {
++            return res.redirect('/signin')
++        }
++
++        const identityManager = getRunningExpressApp().identityManager
++        if (identityManager.isEnterprise() && !identityManager.isLicenseValid()) {
++            return res.redirect('/license-expired')
++        }
++
++        req.user = user
++        next()
++    })(req, res, next)
++}
++
+ const storeSSOUserPayload = (ssoToken: string, returnUser: any) => {
+     const app = getRunningExpressApp()
+     app.cachePool.addSSOTokenCache(ssoToken, returnUser)
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index 258be4cbd53..f4aefc9182f 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -18,7 +18,7 @@ import { Telemetry } from './utils/telemetry'
+ import flowiseApiV1Router from './routes'
+ import errorHandlerMiddleware from './middlewares/errors'
+ import { WHITELIST_URLS } from './utils/constants'
+-import { initializeJwtCookieMiddleware, verifyToken } from './enterprise/middleware/passport'
++import { initializeJwtCookieMiddleware, verifyToken, verifyTokenForBullMQDashboard } from './enterprise/middleware/passport'
+ import { IdentityManager } from './IdentityManager'
+ import { SSEStreamer } from './utils/SSEStreamer'
+ import { validateAPIKey } from './utils/validateKey'
+@@ -331,7 +331,17 @@ export class App {
+         })
+ 
+         if (process.env.MODE === MODE.QUEUE && process.env.ENABLE_BULLMQ_DASHBOARD === 'true' && !this.identityManager.isCloud()) {
+-            this.app.use('/admin/queues', this.queueManager.getBullBoardRouter())
++            // Initialize admin queues rate limiter
++            const id = 'bullmq_admin_dashboard'
++            await this.rateLimiterManager.addRateLimiter(
++                id,
++                60,
++                100,
++                process.env.ADMIN_RATE_LIMIT_MESSAGE || 'Too many requests to admin dashboard, please try again later.'
++            )
++
++            const rateLimiter = this.rateLimiterManager.getRateLimiterById(id)
++            this.app.use('/admin/queues', rateLimiter, verifyTokenForBullMQDashboard, this.queueManager.getBullBoardRouter())
+         }
+ 
+         // ----------------------------------------
+diff --git a/packages/server/src/routes/export-import/index.ts b/packages/server/src/routes/export-import/index.ts
+index 17b28a7c346..68723d9fea2 100644
+--- a/packages/server/src/routes/export-import/index.ts
++++ b/packages/server/src/routes/export-import/index.ts
+@@ -5,6 +5,8 @@ const router = express.Router()
+ 
+ router.post('/export', checkPermission('workspace:export'), exportImportController.exportData)
+ 
++router.post('/chatflow-messages', checkPermission('workspace:export'), exportImportController.exportChatflowMessages)
++
+ router.post('/import', checkPermission('workspace:import'), exportImportController.importData)
+ 
+ export default router
+diff --git a/packages/server/src/routes/get-upload-path/index.ts b/packages/server/src/routes/get-upload-path/index.ts
+deleted file mode 100644
+index 48827c9a1a2..00000000000
+--- a/packages/server/src/routes/get-upload-path/index.ts
++++ /dev/null
+@@ -1,8 +0,0 @@
+-import express from 'express'
+-import getUploadPathController from '../../controllers/get-upload-path'
+-const router = express.Router()
+-
+-// READ
+-router.get('/', getUploadPathController.getPathForUploads)
+-
+-export default router
+diff --git a/packages/server/src/routes/index.ts b/packages/server/src/routes/index.ts
+index 4c4930f44e1..bb7ce05d896 100644
+--- a/packages/server/src/routes/index.ts
++++ b/packages/server/src/routes/index.ts
+@@ -19,7 +19,6 @@ import fetchLinksRouter from './fetch-links'
+ import filesRouter from './files'
+ import flowConfigRouter from './flow-config'
+ import getUploadFileRouter from './get-upload-file'
+-import getUploadPathRouter from './get-upload-path'
+ import internalChatmessagesRouter from './internal-chat-messages'
+ import internalPredictionRouter from './internal-predictions'
+ import leadsRouter from './leads'
+@@ -93,7 +92,6 @@ router.use('/flow-config', flowConfigRouter)
+ router.use('/internal-chatmessage', internalChatmessagesRouter)
+ router.use('/internal-prediction', internalPredictionRouter)
+ router.use('/get-upload-file', getUploadFileRouter)
+-router.use('/get-upload-path', getUploadPathRouter)
+ router.use('/leads', leadsRouter)
+ router.use('/load-prompt', loadPromptRouter)
+ router.use('/marketplaces', marketplacesRouter)
+diff --git a/packages/server/src/services/export-import/index.ts b/packages/server/src/services/export-import/index.ts
+index 05e7747fd97..3e729bb5fa6 100644
+--- a/packages/server/src/services/export-import/index.ts
++++ b/packages/server/src/services/export-import/index.ts
+@@ -13,20 +13,21 @@ import { Tool } from '../../database/entities/Tool'
+ import { Variable } from '../../database/entities/Variable'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+-import { Platform } from '../../Interface'
+-import assistantsService from '../../services/assistants'
+-import chatflowsService from '../../services/chatflows'
++import assistantsService from '../assistants'
++import chatflowService from '../chatflows'
++import chatMessagesService from '../chat-messages'
+ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
++import { utilGetChatMessage } from '../../utils/getChatMessage'
++import { getStoragePath, parseJsonBody } from 'flowise-components'
++import path from 'path'
+ import { checkUsageLimit } from '../../utils/quotaUsage'
+-import { sanitizeNullBytes } from '../../utils/sanitize.util'
+-import assistantService from '../assistants'
+-import chatMessagesService from '../chat-messages'
+-import chatflowService from '../chatflows'
+ import documenStoreService from '../documentstore'
+ import executionService, { ExecutionFilters } from '../executions'
+ import marketplacesService from '../marketplaces'
+ import toolsService from '../tools'
+ import variableService from '../variables'
++import { ChatMessageRatingType, ChatType, Platform } from '../../Interface'
++import { sanitizeNullBytes } from '../../utils/sanitize.util'
+ 
+ type ExportInput = {
+     agentflow: boolean
+@@ -101,17 +102,17 @@ const exportData = async (exportInput: ExportInput, activeWorkspaceId: string):
+         AgentFlowV2 = 'data' in AgentFlowV2 ? AgentFlowV2.data : AgentFlowV2
+ 
+         let AssistantCustom: Assistant[] =
+-            exportInput.assistantCustom === true ? await assistantService.getAllAssistants(activeWorkspaceId, 'CUSTOM') : []
++            exportInput.assistantCustom === true ? await assistantsService.getAllAssistants(activeWorkspaceId, 'CUSTOM') : []
+ 
+         let AssistantFlow: ChatFlow[] | { data: ChatFlow[]; total: number } =
+             exportInput.assistantCustom === true ? await chatflowService.getAllChatflows('ASSISTANT', activeWorkspaceId) : []
+         AssistantFlow = 'data' in AssistantFlow ? AssistantFlow.data : AssistantFlow
+ 
+         let AssistantOpenAI: Assistant[] =
+-            exportInput.assistantOpenAI === true ? await assistantService.getAllAssistants(activeWorkspaceId, 'OPENAI') : []
++            exportInput.assistantOpenAI === true ? await assistantsService.getAllAssistants(activeWorkspaceId, 'OPENAI') : []
+ 
+         let AssistantAzure: Assistant[] =
+-            exportInput.assistantAzure === true ? await assistantService.getAllAssistants(activeWorkspaceId, 'AZURE') : []
++            exportInput.assistantAzure === true ? await assistantsService.getAllAssistants(activeWorkspaceId, 'AZURE') : []
+ 
+         let ChatFlow: ChatFlow[] | { data: ChatFlow[]; total: number } =
+             exportInput.chatflow === true ? await chatflowService.getAllChatflows('CHATFLOW', activeWorkspaceId) : []
+@@ -635,7 +636,7 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+     importData.Tool = importData.Tool || []
+     importData.Variable = importData.Variable || []
+ 
+-    let queryRunner
++    let queryRunner: QueryRunner
+     try {
+         queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+         await queryRunner.connect()
+@@ -644,7 +645,7 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+             if (importData.AgentFlow.length > 0) {
+                 importData.AgentFlow = reduceSpaceForChatflowFlowData(importData.AgentFlow)
+                 importData.AgentFlow = insertWorkspaceId(importData.AgentFlow, activeWorkspaceId)
+-                const existingChatflowCount = await chatflowsService.getAllChatflowsCountByOrganization('MULTIAGENT', orgId)
++                const existingChatflowCount = await chatflowService.getAllChatflowsCountByOrganization('MULTIAGENT', orgId)
+                 const newChatflowCount = importData.AgentFlow.length
+                 await checkUsageLimit(
+                     'flows',
+@@ -657,7 +658,7 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+             if (importData.AgentFlowV2.length > 0) {
+                 importData.AgentFlowV2 = reduceSpaceForChatflowFlowData(importData.AgentFlowV2)
+                 importData.AgentFlowV2 = insertWorkspaceId(importData.AgentFlowV2, activeWorkspaceId)
+-                const existingChatflowCount = await chatflowsService.getAllChatflowsCountByOrganization('AGENTFLOW', orgId)
++                const existingChatflowCount = await chatflowService.getAllChatflowsCountByOrganization('AGENTFLOW', orgId)
+                 const newChatflowCount = importData.AgentFlowV2.length
+                 await checkUsageLimit(
+                     'flows',
+@@ -682,7 +683,7 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+             if (importData.AssistantFlow.length > 0) {
+                 importData.AssistantFlow = reduceSpaceForChatflowFlowData(importData.AssistantFlow)
+                 importData.AssistantFlow = insertWorkspaceId(importData.AssistantFlow, activeWorkspaceId)
+-                const existingChatflowCount = await chatflowsService.getAllChatflowsCountByOrganization('ASSISTANT', orgId)
++                const existingChatflowCount = await chatflowService.getAllChatflowsCountByOrganization('ASSISTANT', orgId)
+                 const newChatflowCount = importData.AssistantFlow.length
+                 await checkUsageLimit(
+                     'flows',
+@@ -719,7 +720,7 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+             if (importData.ChatFlow.length > 0) {
+                 importData.ChatFlow = reduceSpaceForChatflowFlowData(importData.ChatFlow)
+                 importData.ChatFlow = insertWorkspaceId(importData.ChatFlow, activeWorkspaceId)
+-                const existingChatflowCount = await chatflowsService.getAllChatflowsCountByOrganization('CHATFLOW', orgId)
++                const existingChatflowCount = await chatflowService.getAllChatflowsCountByOrganization('CHATFLOW', orgId)
+                 const newChatflowCount = importData.ChatFlow.length
+                 await checkUsageLimit(
+                     'flows',
+@@ -800,8 +801,160 @@ const importData = async (importData: ExportData, orgId: string, activeWorkspace
+     }
+ }
+ 
++// Export chatflow messages
++const exportChatflowMessages = async (
++    chatflowId: string,
++    chatType?: ChatType[] | string,
++    feedbackType?: ChatMessageRatingType[] | string,
++    startDate?: string,
++    endDate?: string,
++    workspaceId?: string
++) => {
++    try {
++        // Parse chatType if it's a string
++        let parsedChatTypes: ChatType[] | undefined
++        if (chatType) {
++            if (typeof chatType === 'string') {
++                const parsed = parseJsonBody(chatType)
++                parsedChatTypes = Array.isArray(parsed) ? parsed : [chatType as ChatType]
++            } else if (Array.isArray(chatType)) {
++                parsedChatTypes = chatType
++            }
++        }
++
++        // Parse feedbackType if it's a string
++        let parsedFeedbackTypes: ChatMessageRatingType[] | undefined
++        if (feedbackType) {
++            if (typeof feedbackType === 'string') {
++                const parsed = parseJsonBody(feedbackType)
++                parsedFeedbackTypes = Array.isArray(parsed) ? parsed : [feedbackType as ChatMessageRatingType]
++            } else if (Array.isArray(feedbackType)) {
++                parsedFeedbackTypes = feedbackType
++            }
++        }
++
++        // Get all chat messages for the chatflow with feedback
++        const chatMessages = await utilGetChatMessage({
++            chatflowid: chatflowId,
++            chatTypes: parsedChatTypes,
++            feedbackTypes: parsedFeedbackTypes,
++            startDate,
++            endDate,
++            sortOrder: 'DESC',
++            feedback: true,
++            activeWorkspaceId: workspaceId
++        })
++
++        const storagePath = getStoragePath()
++        const exportObj: { [key: string]: any } = {}
++
++        // Process each chat message
++        for (const chatmsg of chatMessages) {
++            const chatPK = getChatPK(chatmsg)
++            const filePaths: string[] = []
++
++            // Handle file uploads
++            if (chatmsg.fileUploads) {
++                const uploads = parseJsonBody(chatmsg.fileUploads)
++                if (Array.isArray(uploads)) {
++                    uploads.forEach((file: any) => {
++                        if (file.type === 'stored-file') {
++                            filePaths.push(path.join(storagePath, chatmsg.chatflowid, chatmsg.chatId, file.name))
++                        }
++                    })
++                }
++            }
++
++            // Create message object
++            const msg: any = {
++                content: chatmsg.content,
++                role: chatmsg.role === 'apiMessage' ? 'bot' : 'user',
++                time: chatmsg.createdDate
++            }
++
++            // Add optional properties
++            if (filePaths.length) msg.filePaths = filePaths
++            if (chatmsg.sourceDocuments) msg.sourceDocuments = parseJsonBody(chatmsg.sourceDocuments)
++            if (chatmsg.usedTools) msg.usedTools = parseJsonBody(chatmsg.usedTools)
++            if (chatmsg.fileAnnotations) msg.fileAnnotations = parseJsonBody(chatmsg.fileAnnotations)
++            if ((chatmsg as any).feedback) msg.feedback = (chatmsg as any).feedback.content
++            if (chatmsg.agentReasoning) msg.agentReasoning = parseJsonBody(chatmsg.agentReasoning)
++
++            // Handle artifacts
++            if (chatmsg.artifacts) {
++                const artifacts = parseJsonBody(chatmsg.artifacts)
++                msg.artifacts = artifacts
++                if (Array.isArray(artifacts)) {
++                    artifacts.forEach((artifact: any) => {
++                        if (artifact.type === 'png' || artifact.type === 'jpeg') {
++                            const baseURL = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`
++                            artifact.data = `${baseURL}/api/v1/get-upload-file?chatflowId=${chatmsg.chatflowid}&chatId=${
++                                chatmsg.chatId
++                            }&fileName=${artifact.data.replace('FILE-STORAGE::', '')}`
++                        }
++                    })
++                }
++            }
++
++            // Group messages by chat session
++            if (!exportObj[chatPK]) {
++                exportObj[chatPK] = {
++                    id: chatmsg.chatId,
++                    source: getChatType(chatmsg.chatType as ChatType),
++                    sessionId: chatmsg.sessionId ?? null,
++                    memoryType: chatmsg.memoryType ?? null,
++                    email: (chatmsg as any).leadEmail ?? null,
++                    messages: [msg]
++                }
++            } else {
++                exportObj[chatPK].messages.push(msg)
++            }
++        }
++
++        // Convert to array and reverse message order within each conversation
++        const exportMessages = Object.values(exportObj).map((conversation: any) => ({
++            ...conversation,
++            messages: conversation.messages.reverse()
++        }))
++
++        return exportMessages
++    } catch (error) {
++        throw new InternalFlowiseError(
++            StatusCodes.INTERNAL_SERVER_ERROR,
++            `Error: exportImportService.exportChatflowMessages - ${getErrorMessage(error)}`
++        )
++    }
++}
++
++// Helper function to get chat primary key
++const getChatPK = (chatmsg: ChatMessage): string => {
++    const chatId = chatmsg.chatId
++    const memoryType = chatmsg.memoryType
++    const sessionId = chatmsg.sessionId
++
++    if (memoryType && sessionId) {
++        return `${chatId}_${memoryType}_${sessionId}`
++    }
++    return chatId
++}
++
++// Helper function to get chat type display name
++const getChatType = (chatType?: ChatType): string => {
++    if (!chatType) return 'Unknown'
++
++    switch (chatType) {
++        case ChatType.EVALUATION:
++            return 'Evaluation'
++        case ChatType.INTERNAL:
++            return 'UI'
++        case ChatType.EXTERNAL:
++            return 'API/Embed'
++    }
++}
++
+ export default {
+     convertExportInput,
+     exportData,
+-    importData
++    importData,
++    exportChatflowMessages
+ }
+diff --git a/packages/server/src/utils/constants.ts b/packages/server/src/utils/constants.ts
+index 0d9caf94940..7b94bcabe23 100644
+--- a/packages/server/src/utils/constants.ts
++++ b/packages/server/src/utils/constants.ts
+@@ -23,7 +23,6 @@ export const WHITELIST_URLS = [
+     '/api/v1/ping',
+     '/api/v1/version',
+     '/api/v1/attachments',
+-    '/api/v1/metrics',
+     '/api/v1/nvidia-nim',
+     '/api/v1/auth/resolve',
+     '/api/v1/auth/login',
+diff --git a/packages/server/src/utils/logger.ts b/packages/server/src/utils/logger.ts
+index a4b060a7d0a..71e8e309c5a 100644
+--- a/packages/server/src/utils/logger.ts
++++ b/packages/server/src/utils/logger.ts
+@@ -1,6 +1,5 @@
+ import * as path from 'path'
+ import * as fs from 'fs'
+-import { hostname } from 'node:os'
+ import config from './config' // should be replaced by node-config or similar
+ import { createLogger, transports, format } from 'winston'
+ import { NextFunction, Request, Response } from 'express'
+@@ -54,21 +53,21 @@ if (process.env.STORAGE_TYPE === 's3') {
+     s3ServerStream = new S3StreamLogger({
+         bucket: s3Bucket,
+         folder: 'logs/server',
+-        name_format: `server-%Y-%m-%d-%H-%M-%S-%L-${hostname()}.log`,
++        name_format: `server-%Y-%m-%d-%H-%M-%S-%L.log`,
+         config: s3Config
+     })
+ 
+     s3ErrorStream = new S3StreamLogger({
+         bucket: s3Bucket,
+         folder: 'logs/error',
+-        name_format: `server-error-%Y-%m-%d-%H-%M-%S-%L-${hostname()}.log`,
++        name_format: `server-error-%Y-%m-%d-%H-%M-%S-%L.log`,
+         config: s3Config
+     })
+ 
+     s3ServerReqStream = new S3StreamLogger({
+         bucket: s3Bucket,
+         folder: 'logs/requests',
+-        name_format: `server-requests-%Y-%m-%d-%H-%M-%S-%L-${hostname()}.log.jsonl`,
++        name_format: `server-requests-%Y-%m-%d-%H-%M-%S-%L.log.jsonl`,
+         config: s3Config
+     })
+ }
+diff --git a/packages/server/src/utils/rateLimit.ts b/packages/server/src/utils/rateLimit.ts
+index d4dd168a654..16ba7718096 100644
+--- a/packages/server/src/utils/rateLimit.ts
++++ b/packages/server/src/utils/rateLimit.ts
+@@ -134,6 +134,14 @@ export class RateLimiterManager {
+         }
+     }
+ 
++    public getRateLimiterById(id: string): (req: Request, res: Response, next: NextFunction) => void {
++        return (req: Request, res: Response, next: NextFunction) => {
++            if (!this.rateLimiters[id]) return next()
++            const idRateLimiter = this.rateLimiters[id]
++            return idRateLimiter(req, res, next)
++        }
++    }
++
+     public async updateRateLimiter(chatFlow: IChatFlow, isInitialized?: boolean): Promise<void> {
+         if (!chatFlow.apiConfig) return
+         const apiConfig = JSON.parse(chatFlow.apiConfig)
+diff --git a/packages/ui/src/api/chatmessage.js b/packages/ui/src/api/chatmessage.js
+index aa8edfc88b8..02ffe915133 100644
+--- a/packages/ui/src/api/chatmessage.js
++++ b/packages/ui/src/api/chatmessage.js
+@@ -6,7 +6,6 @@ const getAllChatmessageFromChatflow = (id, params = {}) =>
+     client.get(`/chatmessage/${id}`, { params: { order: 'DESC', feedback: true, ...params } })
+ const getChatmessageFromPK = (id, params = {}) => client.get(`/chatmessage/${id}`, { params: { order: 'ASC', feedback: true, ...params } })
+ const deleteChatmessage = (id, params = {}) => client.delete(`/chatmessage/${id}`, { params: { ...params } })
+-const getStoragePath = () => client.get(`/get-upload-path`)
+ const abortMessage = (chatflowid, chatid) => client.put(`/chatmessage/abort/${chatflowid}/${chatid}`)
+ 
+ export default {
+@@ -14,6 +13,5 @@ export default {
+     getAllChatmessageFromChatflow,
+     getChatmessageFromPK,
+     deleteChatmessage,
+-    getStoragePath,
+     abortMessage
+ }
+diff --git a/packages/ui/src/api/exportimport.js b/packages/ui/src/api/exportimport.js
+index 7cab1a13997..0f360757715 100644
+--- a/packages/ui/src/api/exportimport.js
++++ b/packages/ui/src/api/exportimport.js
+@@ -2,8 +2,10 @@ import client from './client'
+ 
+ const exportData = (body) => client.post('/export-import/export', body)
+ const importData = (body) => client.post('/export-import/import', body)
++const exportChatflowMessages = (body) => client.post('/export-import/chatflow-messages', body)
+ 
+ export default {
+     exportData,
+-    importData
++    importData,
++    exportChatflowMessages
+ }
+diff --git a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+index 40ed8c14f3c..03697b2fcb1 100644
+--- a/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/ViewMessagesDialog.jsx
+@@ -57,11 +57,12 @@ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+ // API
+ import chatmessageApi from '@/api/chatmessage'
+ import feedbackApi from '@/api/feedback'
++import exportImportApi from '@/api/exportimport'
+ import useApi from '@/hooks/useApi'
+ import useConfirm from '@/hooks/useConfirm'
+ 
+ // Utils
+-import { getOS, isValidURL, removeDuplicateURL } from '@/utils/genericHelper'
++import { isValidURL, removeDuplicateURL } from '@/utils/genericHelper'
+ import useNotifier from '@/utils/useNotifier'
+ import { baseURL } from '@/store/constant'
+ 
+@@ -204,8 +205,6 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
+     const getChatmessageApi = useApi(chatmessageApi.getAllChatmessageFromChatflow)
+     const getChatmessageFromPKApi = useApi(chatmessageApi.getChatmessageFromPK)
+     const getStatsApi = useApi(feedbackApi.getStatsFromChatflow)
+-    const getStoragePathFromServer = useApi(chatmessageApi.getStoragePath)
+-    let storagePath = ''
+ 
+     /* Table Pagination */
+     const [currentPage, setCurrentPage] = useState(1)
+@@ -352,94 +351,55 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
+     }
+ 
+     const exportMessages = async () => {
+-        if (!storagePath && getStoragePathFromServer.data) {
+-            storagePath = getStoragePathFromServer.data.storagePath
+-        }
+-        const obj = {}
+-        let fileSeparator = '/'
+-        if ('windows' === getOS()) {
+-            fileSeparator = '\\'
+-        }
+-
+-        const resp = await chatmessageApi.getAllChatmessageFromChatflow(dialogProps.chatflow.id, {
+-            chatType: chatTypeFilter.length ? chatTypeFilter : undefined,
+-            feedbackType: feedbackTypeFilter.length ? feedbackTypeFilter : undefined,
+-            startDate: startDate,
+-            endDate: endDate,
+-            order: 'DESC'
+-        })
+-
+-        const allChatlogs = resp.data ?? []
+-        for (let i = 0; i < allChatlogs.length; i += 1) {
+-            const chatmsg = allChatlogs[i]
+-            const chatPK = getChatPK(chatmsg)
+-            let filePaths = []
+-            if (chatmsg.fileUploads && Array.isArray(chatmsg.fileUploads)) {
+-                chatmsg.fileUploads.forEach((file) => {
+-                    if (file.type === 'stored-file') {
+-                        filePaths.push(
+-                            `${storagePath}${fileSeparator}${chatmsg.chatflowid}${fileSeparator}${chatmsg.chatId}${fileSeparator}${file.name}`
+-                        )
+-                    }
+-                })
+-            }
+-            const msg = {
+-                content: chatmsg.content,
+-                role: chatmsg.role === 'apiMessage' ? 'bot' : 'user',
+-                time: chatmsg.createdDate
+-            }
+-            if (filePaths.length) msg.filePaths = filePaths
+-            if (chatmsg.sourceDocuments) msg.sourceDocuments = chatmsg.sourceDocuments
+-            if (chatmsg.usedTools) msg.usedTools = chatmsg.usedTools
+-            if (chatmsg.fileAnnotations) msg.fileAnnotations = chatmsg.fileAnnotations
+-            if (chatmsg.feedback) msg.feedback = chatmsg.feedback?.content
+-            if (chatmsg.agentReasoning) msg.agentReasoning = chatmsg.agentReasoning
+-            if (chatmsg.artifacts) {
+-                msg.artifacts = chatmsg.artifacts
+-                msg.artifacts.forEach((artifact) => {
+-                    if (artifact.type === 'png' || artifact.type === 'jpeg') {
+-                        artifact.data = `${baseURL}/api/v1/get-upload-file?chatflowId=${chatmsg.chatflowid}&chatId=${
+-                            chatmsg.chatId
+-                        }&fileName=${artifact.data.replace('FILE-STORAGE::', '')}`
+-                    }
+-                })
+-            }
+-            if (!Object.prototype.hasOwnProperty.call(obj, chatPK)) {
+-                obj[chatPK] = {
+-                    id: chatmsg.chatId,
+-                    source: getChatType(chatmsg.chatType),
+-                    sessionId: chatmsg.sessionId ?? null,
+-                    memoryType: chatmsg.memoryType ?? null,
+-                    email: chatmsg.leadEmail ?? null,
+-                    messages: [msg]
+-                }
+-            } else if (Object.prototype.hasOwnProperty.call(obj, chatPK)) {
+-                obj[chatPK].messages = [...obj[chatPK].messages, msg]
+-            }
+-        }
+-
+-        const exportMessages = []
+-        for (const key in obj) {
+-            exportMessages.push({
+-                ...obj[key]
++        try {
++            const response = await exportImportApi.exportChatflowMessages({
++                chatflowId: dialogProps.chatflow.id,
++                chatType: chatTypeFilter.length ? chatTypeFilter : undefined,
++                feedbackType: feedbackTypeFilter.length ? feedbackTypeFilter : undefined,
++                startDate: startDate,
++                endDate: endDate
+             })
+-        }
+ 
+-        for (let i = 0; i < exportMessages.length; i += 1) {
+-            exportMessages[i].messages = exportMessages[i].messages.reverse()
+-        }
++            const exportMessages = response.data
++            const dataStr = JSON.stringify(exportMessages, null, 2)
++            const blob = new Blob([dataStr], { type: 'application/json' })
++            const dataUri = URL.createObjectURL(blob)
+ 
+-        const dataStr = JSON.stringify(exportMessages, null, 2)
+-        //const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr)
+-        const blob = new Blob([dataStr], { type: 'application/json' })
+-        const dataUri = URL.createObjectURL(blob)
++            const exportFileDefaultName = `${dialogProps.chatflow.id}-Message.json`
+ 
+-        const exportFileDefaultName = `${dialogProps.chatflow.id}-Message.json`
++            let linkElement = document.createElement('a')
++            linkElement.setAttribute('href', dataUri)
++            linkElement.setAttribute('download', exportFileDefaultName)
++            linkElement.click()
+ 
+-        let linkElement = document.createElement('a')
+-        linkElement.setAttribute('href', dataUri)
+-        linkElement.setAttribute('download', exportFileDefaultName)
+-        linkElement.click()
++            enqueueSnackbar({
++                message: 'Messages exported successfully',
++                options: {
++                    key: new Date().getTime() + Math.random(),
++                    variant: 'success',
++                    action: (key) => (
++                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
++                            <IconX />
++                        </Button>
++                    )
++                }
++            })
++        } catch (error) {
++            console.error('Error exporting messages:', error)
++            enqueueSnackbar({
++                message: 'Failed to export messages',
++                options: {
++                    key: new Date().getTime() + Math.random(),
++                    variant: 'error',
++                    persist: true,
++                    action: (key) => (
++                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
++                            <IconX />
++                        </Button>
++                    )
++                }
++            })
++        }
+     }
+ 
+     const clearChat = async (chatmsg) => {
+@@ -755,8 +715,6 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
+ 
+     useEffect(() => {
+         if (getChatmessageApi.data) {
+-            getStoragePathFromServer.request()
+-
+             const chatPK = processChatLogs(getChatmessageApi.data)
+             setSelectedMessageIndex(0)
+             if (chatPK) {

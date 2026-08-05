@@ -1,0 +1,582 @@
+From cf51c49838e678e4f3bc792f2e1e9b51895c0470 Mon Sep 17 00:00:00 2001
+From: Jocelyn Lin <jocelyn.lin@workday.com>
+Date: Tue, 5 May 2026 18:51:41 -0700
+Subject: [PATCH 1/2] feat(observe,server): support filtering executions by
+ multiple agentflow IDs
+
+Server (packages/server):
+- GET /executions agentflowId query accepts any HTTP idiom: single,
+  comma-separated, repeated keys, or a mix; all flatten into a string[]
+- Service uses a single IN (:...agentflowIds) clause for both single and
+  multi cases; single-id callers preserved (wire format unchanged)
+
+SDK (@flowiseai/observe):
+- ExecutionsViewerProps and ExecutionFilters take agentflowIds: string[]
+- API client serializes to canonical comma-joined form for wire-format
+  stability regardless of axios paramsSerializer
+
+Example app:
+- VITE_FLOW_IDS env var (one or comma-separated UUIDs)
+- Demo header surfaces multi-agentflow scope
+
+Tests:
+- New controllers/executions/index.test.ts covers all four wire shapes
+  plus whitespace and empty-input edge cases
+- API client tests for comma-joined serialization + empty-array omission
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ packages/observe/examples/.env.example        |  10 +-
+ packages/observe/examples/README.md           |   4 +-
+ packages/observe/examples/src/config.ts       |  13 ++-
+ .../src/demos/ExecutionsViewerExample.tsx     |  14 ++-
+ packages/observe/examples/src/vite-env.d.ts   |   2 +-
+ packages/observe/src/core/types/execution.ts  |   3 +-
+ packages/observe/src/core/types/observe.ts    |   7 +-
+ .../components/ExecutionsListTable.tsx        |   2 +-
+ .../components/ExecutionsViewer.tsx           |  15 +--
+ .../src/infrastructure/api/executions.test.ts |  16 ++-
+ .../src/infrastructure/api/executions.ts      |  12 ++-
+ .../src/controllers/executions/index.test.ts  | 102 ++++++++++++++++++
+ .../src/controllers/executions/index.ts       |  15 ++-
+ .../server/src/services/executions/index.ts   |   9 +-
+ 14 files changed, 189 insertions(+), 35 deletions(-)
+ create mode 100644 packages/server/src/controllers/executions/index.test.ts
+
+diff --git a/packages/observe/examples/.env.example b/packages/observe/examples/.env.example
+index 3d2a59bd8e6..be86ac3ca77 100644
+--- a/packages/observe/examples/.env.example
++++ b/packages/observe/examples/.env.example
+@@ -6,11 +6,11 @@ VITE_API_BASE_URL=http://localhost:3000
+ # Get this from: Flowise UI → Settings → API Keys → Create New Key
+ VITE_API_TOKEN=
+ 
+-# Agentflow ID (UUID) — scope the executions list to a single agentflow (optional)
+-# When set: shows executions for that flow only (canvas-embedded use case)
+-# When unset: shows all executions across every agentflow (global view)
+-# Get this from: Flowise UI → your agentflow → the UUID in the URL or agentflow settings
+-VITE_FLOW_ID=
++# Agentflow IDs (UUIDs) — scope the executions list to one or more agentflows (optional)
++# Accepts a single UUID or a comma-separated list. When unset, shows all executions
++# across every agentflow (global view).
++# Get IDs from: Flowise UI → your agentflow → the UUID in the URL or agentflow settings
++VITE_FLOW_IDS=
+ 
+ # Execution ID (UUID) — used for the standalone ExecutionDetail example
+ # Get this from: any execution row in the Flowise executions view
+diff --git a/packages/observe/examples/README.md b/packages/observe/examples/README.md
+index 0192db7727f..b9035e7af38 100644
+--- a/packages/observe/examples/README.md
++++ b/packages/observe/examples/README.md
+@@ -15,7 +15,7 @@ cp .env.example .env
+ | --- | --- |
+ | `VITE_API_BASE_URL` | Base URL of your Flowise instance (default: `http://localhost:3000`) |
+ | `VITE_API_TOKEN` | API key for authentication — get this from **Flowise UI → Settings → API Keys → Create New Key**. This is an API key, not a user session token. Ensure the key has the necessary permissions for any features you want to exercise (e.g. deleting executions). |
+-| `VITE_FLOW_ID` | _(optional)_ UUID of an agentflow — scopes the Executions Viewer to that flow only. When unset, all executions across every agentflow are shown. Get it from the URL or settings of your agentflow in Flowise UI. |
++| `VITE_FLOW_IDS` | _(optional)_ One agentflow UUID, or a comma-separated list of UUIDs, to scope the Executions Viewer. When unset, all executions across every agentflow are shown. Get IDs from the URL or settings of your agentflow in Flowise UI. |
+ | `VITE_EXECUTION_ID` | UUID of a specific execution — used by the Standalone Detail demo. Get it from any execution row in the executions view. |
+ | `VITE_AGENTFLOW_CANVAS_URL` | _(optional)_ Base URL of the agentflow canvas — when set, the demos wire `onAgentflowClick` to open `${VITE_AGENTFLOW_CANVAS_URL}/<agentflowId>` in a new tab. When unset, the agentflow chip in the SDK header renders non-clickable. Example: `http://localhost:3000/v2/agentcanvas`. |
+ 
+@@ -41,7 +41,7 @@ The app opens at `http://localhost:5174` (or the next available port).
+ 
+ Route: `/` (default tab)
+ 
+-Renders `<ExecutionsViewer />` with optional scoping via `VITE_FLOW_ID`. When `VITE_FLOW_ID` is set, the viewer is scoped to that agentflow; when unset, all executions across every agentflow are shown.
++Renders `<ExecutionsViewer />` with optional scoping via `VITE_FLOW_IDS`. When set, the viewer is scoped to one or more agentflows (comma-separated UUIDs); when unset, all executions across every agentflow are shown.
+ 
+ Features exercised:
+ 
+diff --git a/packages/observe/examples/src/config.ts b/packages/observe/examples/src/config.ts
+index ddb55a3ea30..4ac4fa3c3d8 100644
+--- a/packages/observe/examples/src/config.ts
++++ b/packages/observe/examples/src/config.ts
+@@ -1,6 +1,17 @@
+ export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+ export const token = import.meta.env.VITE_API_TOKEN || undefined
+-export const flowId = import.meta.env.VITE_FLOW_ID || undefined
++// Accepts a single UUID or a comma-separated list. Always normalizes to a
++// string[] (or undefined when unset/empty) so the demo can pass it straight to
++// `agentflowIds`.
++export const flowIds: string[] | undefined = (() => {
++    const raw = import.meta.env.VITE_FLOW_IDS as string | undefined
++    if (!raw) return undefined
++    const ids = raw
++        .split(',')
++        .map((s) => s.trim())
++        .filter(Boolean)
++    return ids.length > 0 ? ids : undefined
++})()
+ export const executionId = import.meta.env.VITE_EXECUTION_ID || undefined
+ 
+ // Base URL of the agentflow canvas (optional). Independent of `apiBaseUrl`
+diff --git a/packages/observe/examples/src/demos/ExecutionsViewerExample.tsx b/packages/observe/examples/src/demos/ExecutionsViewerExample.tsx
+index 2e62d3b19d6..a93acb7b53f 100644
+--- a/packages/observe/examples/src/demos/ExecutionsViewerExample.tsx
++++ b/packages/observe/examples/src/demos/ExecutionsViewerExample.tsx
+@@ -1,7 +1,7 @@
+ import { ExecutionsViewer, HumanInputParams } from '@flowiseai/observe'
+ import { Box, Typography } from '@mui/material'
+ 
+-import { agentflowCanvasUrl, flowId } from '../config'
++import { agentflowCanvasUrl, flowIds } from '../config'
+ 
+ // Build the navigation handler only when a canvas URL is configured. When
+ // unset, `onAgentflowClick` stays undefined and the SDK renders the chip
+@@ -14,19 +14,23 @@ export default function ExecutionsViewerExample() {
+     return (
+         <Box>
+             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+-                {flowId ? (
++                {flowIds && flowIds.length > 1 ? (
+                     <>
+-                        Scoped to agentflow: <code>{flowId}</code>
++                        Scoped to {flowIds.length} agentflows: <code>{flowIds.join(', ')}</code>
++                    </>
++                ) : flowIds && flowIds.length === 1 ? (
++                    <>
++                        Scoped to agentflow: <code>{flowIds[0]}</code>
+                     </>
+                 ) : (
+                     <>
+-                        Showing all executions — set <code>VITE_FLOW_ID</code> to scope to a single agentflow
++                        Showing all executions — set <code>VITE_FLOW_IDS</code> (one UUID, or comma-separated UUIDs) to scope
+                     </>
+                 )}
+             </Typography>
+             <Box sx={{ height: 600, border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+                 <ExecutionsViewer
+-                    agentflowId={flowId}
++                    agentflowIds={flowIds}
+                     allowDelete={true}
+                     pollInterval={3000}
+                     onHumanInput={async (agentflowId: string, params: HumanInputParams) => {
+diff --git a/packages/observe/examples/src/vite-env.d.ts b/packages/observe/examples/src/vite-env.d.ts
+index 91043b3407f..fe211a5cc20 100644
+--- a/packages/observe/examples/src/vite-env.d.ts
++++ b/packages/observe/examples/src/vite-env.d.ts
+@@ -3,7 +3,7 @@
+ interface ImportMetaEnv {
+     readonly VITE_API_BASE_URL: string
+     readonly VITE_API_TOKEN: string
+-    readonly VITE_FLOW_ID: string
++    readonly VITE_FLOW_IDS: string
+     readonly VITE_EXECUTION_ID: string
+ }
+ 
+diff --git a/packages/observe/src/core/types/execution.ts b/packages/observe/src/core/types/execution.ts
+index 74c40e88b5e..6586458a0ce 100644
+--- a/packages/observe/src/core/types/execution.ts
++++ b/packages/observe/src/core/types/execution.ts
+@@ -106,7 +106,8 @@ export interface ExecutionFilters {
+     state?: ExecutionState | ''
+     startDate?: Date | null
+     endDate?: Date | null
+-    agentflowId?: string
++    /** One or more agentflow IDs to filter by. Empty array is treated as no filter. */
++    agentflowIds?: string[]
+     agentflowName?: string
+     sessionId?: string
+ }
+diff --git a/packages/observe/src/core/types/observe.ts b/packages/observe/src/core/types/observe.ts
+index 76140af5baa..6b2610f3fc9 100644
+--- a/packages/observe/src/core/types/observe.ts
++++ b/packages/observe/src/core/types/observe.ts
+@@ -41,10 +41,11 @@ export interface ObserveBaseProps {
+ 
+ export interface ExecutionsViewerProps {
+     /**
+-     * When provided, scopes the list to a single agentflow (M1 / DevSite use case).
+-     * When omitted, shows the full cross-agent list (M2 / OSS use case).
++     * When provided, scopes the list to one or more agentflows. Pass `[id]` for
++     * a single-agent view, or `[id1, id2, ...]` to filter across multiple agents.
++     * When omitted (or an empty array), shows the full cross-agent list.
+      */
+-    agentflowId?: string
++    agentflowIds?: string[]
+     /**
+      * Whether to show a delete icon on each row (default: false).
+      * The SDK handles the DELETE API call internally.
+diff --git a/packages/observe/src/features/executions/components/ExecutionsListTable.tsx b/packages/observe/src/features/executions/components/ExecutionsListTable.tsx
+index cf077ee3176..24bbc1e48be 100644
+--- a/packages/observe/src/features/executions/components/ExecutionsListTable.tsx
++++ b/packages/observe/src/features/executions/components/ExecutionsListTable.tsx
+@@ -89,7 +89,7 @@ export function ExecutionsListTable({
+                             <Typography variant='body2'>{formatDate(execution.updatedDate)}</Typography>
+                         </TableCell>
+                         <TableCell>
+-                            <Typography variant='body2'>{execution.agentflow?.name ?? '—'}</Typography>
++                            <Typography variant='body2'>{execution.agentflow?.name || '—'}</Typography>
+                         </TableCell>
+                         <TableCell>
+                             <Tooltip title={execution.sessionId}>
+diff --git a/packages/observe/src/features/executions/components/ExecutionsViewer.tsx b/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
+index 1f46b8068ba..0497b07aaf1 100644
+--- a/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
++++ b/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
+@@ -38,11 +38,11 @@ const EXECUTION_STATES: Array<ExecutionState | ''> = ['', 'INPROGRESS', 'FINISHE
+ 
+ /**
+  * Top-level executions list + detail drawer.
+- * When agentflowId is provided: scoped view (filters list + hides agentflow-name filter).
+- * When agentflowId is omitted: full cross-agent list.
++ * When agentflowIds is non-empty: scoped view (filters list + hides agentflow-name filter).
++ * When omitted or empty: full cross-agent list.
+  */
+ export function ExecutionsViewer({
+-    agentflowId,
++    agentflowIds,
+     allowDelete = false,
+     pollInterval = 3000,
+     onHumanInput,
+@@ -95,8 +95,9 @@ export function ExecutionsViewer({
+             const result = await api.getAllExecutions({
+                 page: page + 1, // API is 1-based
+                 limit: pageSize,
+-                agentflowId: agentflowId ?? filters.agentflowId,
+-                ...filters
++                ...filters,
++                // Prop wins over filter state when set, so a scoped consumer can't be widened.
++                agentflowIds: agentflowIds && agentflowIds.length > 0 ? agentflowIds : filters.agentflowIds
+             })
+             setRows(result.data)
+             setTotal(result.total)
+@@ -105,7 +106,7 @@ export function ExecutionsViewer({
+         } finally {
+             setIsLoading(false)
+         }
+-    }, [api, page, pageSize, agentflowId, filters])
++    }, [api, page, pageSize, agentflowIds, filters])
+ 
+     useEffect(() => {
+         fetchExecutions()
+@@ -149,7 +150,7 @@ export function ExecutionsViewer({
+         }
+     }
+ 
+-    const isScoped = !!agentflowId
++    const isScoped = !!agentflowIds?.length
+ 
+     return (
+         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+diff --git a/packages/observe/src/infrastructure/api/executions.test.ts b/packages/observe/src/infrastructure/api/executions.test.ts
+index 2d16b6b937a..6b55474336b 100644
+--- a/packages/observe/src/infrastructure/api/executions.test.ts
++++ b/packages/observe/src/infrastructure/api/executions.test.ts
+@@ -33,7 +33,7 @@ describe('createExecutionsApi', () => {
+                 page: 2,
+                 limit: 25,
+                 state: 'FINISHED',
+-                agentflowId: 'af-123',
++                agentflowIds: ['af-123'],
+                 agentflowName: 'My Flow',
+                 sessionId: 'sess-abc'
+             })
+@@ -47,6 +47,20 @@ describe('createExecutionsApi', () => {
+             })
+         })
+ 
++        it('joins agentflowIds into a comma-separated agentflowId query value', async () => {
++            mockGet.mockResolvedValueOnce({ data: { data: [], total: 0 } })
++            await api.getAllExecutions({ page: 1, limit: 10, agentflowIds: ['af-1', 'af-2'] })
++            const { params } = mockGet.mock.calls[0][1]
++            expect(params.agentflowId).toBe('af-1,af-2')
++        })
++
++        it('omits the query param when agentflowIds is empty', async () => {
++            mockGet.mockResolvedValueOnce({ data: { data: [], total: 0 } })
++            await api.getAllExecutions({ page: 1, limit: 10, agentflowIds: [] })
++            const { params } = mockGet.mock.calls[0][1]
++            expect(params).not.toHaveProperty('agentflowId')
++        })
++
+         it('omits undefined optional params', async () => {
+             mockGet.mockResolvedValueOnce({ data: { data: [], total: 0 } })
+             await api.getAllExecutions({ page: 1, limit: 10 })
+diff --git a/packages/observe/src/infrastructure/api/executions.ts b/packages/observe/src/infrastructure/api/executions.ts
+index 7e7ec56b052..2178905c5d3 100644
+--- a/packages/observe/src/infrastructure/api/executions.ts
++++ b/packages/observe/src/infrastructure/api/executions.ts
+@@ -6,8 +6,8 @@ export function createExecutionsApi(client: AxiosInstance) {
+     return {
+         /**
+          * List executions with optional filters and pagination.
+-         * When agentflowId is provided this returns a scoped view (M1).
+-         * Without agentflowId it returns the full cross-agent list (M2).
++         * Pass `agentflowIds` to scope to one or more agentflows. Omit (or pass
++         * an empty array) for the full cross-agent list.
+          */
+         getAllExecutions: async (params: ExecutionListParams): Promise<ExecutionListResponse> => {
+             const query: Record<string, unknown> = {
+@@ -15,7 +15,13 @@ export function createExecutionsApi(client: AxiosInstance) {
+                 limit: params.limit
+             }
+             if (params.state) query.state = params.state
+-            if (params.agentflowId) query.agentflowId = params.agentflowId
++            if (params.agentflowIds && params.agentflowIds.length > 0) {
++                // Server expects a single `agentflowId` query value: one id, or
++                // multiple ids comma-joined (e.g. `agentflowId=a,b`). UUIDs can't
++                // contain commas, so the join is unambiguous.
++                const ids = params.agentflowIds.filter(Boolean)
++                if (ids.length > 0) query.agentflowId = ids.join(',')
++            }
+             if (params.agentflowName) query.agentflowName = params.agentflowName
+             if (params.sessionId) query.sessionId = params.sessionId
+             if (params.startDate) query.startDate = params.startDate.toISOString()
+diff --git a/packages/server/src/controllers/executions/index.test.ts b/packages/server/src/controllers/executions/index.test.ts
+new file mode 100644
+index 00000000000..be616be9df6
+--- /dev/null
++++ b/packages/server/src/controllers/executions/index.test.ts
+@@ -0,0 +1,102 @@
++import { Request, Response, NextFunction } from 'express'
++
++jest.mock('../../services/executions', () => ({
++    __esModule: true,
++    default: {
++        getAllExecutions: jest.fn(),
++        getExecutionById: jest.fn(),
++        getPublicExecutionById: jest.fn(),
++        updateExecution: jest.fn(),
++        deleteExecutions: jest.fn()
++    }
++}))
++
++import executionsController from './index'
++import executionsService from '../../services/executions'
++
++const mockService = executionsService as jest.Mocked<typeof executionsService>
++
++const makeReq = (query: Record<string, unknown> = {}, overrides: Partial<Request> = {}): Request =>
++    ({
++        params: {},
++        query,
++        user: { activeWorkspaceId: 'ws-1' },
++        ...overrides
++    } as unknown as Request)
++
++const makeRes = (): Response => ({ json: jest.fn(), status: jest.fn().mockReturnThis() } as unknown as Response)
++
++const makeNext = (): NextFunction => jest.fn()
++
++const callAndCaptureFilters = async (query: Record<string, unknown>): Promise<Record<string, any>> => {
++    mockService.getAllExecutions.mockResolvedValueOnce({ data: [], total: 0 })
++    await executionsController.getAllExecutions(makeReq(query), makeRes(), makeNext())
++    expect(mockService.getAllExecutions).toHaveBeenCalledTimes(1)
++    const filters = mockService.getAllExecutions.mock.calls[0][0]
++    if (!filters) throw new Error('expected service to receive a filters arg')
++    return filters as Record<string, any>
++}
++
++describe('executionsController.getAllExecutions — agentflowId query parsing', () => {
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    it('omits agentflowIds when the query param is absent', async () => {
++        const filters = await callAndCaptureFilters({})
++        expect(filters).not.toHaveProperty('agentflowIds')
++    })
++
++    it('omits agentflowIds when the value is an empty string', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: '' })
++        expect(filters).not.toHaveProperty('agentflowIds')
++    })
++
++    it('parses a single id into a one-element array', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: 'af-1' })
++        expect(filters.agentflowIds).toEqual(['af-1'])
++    })
++
++    it('parses comma-separated ids', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: 'af-1,af-2,af-3' })
++        expect(filters.agentflowIds).toEqual(['af-1', 'af-2', 'af-3'])
++    })
++
++    it('parses repeated query keys (Express qs parses as string[])', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: ['af-1', 'af-2'] })
++        expect(filters.agentflowIds).toEqual(['af-1', 'af-2'])
++    })
++
++    it('parses a mix of repeated keys and comma-separated values', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: ['af-1,af-2', 'af-3'] })
++        expect(filters.agentflowIds).toEqual(['af-1', 'af-2', 'af-3'])
++    })
++
++    it('trims whitespace and drops empty entries', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: ' af-1 , , af-2 ,' })
++        expect(filters.agentflowIds).toEqual(['af-1', 'af-2'])
++    })
++
++    it('omits agentflowIds when only commas/whitespace are provided', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: ' , , ' })
++        expect(filters).not.toHaveProperty('agentflowIds')
++    })
++
++    it('passes other filters through alongside agentflowIds', async () => {
++        const filters = await callAndCaptureFilters({
++            agentflowId: 'af-1,af-2',
++            state: 'FINISHED',
++            sessionId: 'sess-1',
++            page: '2',
++            limit: '25'
++        })
++        expect(filters).toMatchObject({
++            agentflowIds: ['af-1', 'af-2'],
++            state: 'FINISHED',
++            sessionId: 'sess-1',
++            page: 2,
++            limit: 25,
++            workspaceId: 'ws-1'
++        })
++    })
++})
+diff --git a/packages/server/src/controllers/executions/index.ts b/packages/server/src/controllers/executions/index.ts
+index 074b0efa9a9..4cef9675e4b 100644
+--- a/packages/server/src/controllers/executions/index.ts
++++ b/packages/server/src/controllers/executions/index.ts
+@@ -45,8 +45,19 @@ const getAllExecutions = async (req: Request, res: Response, next: NextFunction)
+         // ID filter
+         if (req.query.id) filters.id = req.query.id as string
+ 
+-        // Flow and session filters
+-        if (req.query.agentflowId) filters.agentflowId = req.query.agentflowId as string
++        // Flow and session filters.
++        // Accepts any HTTP idiom: single `?agentflowId=<id>`, comma-separated
++        // `?agentflowId=a,b`, repeated keys `?agentflowId=a&agentflowId=b`, or a
++        // mix `?agentflowId=a,b&agentflowId=c`. All flatten into a clean string[].
++        if (req.query.agentflowId !== undefined) {
++            const raw = req.query.agentflowId
++            const values = Array.isArray(raw) ? raw : [raw]
++            const ids = values
++                .flatMap((v) => String(v).split(','))
++                .map((v) => v.trim())
++                .filter(Boolean)
++            if (ids.length > 0) filters.agentflowIds = ids
++        }
+         if (req.query.agentflowName) filters.agentflowName = req.query.agentflowName as string
+         if (req.query.sessionId) filters.sessionId = req.query.sessionId as string
+ 
+diff --git a/packages/server/src/services/executions/index.ts b/packages/server/src/services/executions/index.ts
+index 062337aad02..a0ba0cf2327 100644
+--- a/packages/server/src/services/executions/index.ts
++++ b/packages/server/src/services/executions/index.ts
+@@ -10,7 +10,8 @@ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+ 
+ export interface ExecutionFilters {
+     id?: string
+-    agentflowId?: string
++    /** One or more agentflow IDs. Empty/undefined means no filter. */
++    agentflowIds?: string[]
+     agentflowName?: string
+     sessionId?: string
+     state?: ExecutionState
+@@ -66,7 +67,7 @@ const getPublicExecutionById = async (executionId: string): Promise<Execution |
+ const getAllExecutions = async (filters: ExecutionFilters = {}): Promise<{ data: Execution[]; total: number }> => {
+     try {
+         const appServer = getRunningExpressApp()
+-        const { id, agentflowId, agentflowName, sessionId, state, startDate, endDate, page = 1, limit = 12, workspaceId } = filters
++        const { id, agentflowIds, agentflowName, sessionId, state, startDate, endDate, page = 1, limit = 12, workspaceId } = filters
+ 
+         // Handle UUID fields properly using raw parameters to avoid type conversion issues
+         // This uses the query builder instead of direct objects for compatibility with UUID fields
+@@ -78,7 +79,9 @@ const getAllExecutions = async (filters: ExecutionFilters = {}): Promise<{ data:
+             .take(limit)
+ 
+         if (id) queryBuilder.andWhere('execution.id = :id', { id })
+-        if (agentflowId) queryBuilder.andWhere('execution.agentflowId = :agentflowId', { agentflowId })
++        if (agentflowIds && agentflowIds.length > 0) {
++            queryBuilder.andWhere('execution.agentflowId IN (:...agentflowIds)', { agentflowIds })
++        }
+         if (agentflowName)
+             queryBuilder.andWhere('LOWER(agentflow.name) LIKE LOWER(:agentflowName)', { agentflowName: `%${agentflowName}%` })
+         if (sessionId) queryBuilder.andWhere('execution.sessionId = :sessionId', { sessionId })
+
+From bd8e36cfec7e2a1a0ccfe363943d52928c6478ec Mon Sep 17 00:00:00 2001
+From: Jocelyn Lin <jocelyn.lin@workday.com>
+Date: Tue, 5 May 2026 20:12:35 -0700
+Subject: [PATCH 2/2] address gemini review comments
+
+---
+ .../executions/components/ExecutionsViewer.tsx         | 10 ++++++++--
+ .../server/src/controllers/executions/index.test.ts    | 10 ++++++++++
+ packages/server/src/controllers/executions/index.ts    |  6 ++++--
+ 3 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/packages/observe/src/features/executions/components/ExecutionsViewer.tsx b/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
+index 0497b07aaf1..0337ba194d4 100644
+--- a/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
++++ b/packages/observe/src/features/executions/components/ExecutionsViewer.tsx
+@@ -88,16 +88,22 @@ export function ExecutionsViewer({
+     // Delete confirmation
+     const [deleteTarget, setDeleteTarget] = useState<Execution | null>(null)
+ 
++    // Stable signature for the agentflowIds prop — guards against consumers passing a fresh
++    // array literal on every render (which would otherwise re-fire fetchExecutions endlessly).
++    // The callback re-derives the array from this key so it doesn't close over the prop reference.
++    const agentflowIdsKey = agentflowIds?.join(',') ?? ''
++
+     const fetchExecutions = useCallback(async () => {
+         setIsLoading(true)
+         setError(null)
+         try {
++            const propIds = agentflowIdsKey ? agentflowIdsKey.split(',') : []
+             const result = await api.getAllExecutions({
+                 page: page + 1, // API is 1-based
+                 limit: pageSize,
+                 ...filters,
+                 // Prop wins over filter state when set, so a scoped consumer can't be widened.
+-                agentflowIds: agentflowIds && agentflowIds.length > 0 ? agentflowIds : filters.agentflowIds
++                agentflowIds: propIds.length > 0 ? propIds : filters.agentflowIds
+             })
+             setRows(result.data)
+             setTotal(result.total)
+@@ -106,7 +112,7 @@ export function ExecutionsViewer({
+         } finally {
+             setIsLoading(false)
+         }
+-    }, [api, page, pageSize, agentflowIds, filters])
++    }, [api, page, pageSize, agentflowIdsKey, filters])
+ 
+     useEffect(() => {
+         fetchExecutions()
+diff --git a/packages/server/src/controllers/executions/index.test.ts b/packages/server/src/controllers/executions/index.test.ts
+index be616be9df6..4ccc699f664 100644
+--- a/packages/server/src/controllers/executions/index.test.ts
++++ b/packages/server/src/controllers/executions/index.test.ts
+@@ -82,6 +82,16 @@ describe('executionsController.getAllExecutions — agentflowId query parsing',
+         expect(filters).not.toHaveProperty('agentflowIds')
+     })
+ 
++    it('drops nested-object entries (qs `?agentflowId[x]=y` form) rather than coercing to "[object Object]"', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: { x: 'y' } })
++        expect(filters).not.toHaveProperty('agentflowIds')
++    })
++
++    it('keeps string entries from a mixed array and drops object entries', async () => {
++        const filters = await callAndCaptureFilters({ agentflowId: ['af-1', { x: 'y' }, 'af-2'] })
++        expect(filters.agentflowIds).toEqual(['af-1', 'af-2'])
++    })
++
+     it('passes other filters through alongside agentflowIds', async () => {
+         const filters = await callAndCaptureFilters({
+             agentflowId: 'af-1,af-2',
+diff --git a/packages/server/src/controllers/executions/index.ts b/packages/server/src/controllers/executions/index.ts
+index 4cef9675e4b..4224c43f5a6 100644
+--- a/packages/server/src/controllers/executions/index.ts
++++ b/packages/server/src/controllers/executions/index.ts
+@@ -49,11 +49,13 @@ const getAllExecutions = async (req: Request, res: Response, next: NextFunction)
+         // Accepts any HTTP idiom: single `?agentflowId=<id>`, comma-separated
+         // `?agentflowId=a,b`, repeated keys `?agentflowId=a&agentflowId=b`, or a
+         // mix `?agentflowId=a,b&agentflowId=c`. All flatten into a clean string[].
+-        if (req.query.agentflowId !== undefined) {
++        // Non-string entries (qs nested-object form like `?agentflowId[x]=y`) are
++        // dropped rather than coerced — `String({})` would yield "[object Object]".
++        if (req.query.agentflowId != null) {
+             const raw = req.query.agentflowId
+             const values = Array.isArray(raw) ? raw : [raw]
+             const ids = values
+-                .flatMap((v) => String(v).split(','))
++                .flatMap((v) => (typeof v === 'string' ? v.split(',') : []))
+                 .map((v) => v.trim())
+                 .filter(Boolean)
+             if (ids.length > 0) filters.agentflowIds = ids

@@ -1,0 +1,71 @@
+From d7e40cb15f92ecf31cd20bcdf47d3975952c5d5d Mon Sep 17 00:00:00 2001
+From: Limber Garcia <limber.garcia.vilchez@gmail.com>
+Date: Fri, 17 Apr 2026 16:14:38 +0200
+Subject: [PATCH 1/2] fix: preserve metadata in RetrieverTool when using Custom
+ Retriever
+
+---
+ .../nodes/retrievers/CustomRetriever/CustomRetriever.ts  | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts b/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
+index 3a459b51d36..50829e237f0 100644
+--- a/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
++++ b/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
+@@ -122,16 +122,22 @@ class CustomRetriever<V extends VectorStore> extends VectorStoreRetriever<V> {
+     constructor(input: RetrieverInput<V>) {
+         super(input)
+         this.topK = input.topK ?? this.topK
+-        this.resultFormat = input.resultFormat ?? this.resultFormat
++        this.resultFormat = input.resultFormat ?? defaultReturnFormat
+     }
+ 
+     async getRelevantDocuments(query: string): Promise<Document[]> {
++        return this._getRelevantDocuments(query)
++    }
++
++    async _getRelevantDocuments(query: string): Promise<Document[]> {
+         const results = await this.vectorStore.similaritySearchWithScore(query, this.topK, this.filter)
+ 
+         const finalDocs: Document[] = []
++
+         for (const result of results) {
+             let res = this.resultFormat.replace(/{{context}}/g, result[0].pageContent)
+             res = replaceMetadata(res, result[0].metadata)
++
+             finalDocs.push(
+                 new Document({
+                     pageContent: res,
+@@ -139,6 +145,7 @@ class CustomRetriever<V extends VectorStore> extends VectorStoreRetriever<V> {
+                 })
+             )
+         }
++
+         return finalDocs
+     }
+ 
+
+From 11b98c49b1bf733a71ccba29bba912251d5b5743 Mon Sep 17 00:00:00 2001
+From: Limber Garcia Vilchez <117399903+limbergarcia@users.noreply.github.com>
+Date: Fri, 17 Apr 2026 16:38:48 +0200
+Subject: [PATCH 2/2] Update
+ packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ .../nodes/retrievers/CustomRetriever/CustomRetriever.ts         | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts b/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
+index 50829e237f0..08454c93f96 100644
+--- a/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
++++ b/packages/components/nodes/retrievers/CustomRetriever/CustomRetriever.ts
+@@ -135,7 +135,7 @@ class CustomRetriever<V extends VectorStore> extends VectorStoreRetriever<V> {
+         const finalDocs: Document[] = []
+ 
+         for (const result of results) {
+-            let res = this.resultFormat.replace(/{{context}}/g, result[0].pageContent)
++            let res = this.resultFormat.replace(/{{context}}/g, () => result[0].pageContent)
+             res = replaceMetadata(res, result[0].metadata)
+ 
+             finalDocs.push(

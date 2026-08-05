@@ -1,0 +1,1457 @@
+From 19f4f007c5326baad2129944326fc3c88c152fa2 Mon Sep 17 00:00:00 2001
+From: Henry <hzj94@hotmail.com>
+Date: Sat, 7 Dec 2024 23:42:22 +0000
+Subject: [PATCH 1/3] prevent open connections on typeorm datasource
+
+---
+ .../MySQLAgentMemory/mysqlSaver.ts            |   7 ++
+ .../PostgresAgentMemory/pgSaver.ts            |   7 ++
+ .../MySQLRecordManager/MySQLrecordManager.ts  |  96 +++++++++++----
+ .../PostgresRecordManager.ts                  | 115 +++++++++++++-----
+ .../SQLiteRecordManager.ts                    |  96 ++++++++++-----
+ .../vectorstores/Postgres/driver/PGVector.ts  |   5 +
+ .../vectorstores/Postgres/driver/TypeORM.ts   |   5 +
+ 7 files changed, 249 insertions(+), 82 deletions(-)
+
+diff --git a/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts b/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
+index 525886ee21f..4214734f53c 100644
+--- a/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
++++ b/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
+@@ -21,6 +21,13 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+ 
+     private async getDataSource(): Promise<DataSource> {
+         const { datasourceOptions } = this.config
++        if (!datasourceOptions) {
++            throw new Error('No datasource options provided')
++        }
++        // Prevent using default Postgres port, otherwise will throw uncaught error and crashing the app
++        if (datasourceOptions.port === 5432) {
++            throw new Error('Invalid port number')
++        }
+         const dataSource = new DataSource(datasourceOptions)
+         await dataSource.initialize()
+         return dataSource
+diff --git a/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts b/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
+index 11f261a47e3..702c8cfad56 100644
+--- a/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
++++ b/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
+@@ -21,6 +21,13 @@ export class PostgresSaver extends BaseCheckpointSaver implements MemoryMethods
+ 
+     private async getDataSource(): Promise<DataSource> {
+         const { datasourceOptions } = this.config
++        if (!datasourceOptions) {
++            throw new Error('No datasource options provided')
++        }
++        // Prevent using default MySQL port, otherwise will throw uncaught error and crashing the app
++        if (datasourceOptions.port === 3006) {
++            throw new Error('Invalid port number')
++        }
+         const dataSource = new DataSource(datasourceOptions)
+         await dataSource.initialize()
+         return dataSource
+diff --git a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+index f246fcf4726..193c13ba82a 100644
+--- a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
++++ b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+@@ -1,7 +1,7 @@
+ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { ListKeyOptions, RecordManagerInterface, UpdateOptions } from '@langchain/community/indexes/base'
+-import { DataSource, QueryRunner } from 'typeorm'
++import { DataSource } from 'typeorm'
+ 
+ class MySQLRecordManager_RecordManager implements INode {
+     label: string
+@@ -167,29 +167,37 @@ type MySQLRecordManagerOptions = {
+ 
+ class MySQLRecordManager implements RecordManagerInterface {
+     lc_namespace = ['langchain', 'recordmanagers', 'mysql']
+-
+-    datasource: DataSource
+-
+-    queryRunner: QueryRunner
+-
++    config: MySQLRecordManagerOptions
+     tableName: string
+-
+     namespace: string
+ 
+     constructor(namespace: string, config: MySQLRecordManagerOptions) {
+-        const { mysqlOptions, tableName } = config
++        const { tableName } = config
+         this.namespace = namespace
+         this.tableName = tableName || 'upsertion_records'
+-        this.datasource = new DataSource(mysqlOptions)
++        this.config = config
++    }
++
++    private async getDataSource(): Promise<DataSource> {
++        const { mysqlOptions } = this.config
++        if (!mysqlOptions) {
++            throw new Error('No datasource options provided')
++        }
++        // Prevent using default Postgres port, otherwise will throw uncaught error and crashing the app
++        if (mysqlOptions.port === 5432) {
++            throw new Error('Invalid port number')
++        }
++        const dataSource = new DataSource(mysqlOptions)
++        await dataSource.initialize()
++        return dataSource
+     }
+ 
+     async createSchema(): Promise<void> {
+         try {
+-            const appDataSource = await this.datasource.initialize()
+-
+-            this.queryRunner = appDataSource.createQueryRunner()
++            const dataSource = await this.getDataSource()
++            const queryRunner = dataSource.createQueryRunner()
+ 
+-            await this.queryRunner.manager.query(`create table if not exists \`${this.tableName}\` (
++            await queryRunner.manager.query(`create table if not exists \`${this.tableName}\` (
+                 \`uuid\` varchar(36) primary key default (UUID()),
+                 \`key\` varchar(255) not null,
+                 \`namespace\` varchar(255) not null,
+@@ -197,17 +205,20 @@ class MySQLRecordManager implements RecordManagerInterface {
+                 \`group_id\` longtext,
+                 unique key \`unique_key_namespace\` (\`key\`,
+ \`namespace\`));`)
++
+             const columns = [`updated_at`, `key`, `namespace`, `group_id`]
+             for (const column of columns) {
+                 // MySQL does not support 'IF NOT EXISTS' function for Index
+-                const Check = await this.queryRunner.manager.query(
++                const Check = await queryRunner.manager.query(
+                     `SELECT COUNT(1) IndexIsThere FROM INFORMATION_SCHEMA.STATISTICS 
+                         WHERE table_schema=DATABASE() AND table_name='${this.tableName}' AND index_name='${column}_index';`
+                 )
+                 if (Check[0].IndexIsThere === 0)
+-                    await this.queryRunner.manager.query(`CREATE INDEX \`${column}_index\`
++                    await queryRunner.manager.query(`CREATE INDEX \`${column}_index\`
+         ON \`${this.tableName}\` (\`${column}\`);`)
+             }
++
++            await queryRunner.release()
+         } catch (e: any) {
+             // This error indicates that the table already exists
+             // Due to asynchronous nature of the code, it is possible that
+@@ -221,12 +232,17 @@ class MySQLRecordManager implements RecordManagerInterface {
+     }
+ 
+     async getTime(): Promise<number> {
++        const dataSource = await this.getDataSource()
+         try {
+-            const res = await this.queryRunner.manager.query(`SELECT UNIX_TIMESTAMP(NOW()) AS epoch`)
++            const queryRunner = dataSource.createQueryRunner()
++            const res = await queryRunner.manager.query(`SELECT UNIX_TIMESTAMP(NOW()) AS epoch`)
++            await queryRunner.release()
+             return Number.parseFloat(res[0].epoch)
+         } catch (error) {
+             console.error('Error getting time in MySQLRecordManager:')
+             throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -235,6 +251,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             return
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         const updatedAt = await this.getTime()
+         const { timeAtLeast, groupIds: _groupIds } = updateOptions ?? {}
+ 
+@@ -261,9 +280,18 @@ class MySQLRecordManager implements RecordManagerInterface {
+             ON DUPLICATE KEY UPDATE \`updated_at\` = VALUES(\`updated_at\`)`
+ 
+         // To handle multiple files upsert
+-        for (const record of recordsToUpsert) {
+-            // Consider using a transaction for batch operations
+-            await this.queryRunner.manager.query(query, record.flat())
++        try {
++            for (const record of recordsToUpsert) {
++                // Consider using a transaction for batch operations
++                await queryRunner.manager.query(query, record.flat())
++            }
++
++            await queryRunner.release()
++        } catch (error) {
++            console.error('Error updating in MySQLRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -272,6 +300,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             return []
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         // Prepare the placeholders and the query
+         const placeholders = keys.map(() => `?`).join(', ')
+         const query = `
+@@ -284,21 +315,27 @@ class MySQLRecordManager implements RecordManagerInterface {
+ 
+         try {
+             // Execute the query
+-            const rows = await this.queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
++            const rows = await queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
+             // Create a set of existing keys for faster lookup
+             const existingKeysSet = new Set(rows.map((row: { key: string }) => row.key))
+             // Map the input keys to booleans indicating if they exist
+             keys.forEach((key, index) => {
+                 existsArray[index] = existingKeysSet.has(key)
+             })
++            await queryRunner.release()
+             return existsArray
+         } catch (error) {
+             console.error('Error checking existence of keys')
+-            throw error // Allow the caller to handle the error
++            throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+     async listKeys(options?: ListKeyOptions): Promise<string[]> {
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         try {
+             const { before, after, limit, groupIds } = options ?? {}
+             let query = `SELECT \`key\` FROM \`${this.tableName}\` WHERE \`namespace\` = ?`
+@@ -330,11 +367,14 @@ class MySQLRecordManager implements RecordManagerInterface {
+             query += ';'
+ 
+             // Directly using try/catch with async/await for cleaner flow
+-            const result = await this.queryRunner.manager.query(query, values)
++            const result = await queryRunner.manager.query(query, values)
++            await queryRunner.release()
+             return result.map((row: { key: string }) => row.key)
+         } catch (error) {
+             console.error('MySQLRecordManager listKeys Error: ')
+-            throw error // Re-throw the error to be handled by the caller
++            throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -343,16 +383,22 @@ class MySQLRecordManager implements RecordManagerInterface {
+             return
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         const placeholders = keys.map(() => '?').join(', ')
+         const query = `DELETE FROM \`${this.tableName}\` WHERE \`namespace\` = ? AND \`key\` IN (${placeholders});`
+         const values = [this.namespace, ...keys].map((v) => (typeof v !== 'string' ? `${v}` : v))
+ 
+         // Directly using try/catch with async/await for cleaner flow
+         try {
+-            await this.queryRunner.manager.query(query, values)
++            await queryRunner.manager.query(query, values)
++            await queryRunner.release()
+         } catch (error) {
+             console.error('Error deleting keys')
+-            throw error // Re-throw the error to be handled by the caller
++            throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ }
+diff --git a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+index 59f640c6a30..94d154da2c0 100644
+--- a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
++++ b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+@@ -1,7 +1,7 @@
+ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { ListKeyOptions, RecordManagerInterface, UpdateOptions } from '@langchain/community/indexes/base'
+-import { DataSource, QueryRunner } from 'typeorm'
++import { DataSource } from 'typeorm'
+ import { getHost } from '../../vectorstores/Postgres/utils'
+ import { getDatabase, getPort, getTableName } from './utils'
+ 
+@@ -175,29 +175,37 @@ type PostgresRecordManagerOptions = {
+ 
+ class PostgresRecordManager implements RecordManagerInterface {
+     lc_namespace = ['langchain', 'recordmanagers', 'postgres']
+-
+-    datasource: DataSource
+-
+-    queryRunner: QueryRunner
+-
++    config: PostgresRecordManagerOptions
+     tableName: string
+-
+     namespace: string
+ 
+     constructor(namespace: string, config: PostgresRecordManagerOptions) {
+-        const { postgresConnectionOptions, tableName } = config
++        const { tableName } = config
+         this.namespace = namespace
+-        this.datasource = new DataSource(postgresConnectionOptions)
+         this.tableName = tableName
++        this.config = config
++    }
++
++    private async getDataSource(): Promise<DataSource> {
++        const { postgresConnectionOptions } = this.config
++        if (!postgresConnectionOptions) {
++            throw new Error('No datasource options provided')
++        }
++        // Prevent using default MySQL port, otherwise will throw uncaught error and crashing the app
++        if (postgresConnectionOptions.port === 3006) {
++            throw new Error('Invalid port number')
++        }
++        const dataSource = new DataSource(postgresConnectionOptions)
++        await dataSource.initialize()
++        return dataSource
+     }
+ 
+     async createSchema(): Promise<void> {
+         try {
+-            const appDataSource = await this.datasource.initialize()
+-
+-            this.queryRunner = appDataSource.createQueryRunner()
++            const dataSource = await this.getDataSource()
++            const queryRunner = dataSource.createQueryRunner()
+ 
+-            await this.queryRunner.manager.query(`
++            await queryRunner.manager.query(`
+   CREATE TABLE IF NOT EXISTS "${this.tableName}" (
+     uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     key TEXT NOT NULL,
+@@ -210,6 +218,8 @@ class PostgresRecordManager implements RecordManagerInterface {
+   CREATE INDEX IF NOT EXISTS key_index ON "${this.tableName}" (key);
+   CREATE INDEX IF NOT EXISTS namespace_index ON "${this.tableName}" (namespace);
+   CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
++
++            await queryRunner.release()
+         } catch (e: any) {
+             // This error indicates that the table already exists
+             // Due to asynchronous nature of the code, it is possible that
+@@ -223,8 +233,18 @@ class PostgresRecordManager implements RecordManagerInterface {
+     }
+ 
+     async getTime(): Promise<number> {
+-        const res = await this.queryRunner.manager.query('SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)')
+-        return Number.parseFloat(res[0].extract)
++        const dataSource = await this.getDataSource()
++        try {
++            const queryRunner = dataSource.createQueryRunner()
++            const res = await queryRunner.manager.query('SELECT EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)')
++            await queryRunner.release()
++            return Number.parseFloat(res[0].extract)
++        } catch (error) {
++            console.error('Error getting time in PostgresRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
++        }
+     }
+ 
+     /**
+@@ -247,6 +267,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             return
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         const updatedAt = await this.getTime()
+         const { timeAtLeast, groupIds: _groupIds } = updateOptions ?? {}
+ 
+@@ -265,7 +288,15 @@ class PostgresRecordManager implements RecordManagerInterface {
+         const valuesPlaceholders = recordsToUpsert.map((_, j) => this.generatePlaceholderForRowAt(j, recordsToUpsert[0].length)).join(', ')
+ 
+         const query = `INSERT INTO "${this.tableName}" (key, namespace, updated_at, group_id) VALUES ${valuesPlaceholders} ON CONFLICT (key, namespace) DO UPDATE SET updated_at = EXCLUDED.updated_at;`
+-        await this.queryRunner.manager.query(query, recordsToUpsert.flat())
++        try {
++            await queryRunner.manager.query(query, recordsToUpsert.flat())
++            await queryRunner.release()
++        } catch (error) {
++            console.error('Error updating in PostgresRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
++        }
+     }
+ 
+     async exists(keys: string[]): Promise<boolean[]> {
+@@ -273,14 +304,25 @@ class PostgresRecordManager implements RecordManagerInterface {
+             return []
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         const startIndex = 2
+         const arrayPlaceholders = keys.map((_, i) => `$${i + startIndex}`).join(', ')
+ 
+         const query = `
+         SELECT k, (key is not null) ex from unnest(ARRAY[${arrayPlaceholders}]) k left join "${this.tableName}" on k=key and namespace = $1;
+         `
+-        const res = await this.queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
+-        return res.map((row: { ex: boolean }) => row.ex)
++        try {
++            const res = await queryRunner.manager.query(query, [this.namespace, ...keys.flat()])
++            await queryRunner.release()
++            return res.map((row: { ex: boolean }) => row.ex)
++        } catch (error) {
++            console.error('Error checking existence of keys in PostgresRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
++        }
+     }
+ 
+     async listKeys(options?: ListKeyOptions): Promise<string[]> {
+@@ -314,8 +356,20 @@ class PostgresRecordManager implements RecordManagerInterface {
+         }
+ 
+         query += ';'
+-        const res = await this.queryRunner.manager.query(query, values)
+-        return res.map((row: { key: string }) => row.key)
++
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
++        try {
++            const res = await queryRunner.manager.query(query, values)
++            await queryRunner.release()
++            return res.map((row: { key: string }) => row.key)
++        } catch (error) {
++            console.error('Error listing keys in PostgresRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
++        }
+     }
+ 
+     async deleteKeys(keys: string[]): Promise<void> {
+@@ -323,16 +377,19 @@ class PostgresRecordManager implements RecordManagerInterface {
+             return
+         }
+ 
+-        const query = `DELETE FROM "${this.tableName}" WHERE namespace = $1 AND key = ANY($2);`
+-        await this.queryRunner.manager.query(query, [this.namespace, keys])
+-    }
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
+ 
+-    /**
+-     * Terminates the connection pool.
+-     * @returns {Promise<void>}
+-     */
+-    async end(): Promise<void> {
+-        if (this.datasource && this.datasource.isInitialized) await this.datasource.destroy()
++        try {
++            const query = `DELETE FROM "${this.tableName}" WHERE namespace = $1 AND key = ANY($2);`
++            await queryRunner.manager.query(query, [this.namespace, keys])
++            await queryRunner.release()
++        } catch (error) {
++            console.error('Error deleting keys')
++            throw error
++        } finally {
++            await dataSource.destroy()
++        }
+     }
+ }
+ 
+diff --git a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+index daf4b73501c..3246e250ef8 100644
+--- a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
++++ b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+@@ -1,7 +1,7 @@
+ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+-import { getBaseClasses } from '../../../src/utils'
++import { getBaseClasses, getUserHome } from '../../../src/utils'
+ import { ListKeyOptions, RecordManagerInterface, UpdateOptions } from '@langchain/community/indexes/base'
+-import { DataSource, QueryRunner } from 'typeorm'
++import { DataSource } from 'typeorm'
+ import path from 'path'
+ 
+ class SQLiteRecordManager_RecordManager implements INode {
+@@ -19,19 +19,19 @@ class SQLiteRecordManager_RecordManager implements INode {
+     constructor() {
+         this.label = 'SQLite Record Manager'
+         this.name = 'SQLiteRecordManager'
+-        this.version = 1.0
++        this.version = 1.1
+         this.type = 'SQLite RecordManager'
+         this.icon = 'sqlite.png'
+         this.category = 'Record Manager'
+         this.description = 'Use SQLite to keep track of document writes into the vector databases'
+         this.baseClasses = [this.type, 'RecordManager', ...getBaseClasses(SQLiteRecordManager)]
+         this.inputs = [
+-            {
++            /*{
+                 label: 'Database File Path',
+                 name: 'databaseFilePath',
+                 type: 'string',
+                 placeholder: 'C:\\Users\\User\\.flowise\\database.sqlite'
+-            },
++            },*/
+             {
+                 label: 'Additional Connection Configuration',
+                 name: 'additionalConfig',
+@@ -106,7 +106,6 @@ class SQLiteRecordManager_RecordManager implements INode {
+         const cleanup = nodeData.inputs?.cleanup as string
+         const _sourceIdKey = nodeData.inputs?.sourceIdKey as string
+         const sourceIdKey = _sourceIdKey ? _sourceIdKey : 'source'
+-        const databaseFilePath = nodeData.inputs?.databaseFilePath as string
+ 
+         let additionalConfiguration = {}
+         if (additionalConfig) {
+@@ -117,10 +116,12 @@ class SQLiteRecordManager_RecordManager implements INode {
+             }
+         }
+ 
++        const database = path.join(process.env.DATABASE_PATH ?? path.join(getUserHome(), '.flowise'), 'database.sqlite')
++
+         const sqliteOptions = {
++            database,
+             ...additionalConfiguration,
+-            type: 'sqlite',
+-            database: path.resolve(databaseFilePath)
++            type: 'sqlite'
+         }
+ 
+         const args = {
+@@ -144,29 +145,33 @@ type SQLiteRecordManagerOptions = {
+ 
+ class SQLiteRecordManager implements RecordManagerInterface {
+     lc_namespace = ['langchain', 'recordmanagers', 'sqlite']
+-
+-    datasource: DataSource
+-
+-    queryRunner: QueryRunner
+-
+     tableName: string
+-
+     namespace: string
++    config: SQLiteRecordManagerOptions
+ 
+     constructor(namespace: string, config: SQLiteRecordManagerOptions) {
+-        const { sqliteOptions, tableName } = config
++        const { tableName } = config
+         this.namespace = namespace
+         this.tableName = tableName || 'upsertion_records'
+-        this.datasource = new DataSource(sqliteOptions)
++        this.config = config
++    }
++
++    private async getDataSource(): Promise<DataSource> {
++        const { sqliteOptions } = this.config
++        if (!sqliteOptions) {
++            throw new Error('No datasource options provided')
++        }
++        const dataSource = new DataSource(sqliteOptions)
++        await dataSource.initialize()
++        return dataSource
+     }
+ 
+     async createSchema(): Promise<void> {
+         try {
+-            const appDataSource = await this.datasource.initialize()
++            const dataSource = await this.getDataSource()
++            const queryRunner = dataSource.createQueryRunner()
+ 
+-            this.queryRunner = appDataSource.createQueryRunner()
+-
+-            await this.queryRunner.manager.query(`
++            await queryRunner.manager.query(`
+ CREATE TABLE IF NOT EXISTS "${this.tableName}" (
+   uuid TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+   key TEXT NOT NULL,
+@@ -179,6 +184,8 @@ CREATE INDEX IF NOT EXISTS updated_at_index ON "${this.tableName}" (updated_at);
+ CREATE INDEX IF NOT EXISTS key_index ON "${this.tableName}" (key);
+ CREATE INDEX IF NOT EXISTS namespace_index ON "${this.tableName}" (namespace);
+ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
++
++            await queryRunner.release()
+         } catch (e: any) {
+             // This error indicates that the table already exists
+             // Due to asynchronous nature of the code, it is possible that
+@@ -192,12 +199,17 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+     }
+ 
+     async getTime(): Promise<number> {
++        const dataSource = await this.getDataSource()
+         try {
+-            const res = await this.queryRunner.manager.query(`SELECT strftime('%s', 'now') AS epoch`)
++            const queryRunner = dataSource.createQueryRunner()
++            const res = await queryRunner.manager.query(`SELECT strftime('%s', 'now') AS epoch`)
++            await queryRunner.release()
+             return Number.parseFloat(res[0].epoch)
+         } catch (error) {
+             console.error('Error getting time in SQLiteRecordManager:')
+             throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -205,6 +217,8 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+         if (keys.length === 0) {
+             return
+         }
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
+ 
+         const updatedAt = await this.getTime()
+         const { timeAtLeast, groupIds: _groupIds } = updateOptions ?? {}
+@@ -231,10 +245,18 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (key, namespace) DO UPDATE SET updated_at = excluded.updated_at`
+ 
+-        // To handle multiple files upsert
+-        for (const record of recordsToUpsert) {
+-            // Consider using a transaction for batch operations
+-            await this.queryRunner.manager.query(query, record.flat())
++        try {
++            // To handle multiple files upsert
++            for (const record of recordsToUpsert) {
++                // Consider using a transaction for batch operations
++                await queryRunner.manager.query(query, record.flat())
++            }
++            await queryRunner.release()
++        } catch (error) {
++            console.error('Error updating in SQLiteRecordManager:')
++            throw error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -253,19 +275,25 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+         // Initialize an array to fill with the existence checks
+         const existsArray = new Array(keys.length).fill(false)
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         try {
+             // Execute the query
+-            const rows = await this.queryRunner.manager.query(sql, [this.namespace, ...keys.flat()])
++            const rows = await queryRunner.manager.query(sql, [this.namespace, ...keys.flat()])
+             // Create a set of existing keys for faster lookup
+             const existingKeysSet = new Set(rows.map((row: { key: string }) => row.key))
+             // Map the input keys to booleans indicating if they exist
+             keys.forEach((key, index) => {
+                 existsArray[index] = existingKeysSet.has(key)
+             })
++            await queryRunner.release()
+             return existsArray
+         } catch (error) {
+             console.error('Error checking existence of keys')
+             throw error // Allow the caller to handle the error
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -299,13 +327,19 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+ 
+         query += ';'
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         // Directly using try/catch with async/await for cleaner flow
+         try {
+-            const result = await this.queryRunner.manager.query(query, values)
++            const result = await queryRunner.manager.query(query, values)
++            await queryRunner.release()
+             return result.map((row: { key: string }) => row.key)
+         } catch (error) {
+             console.error('Error listing keys.')
+             throw error // Re-throw the error to be handled by the caller
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ 
+@@ -314,16 +348,22 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             return
+         }
+ 
++        const dataSource = await this.getDataSource()
++        const queryRunner = dataSource.createQueryRunner()
++
+         const placeholders = keys.map(() => '?').join(', ')
+         const query = `DELETE FROM "${this.tableName}" WHERE namespace = ? AND key IN (${placeholders});`
+         const values = [this.namespace, ...keys].map((v) => (typeof v !== 'string' ? `${v}` : v))
+ 
+         // Directly using try/catch with async/await for cleaner flow
+         try {
+-            await this.queryRunner.manager.query(query, values)
++            await queryRunner.manager.query(query, values)
++            await queryRunner.release()
+         } catch (error) {
+             console.error('Error deleting keys')
+             throw error // Re-throw the error to be handled by the caller
++        } finally {
++            await dataSource.destroy()
+         }
+     }
+ }
+diff --git a/packages/components/nodes/vectorstores/Postgres/driver/PGVector.ts b/packages/components/nodes/vectorstores/Postgres/driver/PGVector.ts
+index 39ec62ad9e7..727d7f31379 100644
+--- a/packages/components/nodes/vectorstores/Postgres/driver/PGVector.ts
++++ b/packages/components/nodes/vectorstores/Postgres/driver/PGVector.ts
+@@ -33,6 +33,11 @@ export class PGVectorDriver extends VectorStoreDriver {
+                 password: password,
+                 database: this.getDatabase()
+             }
++
++            // Prevent using default MySQL port, otherwise will throw uncaught error and crashing the app
++            if (this.getHost() === '3006') {
++                throw new Error('Invalid port number')
++            }
+         }
+ 
+         return this._postgresConnectionOptions
+diff --git a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+index 0217713b13f..65593499462 100644
+--- a/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
++++ b/packages/components/nodes/vectorstores/Postgres/driver/TypeORM.ts
+@@ -34,6 +34,11 @@ export class TypeORMDriver extends VectorStoreDriver {
+                 password: password,
+                 database: this.getDatabase()
+             } as DataSourceOptions
++
++            // Prevent using default MySQL port, otherwise will throw uncaught error and crashing the app
++            if (this.getHost() === '3006') {
++                throw new Error('Invalid port number')
++            }
+         }
+         return this._postgresConnectionOptions
+     }
+
+From 147352cf8d82734f786548093f22cd37fdb81784 Mon Sep 17 00:00:00 2001
+From: Henry <hzj94@hotmail.com>
+Date: Mon, 9 Dec 2024 14:27:06 +0000
+Subject: [PATCH 2/3] enable reusing db connection for component datasource
+
+---
+ docker/.env.example                           |  4 ++
+ .../MySQLAgentMemory/mysqlSaver.ts            | 35 +++++++++++++--
+ .../PostgresAgentMemory/pgSaver.ts            | 40 ++++++++++++++---
+ .../SQLiteAgentMemory/sqliteSaver.ts          | 36 ++++++++++++---
+ .../MySQLRecordManager/MySQLrecordManager.ts  | 44 ++++++++++++++++---
+ .../PostgresRecordManager.ts                  | 44 ++++++++++++++++---
+ .../SQLiteRecordManager.ts                    | 41 ++++++++++++++---
+ packages/server/.env.example                  |  4 ++
+ packages/server/src/commands/start.ts         |  7 ++-
+ 9 files changed, 222 insertions(+), 33 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index bb7f8c1a91d..4b3dd65273b 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -53,6 +53,10 @@ BLOB_STORAGE_PATH=/root/.flowise/storage
+ # APIKEY_STORAGE_TYPE=json (json | db)
+ # SHOW_COMMUNITY_NODES=true
+ 
++# Reuse app database connection for agent and record manager to reduce concurrent connections
++# REUSE_DB_CONNECTION_AGENT_MEMORY=true
++# REUSE_DB_CONNECTION_RECORD_MANAGER=true
++
+ ######################
+ # METRICS COLLECTION
+ #######################
+diff --git a/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts b/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
+index 4214734f53c..2cb84635fd9 100644
+--- a/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
++++ b/packages/components/nodes/memory/AgentMemory/MySQLAgentMemory/mysqlSaver.ts
+@@ -11,6 +11,7 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+     config: SaverOptions
+     threadId: string
+     tableName = 'checkpoints'
++    reuseDbConnection: boolean
+ 
+     constructor(config: SaverOptions, serde?: SerializerProtocol<Checkpoint>) {
+         super(serde)
+@@ -20,6 +21,24 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_AGENT_MEMORY === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'mysql') {
++                throw new Error('Invalid datasource type')
++            }
++            if (datasource.options.port === 5432) {
++                throw new Error('Invalid port number')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { datasourceOptions } = this.config
+         if (!datasourceOptions) {
+             throw new Error('No datasource options provided')
+@@ -97,7 +116,9 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+             console.error(`Error retrieving ${this.tableName}`, error)
+             throw new Error(`Error retrieving ${this.tableName}`)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+         return undefined
+     }
+@@ -145,7 +166,9 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+             console.error(`Error listing checkpoints`, error)
+             throw new Error(`Error listing checkpoints`)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -174,7 +197,9 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+             console.error('Error saving checkpoint', error)
+             throw new Error('Error saving checkpoint')
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+ 
+         return {
+@@ -199,7 +224,9 @@ export class MySQLSaver extends BaseCheckpointSaver implements MemoryMethods {
+         } catch (error) {
+             console.error(`Error deleting thread_id ${threadId}`, error)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+diff --git a/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts b/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
+index 702c8cfad56..f8ca9f1970f 100644
+--- a/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
++++ b/packages/components/nodes/memory/AgentMemory/PostgresAgentMemory/pgSaver.ts
+@@ -11,6 +11,7 @@ export class PostgresSaver extends BaseCheckpointSaver implements MemoryMethods
+     config: SaverOptions
+     threadId: string
+     tableName = 'checkpoints'
++    reuseDbConnection: boolean
+ 
+     constructor(config: SaverOptions, serde?: SerializerProtocol<Checkpoint>) {
+         super(serde)
+@@ -20,6 +21,24 @@ export class PostgresSaver extends BaseCheckpointSaver implements MemoryMethods
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_AGENT_MEMORY === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'postgres') {
++                throw new Error('Invalid datasource type')
++            }
++            if (datasource.options.port === 3006) {
++                throw new Error('Invalid port number')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { datasourceOptions } = this.config
+         if (!datasourceOptions) {
+             throw new Error('No datasource options provided')
+@@ -92,7 +111,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+                 console.error(`Error retrieving ${this.tableName}`, error)
+                 throw new Error(`Error retrieving ${this.tableName}`)
+             } finally {
+-                await dataSource.destroy()
++                if (!this.reuseDbConnection) {
++                    await dataSource.destroy()
++                }
+             }
+         } else {
+             try {
+@@ -101,6 +122,7 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+                 const sql = `SELECT thread_id, checkpoint_id, parent_id, checkpoint, metadata FROM ${this.tableName} WHERE thread_id = $1 ORDER BY checkpoint_id DESC LIMIT 1`
+ 
+                 const rows = await queryRunner.manager.query(sql, keys)
++
+                 await queryRunner.release()
+ 
+                 if (rows && rows.length > 0) {
+@@ -127,7 +149,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+                 console.error(`Error retrieving ${this.tableName}`, error)
+                 throw new Error(`Error retrieving ${this.tableName}`)
+             } finally {
+-                await dataSource.destroy()
++                if (!this.reuseDbConnection) {
++                    await dataSource.destroy()
++                }
+             }
+         }
+         return undefined
+@@ -182,7 +206,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+             console.error(`Error listing ${this.tableName}`, error)
+             throw new Error(`Error listing ${this.tableName}`)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -212,7 +238,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+             console.error('Error saving checkpoint', error)
+             throw new Error('Error saving checkpoint')
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+ 
+         return {
+@@ -240,7 +268,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+         } catch (error) {
+             console.error(`Error deleting thread_id ${threadId}`, error)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+diff --git a/packages/components/nodes/memory/AgentMemory/SQLiteAgentMemory/sqliteSaver.ts b/packages/components/nodes/memory/AgentMemory/SQLiteAgentMemory/sqliteSaver.ts
+index e38b5bbb3a3..ff3c93883e8 100644
+--- a/packages/components/nodes/memory/AgentMemory/SQLiteAgentMemory/sqliteSaver.ts
++++ b/packages/components/nodes/memory/AgentMemory/SQLiteAgentMemory/sqliteSaver.ts
+@@ -11,6 +11,7 @@ export class SqliteSaver extends BaseCheckpointSaver implements MemoryMethods {
+     config: SaverOptions
+     threadId: string
+     tableName = 'checkpoints'
++    reuseDbConnection: boolean
+ 
+     constructor(config: SaverOptions, serde?: SerializerProtocol<Checkpoint>) {
+         super(serde)
+@@ -20,6 +21,21 @@ export class SqliteSaver extends BaseCheckpointSaver implements MemoryMethods {
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_AGENT_MEMORY === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'sqlite') {
++                throw new Error('Invalid datasource type')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { datasourceOptions } = this.config
+         const dataSource = new DataSource(datasourceOptions)
+         await dataSource.initialize()
+@@ -85,7 +101,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+                 console.error(`Error retrieving ${this.tableName}`, error)
+                 throw new Error(`Error retrieving ${this.tableName}`)
+             } finally {
+-                await dataSource.destroy()
++                if (!this.reuseDbConnection) {
++                    await dataSource.destroy()
++                }
+             }
+         } else {
+             try {
+@@ -120,7 +138,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+                 console.error(`Error retrieving ${this.tableName}`, error)
+                 throw new Error(`Error retrieving ${this.tableName}`)
+             } finally {
+-                await dataSource.destroy()
++                if (!this.reuseDbConnection) {
++                    await dataSource.destroy()
++                }
+             }
+         }
+         return undefined
+@@ -170,7 +190,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+             console.error(`Error listing ${this.tableName}`, error)
+             throw new Error(`Error listing ${this.tableName}`)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -197,7 +219,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+             console.error('Error saving checkpoint', error)
+             throw new Error('Error saving checkpoint')
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+ 
+         return {
+@@ -225,7 +249,9 @@ CREATE TABLE IF NOT EXISTS ${this.tableName} (
+         } catch (error) {
+             console.error(`Error deleting thread_id ${threadId}`, error)
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+diff --git a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+index 193c13ba82a..d204b3db568 100644
+--- a/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
++++ b/packages/components/nodes/recordmanager/MySQLRecordManager/MySQLrecordManager.ts
+@@ -135,6 +135,7 @@ class MySQLRecordManager_RecordManager implements INode {
+                 throw new Error('Invalid JSON in the Additional Configuration: ' + exception)
+             }
+         }
++        const appDataSource = options.appDataSource as DataSource
+ 
+         const mysqlOptions = {
+             ...additionalConfiguration,
+@@ -148,7 +149,8 @@ class MySQLRecordManager_RecordManager implements INode {
+ 
+         const args = {
+             mysqlOptions,
+-            tableName: tableName
++            tableName: tableName,
++            appDataSource
+         }
+ 
+         const recordManager = new MySQLRecordManager(namespace, args)
+@@ -163,6 +165,7 @@ class MySQLRecordManager_RecordManager implements INode {
+ type MySQLRecordManagerOptions = {
+     mysqlOptions: any
+     tableName?: string
++    appDataSource: DataSource
+ }
+ 
+ class MySQLRecordManager implements RecordManagerInterface {
+@@ -170,6 +173,7 @@ class MySQLRecordManager implements RecordManagerInterface {
+     config: MySQLRecordManagerOptions
+     tableName: string
+     namespace: string
++    reuseDbConnection: boolean
+ 
+     constructor(namespace: string, config: MySQLRecordManagerOptions) {
+         const { tableName } = config
+@@ -179,6 +183,24 @@ class MySQLRecordManager implements RecordManagerInterface {
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_RECORD_MANAGER === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'mysql') {
++                throw new Error('Invalid datasource type')
++            }
++            if (datasource.options.port === 5432) {
++                throw new Error('Invalid port number')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { mysqlOptions } = this.config
+         if (!mysqlOptions) {
+             throw new Error('No datasource options provided')
+@@ -242,7 +264,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             console.error('Error getting time in MySQLRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -291,7 +315,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             console.error('Error updating in MySQLRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -328,7 +354,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             console.error('Error checking existence of keys')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -374,7 +402,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             console.error('MySQLRecordManager listKeys Error: ')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -398,7 +428,9 @@ class MySQLRecordManager implements RecordManagerInterface {
+             console.error('Error deleting keys')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ }
+diff --git a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+index 94d154da2c0..8abaa521786 100644
+--- a/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
++++ b/packages/components/nodes/recordmanager/PostgresRecordManager/PostgresRecordManager.ts
+@@ -143,6 +143,7 @@ class PostgresRecordManager_RecordManager implements INode {
+                 throw new Error('Invalid JSON in the Additional Configuration: ' + exception)
+             }
+         }
++        const appDataSource = options.appDataSource as DataSource
+ 
+         const postgresConnectionOptions = {
+             ...additionalConfiguration,
+@@ -156,7 +157,8 @@ class PostgresRecordManager_RecordManager implements INode {
+ 
+         const args = {
+             postgresConnectionOptions: postgresConnectionOptions,
+-            tableName: tableName
++            tableName: tableName,
++            appDataSource
+         }
+ 
+         const recordManager = new PostgresRecordManager(namespace, args)
+@@ -171,6 +173,7 @@ class PostgresRecordManager_RecordManager implements INode {
+ type PostgresRecordManagerOptions = {
+     postgresConnectionOptions: any
+     tableName: string
++    appDataSource: DataSource
+ }
+ 
+ class PostgresRecordManager implements RecordManagerInterface {
+@@ -178,6 +181,7 @@ class PostgresRecordManager implements RecordManagerInterface {
+     config: PostgresRecordManagerOptions
+     tableName: string
+     namespace: string
++    reuseDbConnection: boolean
+ 
+     constructor(namespace: string, config: PostgresRecordManagerOptions) {
+         const { tableName } = config
+@@ -187,6 +191,24 @@ class PostgresRecordManager implements RecordManagerInterface {
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_RECORD_MANAGER === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'postgres') {
++                throw new Error('Invalid datasource type')
++            }
++            if (datasource.options.port === 3006) {
++                throw new Error('Invalid port number')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { postgresConnectionOptions } = this.config
+         if (!postgresConnectionOptions) {
+             throw new Error('No datasource options provided')
+@@ -243,7 +265,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             console.error('Error getting time in PostgresRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -295,7 +319,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             console.error('Error updating in PostgresRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -321,7 +347,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             console.error('Error checking existence of keys in PostgresRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -368,7 +396,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             console.error('Error listing keys in PostgresRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -388,7 +418,9 @@ class PostgresRecordManager implements RecordManagerInterface {
+             console.error('Error deleting keys')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ }
+diff --git a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+index 3246e250ef8..a3ca35201c0 100644
+--- a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
++++ b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+@@ -115,6 +115,7 @@ class SQLiteRecordManager_RecordManager implements INode {
+                 throw new Error('Invalid JSON in the Additional Configuration: ' + exception)
+             }
+         }
++        const appDataSource = options.appDataSource as DataSource
+ 
+         const database = path.join(process.env.DATABASE_PATH ?? path.join(getUserHome(), '.flowise'), 'database.sqlite')
+ 
+@@ -126,7 +127,8 @@ class SQLiteRecordManager_RecordManager implements INode {
+ 
+         const args = {
+             sqliteOptions,
+-            tableName: tableName
++            tableName: tableName,
++            appDataSource
+         }
+ 
+         const recordManager = new SQLiteRecordManager(namespace, args)
+@@ -141,6 +143,7 @@ class SQLiteRecordManager_RecordManager implements INode {
+ type SQLiteRecordManagerOptions = {
+     sqliteOptions: any
+     tableName?: string
++    appDataSource: DataSource
+ }
+ 
+ class SQLiteRecordManager implements RecordManagerInterface {
+@@ -148,6 +151,7 @@ class SQLiteRecordManager implements RecordManagerInterface {
+     tableName: string
+     namespace: string
+     config: SQLiteRecordManagerOptions
++    reuseDbConnection: boolean
+ 
+     constructor(namespace: string, config: SQLiteRecordManagerOptions) {
+         const { tableName } = config
+@@ -157,6 +161,21 @@ class SQLiteRecordManager implements RecordManagerInterface {
+     }
+ 
+     private async getDataSource(): Promise<DataSource> {
++        if (process.env.REUSE_DB_CONNECTION_RECORD_MANAGER === 'true') {
++            const datasource = this.config.appDataSource
++            if (!datasource) {
++                throw new Error('No datasource provided')
++            }
++            if (datasource.options.type !== 'sqlite') {
++                throw new Error('Invalid datasource type')
++            }
++            if (!datasource.isInitialized) {
++                await datasource.initialize()
++            }
++            this.reuseDbConnection = true
++            return datasource
++        }
++
+         const { sqliteOptions } = this.config
+         if (!sqliteOptions) {
+             throw new Error('No datasource options provided')
+@@ -209,7 +228,9 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             console.error('Error getting time in SQLiteRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -256,7 +277,9 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             console.error('Error updating in SQLiteRecordManager:')
+             throw error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -293,7 +316,9 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             console.error('Error checking existence of keys')
+             throw error // Allow the caller to handle the error
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -339,7 +364,9 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             console.error('Error listing keys.')
+             throw error // Re-throw the error to be handled by the caller
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ 
+@@ -363,7 +390,9 @@ CREATE INDEX IF NOT EXISTS group_id_index ON "${this.tableName}" (group_id);`)
+             console.error('Error deleting keys')
+             throw error // Re-throw the error to be handled by the caller
+         } finally {
+-            await dataSource.destroy()
++            if (!this.reuseDbConnection) {
++                await dataSource.destroy()
++            }
+         }
+     }
+ }
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index 29d8f438f61..02aa3ad11d4 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -53,6 +53,10 @@ PORT=3000
+ # APIKEY_STORAGE_TYPE=json (json | db)
+ # SHOW_COMMUNITY_NODES=true
+ 
++# Reuse app database connection for agent and record manager to reduce concurrent connections
++# REUSE_DB_CONNECTION_AGENT_MEMORY=true
++# REUSE_DB_CONNECTION_RECORD_MANAGER=true
++
+ ######################
+ # METRICS COLLECTION
+ #######################
+diff --git a/packages/server/src/commands/start.ts b/packages/server/src/commands/start.ts
+index 95e45f81448..41b786df1d9 100644
+--- a/packages/server/src/commands/start.ts
++++ b/packages/server/src/commands/start.ts
+@@ -56,7 +56,9 @@ export default class Start extends Command {
+         S3_STORAGE_REGION: Flags.string(),
+         S3_ENDPOINT_URL: Flags.string(),
+         S3_FORCE_PATH_STYLE: Flags.string(),
+-        SHOW_COMMUNITY_NODES: Flags.string()
++        SHOW_COMMUNITY_NODES: Flags.string(),
++        REUSE_DB_CONNECTION_AGENT_MEMORY: Flags.string(),
++        REUSE_DB_CONNECTION_RECORD_MANAGER: Flags.string()
+     }
+ 
+     async stopProcess() {
+@@ -132,6 +134,9 @@ export default class Start extends Command {
+         if (flags.DATABASE_PASSWORD) process.env.DATABASE_PASSWORD = flags.DATABASE_PASSWORD
+         if (flags.DATABASE_SSL) process.env.DATABASE_SSL = flags.DATABASE_SSL
+         if (flags.DATABASE_SSL_KEY_BASE64) process.env.DATABASE_SSL_KEY_BASE64 = flags.DATABASE_SSL_KEY_BASE64
++        if (flags.REUSE_DB_CONNECTION_AGENT_MEMORY) process.env.REUSE_DB_CONNECTION_AGENT_MEMORY = flags.REUSE_DB_CONNECTION_AGENT_MEMORY
++        if (flags.REUSE_DB_CONNECTION_RECORD_MANAGER)
++            process.env.REUSE_DB_CONNECTION_RECORD_MANAGER = flags.REUSE_DB_CONNECTION_RECORD_MANAGER
+ 
+         // Langsmith tracing
+         if (flags.LANGCHAIN_TRACING_V2) process.env.LANGCHAIN_TRACING_V2 = flags.LANGCHAIN_TRACING_V2
+
+From 7ff0728575611bad0bb567dece34c07dfabb64a7 Mon Sep 17 00:00:00 2001
+From: Henry <hzj94@hotmail.com>
+Date: Wed, 11 Dec 2024 14:03:22 +0000
+Subject: [PATCH 3/3] remove redundant line
+
+---
+ .../recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts    | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+index da141ef47cf..a3ca35201c0 100644
+--- a/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
++++ b/packages/components/nodes/recordmanager/SQLiteRecordManager/SQLiteRecordManager.ts
+@@ -119,8 +119,6 @@ class SQLiteRecordManager_RecordManager implements INode {
+ 
+         const database = path.join(process.env.DATABASE_PATH ?? path.join(getUserHome(), '.flowise'), 'database.sqlite')
+ 
+-        const database = path.join(process.env.DATABASE_PATH ?? path.join(getUserHome(), '.flowise'), 'database.sqlite')
+-
+         const sqliteOptions = {
+             database,
+             ...additionalConfiguration,

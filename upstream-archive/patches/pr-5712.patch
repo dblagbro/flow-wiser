@@ -1,0 +1,675 @@
+From 14693c194aa3fad195e3039f82d509be9f4f8784 Mon Sep 17 00:00:00 2001
+From: tianwei-liu <tianwei.liu@workday.com>
+Date: Wed, 4 Feb 2026 18:20:39 -0800
+Subject: [PATCH 1/4] Add base path support for running Flowise behind an
+ ingress
+
+Enable Flowise to run behind an ingress with a path prefix (e.g., /flowise)
+so it can be accessed via URLs like https://example.com/flowise/.
+
+- Add VITE_BASE_PATH env var for UI build (vite base option + React Router basename)
+- Add FLOWISE_BASE_PATH env var for server (API routes, static files, admin dashboard)
+- Update baseURL in constant.js to include base path for API calls
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ packages/server/.env.example      | 1 +
+ packages/server/src/index.ts      | 9 +++++----
+ packages/ui/.env.example          | 1 +
+ packages/ui/src/config.js         | 3 ++-
+ packages/ui/src/store/constant.js | 3 ++-
+ packages/ui/vite.config.js        | 1 +
+ 6 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index a387a12dc3d..b93694c7cab 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -1,4 +1,5 @@
+ PORT=3000
++# FLOWISE_BASE_PATH=/flowise
+ 
+ ############################################################################################################
+ ############################################## DATABASE ####################################################
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index b3b2abc2e8c..c90590fff67 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -309,12 +309,13 @@ export class App {
+             }
+         }
+ 
+-        this.app.use('/api/v1', flowiseApiV1Router)
++        const basePath = process.env.FLOWISE_BASE_PATH || ''
++        this.app.use(`${basePath}/api/v1`, flowiseApiV1Router)
+ 
+         // ----------------------------------------
+         // Configure number of proxies in Host Environment
+         // ----------------------------------------
+-        this.app.get('/api/v1/ip', (request, response) => {
++        this.app.get(`${basePath}/api/v1/ip`, (request, response) => {
+             response.send({
+                 ip: request.ip,
+                 msg: 'Check returned IP address in the response. If it matches your current IP address ( which you can get by going to http://ip.nfriedly.com/ or https://api.ipify.org/ ), then the number of proxies is correct and the rate limiter should now work correctly. If not, increase the number of proxies by 1 and restart Cloud-Hosted Flowise until the IP address matches your own. Visit https://docs.flowiseai.com/configuration/rate-limit#cloud-hosted-rate-limit-setup-guide for more information.'
+@@ -332,7 +333,7 @@ export class App {
+             )
+ 
+             const rateLimiter = this.rateLimiterManager.getRateLimiterById(id)
+-            this.app.use('/admin/queues', rateLimiter, verifyTokenForBullMQDashboard, this.queueManager.getBullBoardRouter())
++            this.app.use(`${basePath}/admin/queues`, rateLimiter, verifyTokenForBullMQDashboard, this.queueManager.getBullBoardRouter())
+         }
+ 
+         // ----------------------------------------
+@@ -343,7 +344,7 @@ export class App {
+         const uiBuildPath = path.join(packagePath, 'build')
+         const uiHtmlPath = path.join(packagePath, 'build', 'index.html')
+ 
+-        this.app.use('/', express.static(uiBuildPath))
++        this.app.use(basePath || '/', express.static(uiBuildPath))
+ 
+         // All other requests not handled will return React app
+         this.app.use((req: Request, res: Response) => {
+diff --git a/packages/ui/.env.example b/packages/ui/.env.example
+index e336a6e539d..776f2c832bf 100644
+--- a/packages/ui/.env.example
++++ b/packages/ui/.env.example
+@@ -1,4 +1,5 @@
+ VITE_PORT=8080
++# VITE_BASE_PATH=/flowise
+ 
+ # VITE_API_BASE_URL=http://localhost:3000
+ # VITE_UI_BASE_URL=http://localhost:3000
+\ No newline at end of file
+diff --git a/packages/ui/src/config.js b/packages/ui/src/config.js
+index 4f0aab10e23..0479767212e 100644
+--- a/packages/ui/src/config.js
++++ b/packages/ui/src/config.js
+@@ -1,6 +1,7 @@
+ const config = {
+     // basename: only at build time to set, and Don't add '/' at end off BASENAME for breadcrumbs, also Don't put only '/' use blank('') instead,
+-    basename: '',
++    // Can be configured via VITE_BASE_PATH environment variable
++    basename: import.meta.env.VITE_BASE_PATH || '',
+     defaultPath: '/chatflows',
+     // You can specify multiple fallback fonts
+     fontFamily: `'Inter', 'Roboto', 'Arial', sans-serif`,
+diff --git a/packages/ui/src/store/constant.js b/packages/ui/src/store/constant.js
+index 627959fa1f2..e94b2501980 100644
+--- a/packages/ui/src/store/constant.js
++++ b/packages/ui/src/store/constant.js
+@@ -22,7 +22,8 @@ export const drawerWidth = 260
+ export const appDrawerWidth = 320
+ export const headerHeight = 80
+ export const maxScroll = 100000
+-export const baseURL = import.meta.env.VITE_API_BASE_URL || window.location.origin
++const basePath = import.meta.env.VITE_BASE_PATH || ''
++export const baseURL = import.meta.env.VITE_API_BASE_URL || (window.location.origin + basePath)
+ export const uiBaseURL = import.meta.env.VITE_UI_BASE_URL || window.location.origin
+ export const FLOWISE_CREDENTIAL_ID = 'FLOWISE_CREDENTIAL_ID'
+ export const REDACTED_CREDENTIAL_VALUE = '_FLOWISE_BLANK_07167752-1a71-43b1-bf8f-4f32252165db'
+diff --git a/packages/ui/vite.config.js b/packages/ui/vite.config.js
+index c336cd4def2..53c523dce63 100644
+--- a/packages/ui/vite.config.js
++++ b/packages/ui/vite.config.js
+@@ -21,6 +21,7 @@ export default defineConfig(async ({ mode }) => {
+ 
+     dotenv.config()
+     return {
++        base: process.env.VITE_BASE_PATH || '/',
+         plugins: [react()],
+         resolve: {
+             alias: {
+
+From d41012c33dd5541df4a27d4d094b8237ad26b239 Mon Sep 17 00:00:00 2001
+From: tianwei-liu <tianwei.liu@workday.com>
+Date: Wed, 4 Feb 2026 19:29:55 -0800
+Subject: [PATCH 2/4] fix
+
+---
+ packages/components/src/storageUtils.ts       |  4 +--
+ .../enterprise/middleware/passport/index.ts   | 22 ++++++------
+ packages/server/src/index.ts                  | 34 +++++++++++++------
+ packages/ui/src/index.jsx                     |  3 +-
+ packages/ui/src/routes/index.jsx              |  3 +-
+ packages/ui/vite.config.js                    |  2 +-
+ 6 files changed, 42 insertions(+), 26 deletions(-)
+
+diff --git a/packages/components/src/storageUtils.ts b/packages/components/src/storageUtils.ts
+index ff48bb0569e..0af3714a82a 100644
+--- a/packages/components/src/storageUtils.ts
++++ b/packages/components/src/storageUtils.ts
+@@ -674,7 +674,7 @@ const _deleteLocalFolderRecursive = async (directory: string, deleteParentChatfl
+         await fs.promises.access(directory)
+ 
+         if (deleteParentChatflowFolder) {
+-            await fs.promises.rmdir(directory, { recursive: true })
++            await fs.promises.rm(directory, { recursive: true })
+         }
+ 
+         // Get stats of the path to determine if it's a file or directory
+@@ -691,7 +691,7 @@ const _deleteLocalFolderRecursive = async (directory: string, deleteParentChatfl
+             }
+ 
+             // Delete the directory itself after emptying it
+-            await fs.promises.rmdir(directory, { recursive: true })
++            await fs.promises.rm(directory, { recursive: true })
+         } else {
+             // If it's a file, delete it directly
+             await fs.promises.unlink(directory)
+diff --git a/packages/server/src/enterprise/middleware/passport/index.ts b/packages/server/src/enterprise/middleware/passport/index.ts
+index c8d0896cbe2..c039c259739 100644
+--- a/packages/server/src/enterprise/middleware/passport/index.ts
++++ b/packages/server/src/enterprise/middleware/passport/index.ts
+@@ -192,13 +192,15 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
+         )
+     )
+ 
+-    app.post('/api/v1/auth/resolve', async (req, res) => {
++    const basePath = process.env.FLOWISE_BASE_PATH || ''
++
++    app.post(`${basePath}/api/v1/auth/resolve`, async (req, res) => {
+         // check for the organization, if empty redirect to the organization setup page for OpenSource and Enterprise Versions
+         // for Cloud (Horizontal) version, redirect to the signin page
+         const expressApp = getRunningExpressApp()
+         const platform = expressApp.identityManager.getPlatformType()
+         if (platform === Platform.CLOUD) {
+-            return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/signin' })
++            return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/signin` })
+         }
+         const orgService = new OrganizationService()
+         const queryRunner = expressApp.AppDataSource.createQueryRunner()
+@@ -209,25 +211,25 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
+             switch (platform) {
+                 case Platform.ENTERPRISE:
+                     if (!identityManager.isLicenseValid()) {
+-                        return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/license-expired' })
++                        return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/license-expired` })
+                     }
+-                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/organization-setup' })
++                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/organization-setup` })
+                 default:
+-                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/organization-setup' })
++                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/organization-setup` })
+             }
+         }
+         switch (platform) {
+             case Platform.ENTERPRISE:
+                 if (!identityManager.isLicenseValid()) {
+-                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/license-expired' })
++                    return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/license-expired` })
+                 }
+-                return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/signin' })
++                return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/signin` })
+             default:
+-                return res.status(HttpStatusCode.Ok).json({ redirectUrl: '/signin' })
++                return res.status(HttpStatusCode.Ok).json({ redirectUrl: `${basePath}/signin` })
+         }
+     })
+ 
+-    app.post('/api/v1/auth/refreshToken', async (req, res) => {
++    app.post(`${basePath}/api/v1/auth/refreshToken`, async (req, res) => {
+         const refreshToken = req.cookies.refreshToken
+         if (!refreshToken) return res.sendStatus(401)
+ 
+@@ -264,7 +266,7 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
+         })
+     })
+ 
+-    app.post('/api/v1/auth/login', (req, res, next?) => {
++    app.post(`${basePath}/api/v1/auth/login`, (req, res, next?) => {
+         passport.authenticate('login', async (err: any, user: LoggedInUser) => {
+             try {
+                 if (err || !user) {
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index c90590fff67..b9bd5e339f8 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -129,7 +129,8 @@ export class App {
+             if (process.env.MODE === MODE.QUEUE) {
+                 this.queueManager = QueueManager.getInstance()
+                 const serverAdapter = new ExpressAdapter()
+-                serverAdapter.setBasePath('/admin/queues')
++                const basePath = process.env.FLOWISE_BASE_PATH || ''
++                serverAdapter.setBasePath(`${basePath}/admin/queues`)
+                 this.queueManager.setupAllQueues({
+                     componentNodes: this.nodesPool.componentNodes,
+                     telemetry: this.telemetry,
+@@ -205,10 +206,12 @@ export class App {
+             if (next) next()
+         })
+ 
++        const basePath = process.env.FLOWISE_BASE_PATH || ''
+         const denylistURLs = process.env.DENYLIST_URLS ? process.env.DENYLIST_URLS.split(',') : []
+-        const whitelistURLs = WHITELIST_URLS.filter((url) => !denylistURLs.includes(url))
+-        const URL_CASE_INSENSITIVE_REGEX: RegExp = /\/api\/v1\//i
+-        const URL_CASE_SENSITIVE_REGEX: RegExp = /\/api\/v1\//
++        const whitelistURLs = WHITELIST_URLS.filter((url) => !denylistURLs.includes(url)).map((url) => basePath + url)
++        const apiKeyBlacklistURLs = API_KEY_BLACKLIST_URLS.map((url) => basePath + url)
++        const URL_CASE_INSENSITIVE_REGEX: RegExp = new RegExp(`${basePath}/api/v1/`, 'i')
++        const URL_CASE_SENSITIVE_REGEX: RegExp = new RegExp(`${basePath}/api/v1/`)
+ 
+         await initializeJwtCookieMiddleware(this.app, this.identityManager)
+ 
+@@ -224,7 +227,7 @@ export class App {
+                     } else if (req.headers['x-request-from'] === 'internal') {
+                         verifyToken(req, res, next)
+                     } else {
+-                        const isAPIKeyBlacklistedURLS = API_KEY_BLACKLIST_URLS.some((url) => req.path.startsWith(url))
++                        const isAPIKeyBlacklistedURLS = apiKeyBlacklistURLs.some((url) => req.path.startsWith(url))
+                         if (isAPIKeyBlacklistedURLS) {
+                             return res.status(401).json({ error: 'Unauthorized Access' })
+                         }
+@@ -309,7 +312,6 @@ export class App {
+             }
+         }
+ 
+-        const basePath = process.env.FLOWISE_BASE_PATH || ''
+         this.app.use(`${basePath}/api/v1`, flowiseApiV1Router)
+ 
+         // ----------------------------------------
+@@ -346,10 +348,22 @@ export class App {
+ 
+         this.app.use(basePath || '/', express.static(uiBuildPath))
+ 
+-        // All other requests not handled will return React app
+-        this.app.use((req: Request, res: Response) => {
+-            res.sendFile(uiHtmlPath)
+-        })
++        // Redirect root to basePath if basePath is set
++        if (basePath) {
++            this.app.get('/', (req: Request, res: Response) => {
++                res.redirect(basePath)
++            })
++            
++            // SPA fallback for routes under basePath only
++            this.app.get(`${basePath}/*`, (req: Request, res: Response) => {
++                res.sendFile(uiHtmlPath)
++            })
++        } else {
++            // SPA fallback for all routes when no basePath
++            this.app.use((req: Request, res: Response) => {
++                res.sendFile(uiHtmlPath)
++            })
++        }
+ 
+         // Error handling
+         this.app.use(errorHandlerMiddleware)
+diff --git a/packages/ui/src/index.jsx b/packages/ui/src/index.jsx
+index d8833eed413..19c0d526bbd 100644
+--- a/packages/ui/src/index.jsx
++++ b/packages/ui/src/index.jsx
+@@ -14,6 +14,7 @@ import ConfirmContextProvider from '@/store/context/ConfirmContextProvider'
+ import { ReactFlowContext } from '@/store/context/ReactFlowContext'
+ import { ConfigProvider } from '@/store/context/ConfigContext'
+ import { ErrorProvider } from '@/store/context/ErrorContext'
++import config from '@/config'
+ 
+ const container = document.getElementById('root')
+ const root = createRoot(container)
+@@ -21,7 +22,7 @@ const root = createRoot(container)
+ root.render(
+     <React.StrictMode>
+         <Provider store={store}>
+-            <BrowserRouter>
++            <BrowserRouter basename={config.basename}>
+                 <SnackbarProvider>
+                     <ConfigProvider>
+                         <ErrorProvider>
+diff --git a/packages/ui/src/routes/index.jsx b/packages/ui/src/routes/index.jsx
+index 7a5d76f1ba3..a4512bf020b 100644
+--- a/packages/ui/src/routes/index.jsx
++++ b/packages/ui/src/routes/index.jsx
+@@ -4,12 +4,11 @@ import { useRoutes } from 'react-router-dom'
+ import MainRoutes from './MainRoutes'
+ import CanvasRoutes from './CanvasRoutes'
+ import ChatbotRoutes from './ChatbotRoutes'
+-import config from '@/config'
+ import AuthRoutes from '@/routes/AuthRoutes'
+ import ExecutionRoutes from './ExecutionRoutes'
+ 
+ // ==============================|| ROUTING RENDER ||============================== //
+ 
+ export default function ThemeRoutes() {
+-    return useRoutes([MainRoutes, AuthRoutes, CanvasRoutes, ChatbotRoutes, ExecutionRoutes], config.basename)
++    return useRoutes([MainRoutes, AuthRoutes, CanvasRoutes, ChatbotRoutes, ExecutionRoutes])
+ }
+diff --git a/packages/ui/vite.config.js b/packages/ui/vite.config.js
+index 53c523dce63..dd9f7f2adde 100644
+--- a/packages/ui/vite.config.js
++++ b/packages/ui/vite.config.js
+@@ -19,7 +19,7 @@ export default defineConfig(async ({ mode }) => {
+         }
+     }
+ 
+-    dotenv.config()
++    dotenv.config({ path: resolve(__dirname, '.env') })
+     return {
+         base: process.env.VITE_BASE_PATH || '/',
+         plugins: [react()],
+
+From 5b16a82d4519920c093a23adbcbb71afcd7b1569 Mon Sep 17 00:00:00 2001
+From: tianwei-liu <tianwei.liu@workday.com>
+Date: Thu, 5 Feb 2026 23:06:07 -0800
+Subject: [PATCH 3/4] fix: Address PR review comments for base path support
+
+- Move basePath to class property for single source of truth
+- Escape special regex characters in basePath to prevent incorrect URL matching
+- Use this.basePath consistently throughout the class
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ packages/server/src/index.ts | 32 +++++++++++++++++---------------
+ 1 file changed, 17 insertions(+), 15 deletions(-)
+
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index b9bd5e339f8..bf43d74de3e 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -72,9 +72,11 @@ export class App {
+     redisSubscriber: RedisEventSubscriber
+     usageCacheManager: UsageCacheManager
+     sessionStore: any
++    basePath: string
+ 
+     constructor() {
+         this.app = express()
++        this.basePath = process.env.FLOWISE_BASE_PATH || ''
+     }
+ 
+     async initDatabase() {
+@@ -129,8 +131,7 @@ export class App {
+             if (process.env.MODE === MODE.QUEUE) {
+                 this.queueManager = QueueManager.getInstance()
+                 const serverAdapter = new ExpressAdapter()
+-                const basePath = process.env.FLOWISE_BASE_PATH || ''
+-                serverAdapter.setBasePath(`${basePath}/admin/queues`)
++                serverAdapter.setBasePath(`${this.basePath}/admin/queues`)
+                 this.queueManager.setupAllQueues({
+                     componentNodes: this.nodesPool.componentNodes,
+                     telemetry: this.telemetry,
+@@ -206,12 +207,13 @@ export class App {
+             if (next) next()
+         })
+ 
+-        const basePath = process.env.FLOWISE_BASE_PATH || ''
+         const denylistURLs = process.env.DENYLIST_URLS ? process.env.DENYLIST_URLS.split(',') : []
+-        const whitelistURLs = WHITELIST_URLS.filter((url) => !denylistURLs.includes(url)).map((url) => basePath + url)
+-        const apiKeyBlacklistURLs = API_KEY_BLACKLIST_URLS.map((url) => basePath + url)
+-        const URL_CASE_INSENSITIVE_REGEX: RegExp = new RegExp(`${basePath}/api/v1/`, 'i')
+-        const URL_CASE_SENSITIVE_REGEX: RegExp = new RegExp(`${basePath}/api/v1/`)
++        const whitelistURLs = WHITELIST_URLS.filter((url) => !denylistURLs.includes(url)).map((url) => this.basePath + url)
++        const apiKeyBlacklistURLs = API_KEY_BLACKLIST_URLS.map((url) => this.basePath + url)
++        // Escape special regex characters in basePath to prevent incorrect URL matching
++        const escapedBasePath = this.basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
++        const URL_CASE_INSENSITIVE_REGEX: RegExp = new RegExp(`${escapedBasePath}/api/v1/`, 'i')
++        const URL_CASE_SENSITIVE_REGEX: RegExp = new RegExp(`${escapedBasePath}/api/v1/`)
+ 
+         await initializeJwtCookieMiddleware(this.app, this.identityManager)
+ 
+@@ -312,12 +314,12 @@ export class App {
+             }
+         }
+ 
+-        this.app.use(`${basePath}/api/v1`, flowiseApiV1Router)
++        this.app.use(`${this.basePath}/api/v1`, flowiseApiV1Router)
+ 
+         // ----------------------------------------
+         // Configure number of proxies in Host Environment
+         // ----------------------------------------
+-        this.app.get(`${basePath}/api/v1/ip`, (request, response) => {
++        this.app.get(`${this.basePath}/api/v1/ip`, (request, response) => {
+             response.send({
+                 ip: request.ip,
+                 msg: 'Check returned IP address in the response. If it matches your current IP address ( which you can get by going to http://ip.nfriedly.com/ or https://api.ipify.org/ ), then the number of proxies is correct and the rate limiter should now work correctly. If not, increase the number of proxies by 1 and restart Cloud-Hosted Flowise until the IP address matches your own. Visit https://docs.flowiseai.com/configuration/rate-limit#cloud-hosted-rate-limit-setup-guide for more information.'
+@@ -335,7 +337,7 @@ export class App {
+             )
+ 
+             const rateLimiter = this.rateLimiterManager.getRateLimiterById(id)
+-            this.app.use(`${basePath}/admin/queues`, rateLimiter, verifyTokenForBullMQDashboard, this.queueManager.getBullBoardRouter())
++            this.app.use(`${this.basePath}/admin/queues`, rateLimiter, verifyTokenForBullMQDashboard, this.queueManager.getBullBoardRouter())
+         }
+ 
+         // ----------------------------------------
+@@ -346,16 +348,16 @@ export class App {
+         const uiBuildPath = path.join(packagePath, 'build')
+         const uiHtmlPath = path.join(packagePath, 'build', 'index.html')
+ 
+-        this.app.use(basePath || '/', express.static(uiBuildPath))
++        this.app.use(this.basePath || '/', express.static(uiBuildPath))
+ 
+         // Redirect root to basePath if basePath is set
+-        if (basePath) {
++        if (this.basePath) {
+             this.app.get('/', (req: Request, res: Response) => {
+-                res.redirect(basePath)
++                res.redirect(this.basePath)
+             })
+-            
++
+             // SPA fallback for routes under basePath only
+-            this.app.get(`${basePath}/*`, (req: Request, res: Response) => {
++            this.app.get(`${this.basePath}/*`, (req: Request, res: Response) => {
+                 res.sendFile(uiHtmlPath)
+             })
+         } else {
+
+From 7b7dfef093f8d37a5d413cfe83929189faf2a15f Mon Sep 17 00:00:00 2001
+From: tianwei-liu <tianwei.liu@workday.com>
+Date: Tue, 10 Feb 2026 15:53:56 -0800
+Subject: [PATCH 4/4] fix: Fix base path issues with navigation and redirects
+
+- Use absolute paths in index.html for manifest.json, favicon.ico,
+  logo192.png so Vite can transform them with base path
+- Remove manual config.basename prepending in NavItem since
+  BrowserRouter already handles it (was causing doubled paths)
+- Add basePath to server logout redirects in account.controller.ts
+- Fix SSO login redirects to include basePath in signIn, register,
+  and organization pages
+- Fix ErrorContext path comparison to handle base path
+- Use navigate() instead of window.location.href in account page
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ .../src/enterprise/controllers/account.controller.ts   |  5 +++--
+ packages/server/src/index.ts                           | 10 +++++++++-
+ packages/ui/index.html                                 |  6 +++---
+ .../MainLayout/Sidebar/MenuList/NavItem/index.jsx      |  3 +--
+ packages/ui/src/store/context/ErrorContext.jsx         |  7 ++++++-
+ packages/ui/src/views/account/index.jsx                |  2 +-
+ packages/ui/src/views/auth/register.jsx                |  3 ++-
+ packages/ui/src/views/auth/signIn.jsx                  |  3 ++-
+ packages/ui/src/views/organization/index.jsx           |  3 ++-
+ 9 files changed, 29 insertions(+), 13 deletions(-)
+
+diff --git a/packages/server/src/enterprise/controllers/account.controller.ts b/packages/server/src/enterprise/controllers/account.controller.ts
+index 4878b0ea3e9..7fd3fd6e055 100644
+--- a/packages/server/src/enterprise/controllers/account.controller.ts
++++ b/packages/server/src/enterprise/controllers/account.controller.ts
+@@ -85,6 +85,7 @@ export class AccountController {
+ 
+     public async logout(req: Request, res: Response, next: NextFunction) {
+         try {
++            const basePath = process.env.FLOWISE_BASE_PATH || ''
+             if (req.user) {
+                 const accountService = new AccountService()
+                 await accountService.logout(req.user)
+@@ -104,10 +105,10 @@ export class AccountController {
+                     res.clearCookie('connect.sid') // Clear the session cookie
+                     res.clearCookie('token') // Clear the JWT cookie
+                     res.clearCookie('refreshToken') // Clear the JWT cookie
+-                    return res.redirect('/login') // Redirect to the login page
++                    return res.redirect(`${basePath}/login`) // Redirect to the login page
+                 }
+             }
+-            return res.status(200).json({ message: 'logged_out', redirectTo: `/login` })
++            return res.status(200).json({ message: 'logged_out', redirectTo: `${basePath}/login` })
+         } catch (error) {
+             next(error)
+         }
+diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
+index bf43d74de3e..6017e958822 100644
+--- a/packages/server/src/index.ts
++++ b/packages/server/src/index.ts
+@@ -362,7 +362,15 @@ export class App {
+             })
+         } else {
+             // SPA fallback for all routes when no basePath
+-            this.app.use((req: Request, res: Response) => {
++            // Only serve index.html for routes that don't look like file requests
++            this.app.get('*', (req: Request, res: Response, next) => {
++                // Skip if it looks like a file request (has extension)
++                const ext = path.extname(req.path)
++                if (ext) {
++                    // It's a file request, let it 404 naturally
++                    return next()
++                }
++                // Otherwise serve the SPA
+                 res.sendFile(uiHtmlPath)
+             })
+         }
+diff --git a/packages/ui/index.html b/packages/ui/index.html
+index 9fcbcb60ae6..3db348b3a09 100644
+--- a/packages/ui/index.html
++++ b/packages/ui/index.html
+@@ -2,7 +2,7 @@
+ <html lang="en">
+     <head>
+         <title>Flowise - Build AI Agents, Visually</title>
+-        <link rel="icon" href="favicon.ico" />
++        <link rel="icon" href="/favicon.ico" />
+         <!-- Meta Tags-->
+         <meta charset="utf-8" />
+         <meta name="viewport" content="width=device-width, initial-scale=1" />
+@@ -12,8 +12,8 @@
+             name="description"
+             content="Open source generative AI development platform for building AI agents, LLM orchestration, and more"
+         />
+-        <link rel="manifest" href="manifest.json" />
+-        <link rel="apple-touch-icon" href="logo192.png" />
++        <link rel="manifest" href="/manifest.json" />
++        <link rel="apple-touch-icon" href="/logo192.png" />
+         <meta name="keywords" content="react, material-ui, workflow automation, llm, artificial-intelligence" />
+         <meta name="author" content="FlowiseAI" />
+         <!-- Open Graph / Facebook -->
+diff --git a/packages/ui/src/layout/MainLayout/Sidebar/MenuList/NavItem/index.jsx b/packages/ui/src/layout/MainLayout/Sidebar/MenuList/NavItem/index.jsx
+index 10445554bd0..b589db53761 100644
+--- a/packages/ui/src/layout/MainLayout/Sidebar/MenuList/NavItem/index.jsx
++++ b/packages/ui/src/layout/MainLayout/Sidebar/MenuList/NavItem/index.jsx
+@@ -9,7 +9,6 @@ import { Avatar, Chip, ListItemButton, ListItemIcon, ListItemText, Typography, u
+ 
+ // project imports
+ import { MENU_OPEN, SET_MENU } from '@/store/actions'
+-import config from '@/config'
+ 
+ // assets
+ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
+@@ -42,7 +41,7 @@ const NavItem = ({ item, level, navType, onClick, onUploadFile }) => {
+ 
+     let listItemProps = {
+         component: forwardRef(function ListItemPropsComponent(props, ref) {
+-            return <Link ref={ref} {...props} to={`${config.basename}${item.url}`} target={itemTarget} />
++            return <Link ref={ref} {...props} to={item.url} target={itemTarget} />
+         })
+     }
+     if (item?.external) {
+diff --git a/packages/ui/src/store/context/ErrorContext.jsx b/packages/ui/src/store/context/ErrorContext.jsx
+index 8f97bb98089..ba37ead75d4 100644
+--- a/packages/ui/src/store/context/ErrorContext.jsx
++++ b/packages/ui/src/store/context/ErrorContext.jsx
+@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
+ import { store } from '@/store'
+ import { logoutSuccess } from '@/store/reducers/authSlice'
+ import { ErrorMessage } from '../constant'
++import config from '@/config'
+ 
+ const ErrorContext = createContext()
+ 
+@@ -48,7 +49,11 @@ export const ErrorProvider = ({ children }) => {
+                     })
+                 } else {
+                     const currentPath = window.location.pathname
+-                    if (currentPath !== '/signin' && currentPath !== '/login') {
++                    const isAuthPage = currentPath === `${config.basename}/signin` ||
++                                       currentPath === `${config.basename}/login` ||
++                                       currentPath.endsWith('/signin') ||
++                                       currentPath.endsWith('/login')
++                    if (!isAuthPage) {
+                         store.dispatch(logoutSuccess())
+                         navigate('/login')
+                     }
+diff --git a/packages/ui/src/views/account/index.jsx b/packages/ui/src/views/account/index.jsx
+index b967207734b..f2979b8fb36 100644
+--- a/packages/ui/src/views/account/index.jsx
++++ b/packages/ui/src/views/account/index.jsx
+@@ -108,7 +108,7 @@ const AccountSettings = () => {
+         if (currentUser) {
+             getUserByIdApi.request(currentUser.id)
+         } else {
+-            window.location.href = '/login'
++            navigate('/login')
+         }
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [currentUser])
+diff --git a/packages/ui/src/views/auth/register.jsx b/packages/ui/src/views/auth/register.jsx
+index 3273f3402c3..8d0c9c2ca22 100644
+--- a/packages/ui/src/views/auth/register.jsx
++++ b/packages/ui/src/views/auth/register.jsx
+@@ -32,6 +32,7 @@ import AzureSSOLoginIcon from '@/assets/images/microsoft-azure.svg'
+ import { store } from '@/store'
+ import { loginSuccess } from '@/store/reducers/authSlice'
+ import { IconCircleCheck, IconExclamationCircle } from '@tabler/icons-react'
++import config from '@/config'
+ 
+ // ==============================|| Register ||============================== //
+ 
+@@ -178,7 +179,7 @@ const RegisterPage = () => {
+ 
+     const signInWithSSO = (ssoProvider) => {
+         //ssoLoginApi.request(ssoProvider)
+-        window.location.href = `/api/v1/${ssoProvider}/login`
++        window.location.href = `${config.basename}/api/v1/${ssoProvider}/login`
+     }
+ 
+     useEffect(() => {
+diff --git a/packages/ui/src/views/auth/signIn.jsx b/packages/ui/src/views/auth/signIn.jsx
+index f097cd425d4..58671ca77d3 100644
+--- a/packages/ui/src/views/auth/signIn.jsx
++++ b/packages/ui/src/views/auth/signIn.jsx
+@@ -28,6 +28,7 @@ import useNotifier from '@/utils/useNotifier'
+ // store
+ import { loginSuccess, logoutSuccess } from '@/store/reducers/authSlice'
+ import { store } from '@/store'
++import config from '@/config'
+ 
+ // icons
+ import AzureSSOLoginIcon from '@/assets/images/microsoft-azure.svg'
+@@ -161,7 +162,7 @@ const SignInPage = () => {
+     }, [authError])
+ 
+     const signInWithSSO = (ssoProvider) => {
+-        window.location.href = `/api/v1/${ssoProvider}/login`
++        window.location.href = `${config.basename}/api/v1/${ssoProvider}/login`
+     }
+ 
+     const handleResendVerification = async () => {
+diff --git a/packages/ui/src/views/organization/index.jsx b/packages/ui/src/views/organization/index.jsx
+index 72886d11486..2943b0cb465 100644
+--- a/packages/ui/src/views/organization/index.jsx
++++ b/packages/ui/src/views/organization/index.jsx
+@@ -30,6 +30,7 @@ import GoogleSSOLoginIcon from '@/assets/images/google.svg'
+ import AzureSSOLoginIcon from '@/assets/images/microsoft-azure.svg'
+ import { useConfig } from '@/store/context/ConfigContext'
+ import { IconCircleCheck, IconExclamationCircle } from '@tabler/icons-react'
++import config from '@/config'
+ 
+ // ==============================|| Organization & Admin User Setup ||============================== //
+ 
+@@ -233,7 +234,7 @@ const OrganizationSetupPage = () => {
+     }, [loginApi.data])
+ 
+     const signInWithSSO = (ssoProvider) => {
+-        window.location.href = `/api/v1/${ssoProvider}/login`
++        window.location.href = `${config.basename}/api/v1/${ssoProvider}/login`
+     }
+ 
+     return (

@@ -1,0 +1,223 @@
+From 34cf249f01ba0f72b6e9ce08396050cbc81b692e Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <github@kindlund.com>
+Date: Thu, 4 Jun 2026 11:42:47 -0400
+Subject: [PATCH 1/5] fix(server): don't deep-clone live node instances in
+ resolveVariables
+
+resolveVariables() deep-clones the ending node's data, which includes its already-built live
+`instance`. Deep-cloning a cached `openai` SDK client (or any native handle: gRPC channel, FAISS
+store) copies the prototype but bypasses the constructor, so the clone fails openai v6's private-
+member brand checks in OpenAI.buildURL -- every OpenAI-embeddings/RAG chatflow 500s at buildChatflow
+with "Cannot read private member from an object whose class did not declare it". Chat models are
+unaffected (they don't cache a client into the cloned data).
+
+Omit `instance` from the deep clone and re-attach the original (generalizes the previously-removed
+FAISS-only workaround to all live instances).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/utils/index.ts | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 2eeeb5b0eb6..82fe3af4622 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -27,7 +27,7 @@ import {
+     IVariableOverride,
+     IncomingInput
+ } from '../Interface'
+-import { cloneDeep, get, isEqual } from 'lodash'
++import { cloneDeep, get, isEqual, omit } from 'lodash'
+ import {
+     convertChatHistoryToText,
+     getInputVariables,
+@@ -1034,7 +1034,12 @@ export const resolveVariables = async (
+     availableVariables: IVariable[] = [],
+     variableOverrides: ICommonObject[] = []
+ ): Promise<INodeData> => {
+-    let flowNodeData = cloneDeep(reactFlowNodeData)
++    // Do not deep-clone a node's already-built live `instance` (e.g. an OpenAI SDK client, a gRPC
++    // channel, or a FAISS store). cloneDeep copies the prototype but bypasses the constructor, so the
++    // clone is missing from openai v6's private-member brand WeakSet and throws in OpenAI.buildURL:
++    // "Cannot read private member from an object whose class did not declare it".
++    let flowNodeData = cloneDeep(omit(reactFlowNodeData, ['instance']))
++    if (reactFlowNodeData.instance) flowNodeData.instance = reactFlowNodeData.instance
+ 
+     const getParamValues = async (paramsObj: ICommonObject) => {
+         for (const key in paramsObj) {
+
+From 2d63b3ba38ff0875170781e609db731b9a24258a Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <github@kindlund.com>
+Date: Thu, 4 Jun 2026 11:51:40 -0400
+Subject: [PATCH 2/5] address review (gemini-code-assist): nullish check +
+ buildFlow loop guard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Use `!= null` (repo idiom) instead of a truthy check when re-attaching the instance.
+- Apply the same omit-and-reattach to the cloneDeep in buildFlow(): a node re-evaluated in an
+  agentflow loop already has `.instance` populated, so deep-cloning it there hits the same
+  private-member brand error. (resolveVariables' guard alone can't help — buildFlow clones first.)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/utils/index.ts | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 82fe3af4622..5103f0b7ca9 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -586,7 +586,11 @@ export const buildFlow = async ({
+             const nodeModule = await import(nodeInstanceFilePath)
+             const newNodeInstance = new nodeModule.nodeClass()
+ 
+-            let flowNodeData = cloneDeep(reactFlowNode.data)
++            // Don't deep-clone a node's already-built live `instance` (re-evaluated in loops):
++            // cloneDeep copies the prototype but bypasses the constructor, breaking ES private-member
++            // brand checks (e.g. openai v6 OpenAI.buildURL). Omit it from the clone, re-attach the original.
++            let flowNodeData = cloneDeep(omit(reactFlowNode.data, ['instance']))
++            if (reactFlowNode.data.instance != null) flowNodeData.instance = reactFlowNode.data.instance
+ 
+             // Only override the config if its status is true
+             if (overrideConfig && apiOverrideStatus) {
+@@ -1039,7 +1043,7 @@ export const resolveVariables = async (
+     // clone is missing from openai v6's private-member brand WeakSet and throws in OpenAI.buildURL:
+     // "Cannot read private member from an object whose class did not declare it".
+     let flowNodeData = cloneDeep(omit(reactFlowNodeData, ['instance']))
+-    if (reactFlowNodeData.instance) flowNodeData.instance = reactFlowNodeData.instance
++    if (reactFlowNodeData.instance != null) flowNodeData.instance = reactFlowNodeData.instance
+ 
+     const getParamValues = async (paramsObj: ICommonObject) => {
+         for (const key in paramsObj) {
+
+From fe828c1e0aab48bc9ed261c26682b1960de20a38 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <github@kindlund.com>
+Date: Thu, 4 Jun 2026 12:13:45 -0400
+Subject: [PATCH 3/5] address review: use ES6 destructuring instead of
+ lodash.omit
+
+Exclude `instance` via `const { instance, ...rest } = data` and deep-clone `rest`, dropping the
+extra lodash `omit` import (more idiomatic/performant). Re-attach the original instance with a
+`!= null` check. Applies to both resolveVariables() and buildFlow().
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/utils/index.ts | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 5103f0b7ca9..e6e110cfd48 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -27,7 +27,7 @@ import {
+     IVariableOverride,
+     IncomingInput
+ } from '../Interface'
+-import { cloneDeep, get, isEqual, omit } from 'lodash'
++import { cloneDeep, get, isEqual } from 'lodash'
+ import {
+     convertChatHistoryToText,
+     getInputVariables,
+@@ -588,9 +588,10 @@ export const buildFlow = async ({
+ 
+             // Don't deep-clone a node's already-built live `instance` (re-evaluated in loops):
+             // cloneDeep copies the prototype but bypasses the constructor, breaking ES private-member
+-            // brand checks (e.g. openai v6 OpenAI.buildURL). Omit it from the clone, re-attach the original.
+-            let flowNodeData = cloneDeep(omit(reactFlowNode.data, ['instance']))
+-            if (reactFlowNode.data.instance != null) flowNodeData.instance = reactFlowNode.data.instance
++            // brand checks (e.g. openai v6 OpenAI.buildURL). Exclude it from the clone, re-attach the original.
++            const { instance, ...rest } = reactFlowNode.data
++            let flowNodeData = cloneDeep(rest)
++            if (instance != null) flowNodeData.instance = instance
+ 
+             // Only override the config if its status is true
+             if (overrideConfig && apiOverrideStatus) {
+@@ -1041,9 +1042,10 @@ export const resolveVariables = async (
+     // Do not deep-clone a node's already-built live `instance` (e.g. an OpenAI SDK client, a gRPC
+     // channel, or a FAISS store). cloneDeep copies the prototype but bypasses the constructor, so the
+     // clone is missing from openai v6's private-member brand WeakSet and throws in OpenAI.buildURL:
+-    // "Cannot read private member from an object whose class did not declare it".
+-    let flowNodeData = cloneDeep(omit(reactFlowNodeData, ['instance']))
+-    if (reactFlowNodeData.instance != null) flowNodeData.instance = reactFlowNodeData.instance
++    // "Cannot read private member from an object whose class did not declare it". Exclude + re-attach.
++    const { instance, ...rest } = reactFlowNodeData
++    let flowNodeData = cloneDeep(rest)
++    if (instance != null) flowNodeData.instance = instance
+ 
+     const getParamValues = async (paramsObj: ICommonObject) => {
+         for (const key in paramsObj) {
+
+From de62f44b667d4e18d395362c0a3d182b68efcf6e Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <github@kindlund.com>
+Date: Thu, 4 Jun 2026 12:22:38 -0400
+Subject: [PATCH 4/5] fix TS build + address review: cast clone to INodeData;
+ use !== undefined
+
+- The destructured-clone is `Omit<INodeData,'instance'>`, so re-assigning `.instance` failed
+  tsc (TS2339). Cast `cloneDeep(rest) as INodeData` to restore the optional `instance` field.
+- Use `instance !== undefined` (per review) so an explicit `null` instance is preserved.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/utils/index.ts | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index e6e110cfd48..e80eb601562 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -590,8 +590,8 @@ export const buildFlow = async ({
+             // cloneDeep copies the prototype but bypasses the constructor, breaking ES private-member
+             // brand checks (e.g. openai v6 OpenAI.buildURL). Exclude it from the clone, re-attach the original.
+             const { instance, ...rest } = reactFlowNode.data
+-            let flowNodeData = cloneDeep(rest)
+-            if (instance != null) flowNodeData.instance = instance
++            let flowNodeData = cloneDeep(rest) as INodeData
++            if (instance !== undefined) flowNodeData.instance = instance
+ 
+             // Only override the config if its status is true
+             if (overrideConfig && apiOverrideStatus) {
+@@ -1044,8 +1044,8 @@ export const resolveVariables = async (
+     // clone is missing from openai v6's private-member brand WeakSet and throws in OpenAI.buildURL:
+     // "Cannot read private member from an object whose class did not declare it". Exclude + re-attach.
+     const { instance, ...rest } = reactFlowNodeData
+-    let flowNodeData = cloneDeep(rest)
+-    if (instance != null) flowNodeData.instance = instance
++    let flowNodeData = cloneDeep(rest) as INodeData
++    if (instance !== undefined) flowNodeData.instance = instance
+ 
+     const getParamValues = async (paramsObj: ICommonObject) => {
+         for (const key in paramsObj) {
+
+From 6ae27bf3bd87436c0666dc96232644aac7b702e7 Mon Sep 17 00:00:00 2001
+From: Darien Kindlund <github@kindlund.com>
+Date: Thu, 4 Jun 2026 12:31:24 -0400
+Subject: [PATCH 5/5] address review: defensive nullish guard in
+ resolveVariables
+
+Return early if reactFlowNodeData is nullish (the destructuring would otherwise throw a less
+clear TypeError than the prior cloneDeep on edge-case/external callers).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ packages/server/src/utils/index.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index e80eb601562..aa49e0c969e 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -1039,6 +1039,10 @@ export const resolveVariables = async (
+     availableVariables: IVariable[] = [],
+     variableOverrides: ICommonObject[] = []
+ ): Promise<INodeData> => {
++    if (!reactFlowNodeData) {
++        return reactFlowNodeData
++    }
++
+     // Do not deep-clone a node's already-built live `instance` (e.g. an OpenAI SDK client, a gRPC
+     // channel, or a FAISS store). cloneDeep copies the prototype but bypasses the constructor, so the
+     // clone is missing from openai v6's private-member brand WeakSet and throws in OpenAI.buildURL:

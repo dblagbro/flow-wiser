@@ -1,0 +1,204 @@
+From 4ad296a84d40a4e3c47485cad9d306ba4ef4e6a5 Mon Sep 17 00:00:00 2001
+From: Kerolos Atallah <kerolosmalak@gmail.com>
+Date: Wed, 5 Aug 2026 14:39:44 +0300
+Subject: [PATCH] feat: add OutageDeck MCP tool
+
+---
+ .../MCP/OutageDeck/OutageDeckMCP.test.ts      |  62 +++++++++++
+ .../tools/MCP/OutageDeck/OutageDeckMCP.ts     | 103 ++++++++++++++++++
+ .../nodes/tools/MCP/OutageDeck/outagedeck.svg |   7 ++
+ 3 files changed, 172 insertions(+)
+ create mode 100644 packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.test.ts
+ create mode 100644 packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.ts
+ create mode 100644 packages/components/nodes/tools/MCP/OutageDeck/outagedeck.svg
+
+diff --git a/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.test.ts b/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.test.ts
+new file mode 100644
+index 00000000000..0d25d209e22
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.test.ts
+@@ -0,0 +1,62 @@
++import { INodeData } from '../../../../src/Interface'
++
++const mockInitialize = jest.fn()
++const mockTools = [
++    { name: 'get_provider_status', description: 'Get provider status' },
++    { name: 'search', description: 'Search OutageDeck' },
++    { name: 'create_alert', description: 'Create an account alert' }
++]
++
++jest.mock('../core', () => ({
++    MCPToolkit: jest.fn().mockImplementation(() => ({
++        initialize: mockInitialize,
++        tools: mockTools
++    }))
++}))
++
++const { nodeClass: OutageDeck_MCP } = require('./OutageDeckMCP')
++
++function createNodeData(mcpActions?: string | string[]): INodeData {
++    return {
++        id: 'outagedeck-test',
++        label: 'OutageDeck MCP',
++        name: 'outageDeckMCP',
++        type: 'OutageDeckMCP',
++        icon: 'outagedeck.svg',
++        version: 1.0,
++        category: 'Tools (MCP)',
++        baseClasses: ['Tool'],
++        inputs: { mcpActions }
++    }
++}
++
++describe('OutageDeck MCP', () => {
++    beforeEach(() => {
++        mockInitialize.mockClear()
++    })
++
++    it('lists only public read-only actions', async () => {
++        const node = new OutageDeck_MCP()
++
++        const actions = await node.loadMethods.listActions(createNodeData(), {})
++
++        expect(actions.map((action: { name: string }) => action.name)).toEqual(['get_provider_status', 'search'])
++        expect(mockInitialize).toHaveBeenCalledTimes(1)
++    })
++
++    it('returns only the selected public actions', async () => {
++        const node = new OutageDeck_MCP()
++
++        const tools = await node.init(createNodeData(JSON.stringify(['search', 'create_alert'])), '', {})
++
++        expect(tools.map((tool: { name: string }) => tool.name)).toEqual(['search'])
++    })
++
++    it('declares a keyless remote MCP component', () => {
++        const node = new OutageDeck_MCP()
++
++        expect(node.credential).toBeUndefined()
++        expect(node.documentation).toContain('utm_campaign=flowise_mcp')
++        expect(node.description).toContain('read-only')
++    })
++})
+diff --git a/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.ts b/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.ts
+new file mode 100644
+index 00000000000..004d15067d7
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/OutageDeck/OutageDeckMCP.ts
+@@ -0,0 +1,103 @@
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../../src/Interface'
++import { MCPToolkit } from '../core'
++
++const OUTAGEDECK_MCP_URL = 'https://outagedeck.com/api/mcp'
++const PUBLIC_TOOL_NAMES = new Set([
++    'get_provider_status',
++    'check_my_stack',
++    'list_active_incidents',
++    'get_incident_details',
++    'get_uptime',
++    'get_outage_report',
++    'search_providers',
++    'search',
++    'fetch'
++])
++
++class OutageDeck_MCP implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    documentation: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'OutageDeck MCP'
++        this.name = 'outageDeckMCP'
++        this.version = 1.0
++        this.type = 'OutageDeck MCP Tool'
++        this.icon = 'outagedeck.svg'
++        this.category = 'Tools (MCP)'
++        this.description = 'Keyless, read-only cloud and SaaS status, incident timelines, and uptime history for 170+ providers'
++        this.documentation = 'https://outagedeck.com/developers/mcp?utm_source=flowise&utm_medium=integration&utm_campaign=flowise_mcp'
++        this.inputs = [
++            {
++                label: 'Available Actions',
++                name: 'mcpActions',
++                type: 'asyncMultiOptions',
++                loadMethod: 'listActions',
++                refresh: true
++            }
++        ]
++        this.baseClasses = ['Tool']
++    }
++
++    loadMethods = {
++        listActions: async (nodeData: INodeData, options?: ICommonObject): Promise<INodeOptionsValue[]> => {
++            try {
++                const toolset = await this.getTools(nodeData, options ?? {})
++                toolset.sort((a: Tool, b: Tool) => a.name.localeCompare(b.name))
++
++                return toolset.map(({ name, description }) => ({
++                    label: name.toUpperCase(),
++                    name,
++                    description: description || name
++                }))
++            } catch (error) {
++                console.error('Error listing OutageDeck actions:', error)
++                return [
++                    {
++                        label: 'No Available Actions',
++                        name: 'error',
++                        description: 'OutageDeck could not be reached. Refresh to retry.'
++                    }
++                ]
++            }
++        }
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<Tool[]> {
++        const tools = await this.getTools(nodeData, options)
++        const selectedActions = nodeData.inputs?.mcpActions
++        let mcpActions: string[] = []
++
++        if (selectedActions) {
++            try {
++                mcpActions = typeof selectedActions === 'string' ? JSON.parse(selectedActions) : selectedActions
++            } catch (error) {
++                console.error('Error parsing OutageDeck MCP actions:', error)
++            }
++        }
++
++        return tools.filter((tool: Tool) => mcpActions.includes(tool.name))
++    }
++
++    async getTools(_: INodeData, __: ICommonObject): Promise<Tool[]> {
++        const serverParams = {
++            type: 'http',
++            url: OUTAGEDECK_MCP_URL
++        }
++        const toolkit = new MCPToolkit(serverParams, 'http')
++        await toolkit.initialize()
++
++        return (toolkit.tools ?? []).filter((tool: Tool) => PUBLIC_TOOL_NAMES.has(tool.name)) as Tool[]
++    }
++}
++
++module.exports = { nodeClass: OutageDeck_MCP }
+diff --git a/packages/components/nodes/tools/MCP/OutageDeck/outagedeck.svg b/packages/components/nodes/tools/MCP/OutageDeck/outagedeck.svg
+new file mode 100644
+index 00000000000..ea6d846d343
+--- /dev/null
++++ b/packages/components/nodes/tools/MCP/OutageDeck/outagedeck.svg
+@@ -0,0 +1,7 @@
++<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <rect width="400" height="400" rx="84" fill="#111827"/>
++  <rect x="88" y="94" width="162" height="51" rx="25.5" fill="#F8FAFC"/>
++  <circle cx="287" cy="119.5" r="28.5" fill="#34D399"/>
++  <rect x="88" y="175" width="225" height="51" rx="25.5" fill="#CBD5E1"/>
++  <rect x="88" y="256" width="175" height="51" rx="25.5" fill="#718096"/>
++</svg>

@@ -1,0 +1,232 @@
+From b37e1aacd3cebc79cbc5f678f6b03e7f72c7317e Mon Sep 17 00:00:00 2001
+From: Ilango Rajagopal <ilango.rajagopal@flowiseai.com>
+Date: Wed, 5 Aug 2026 14:20:58 +0530
+Subject: [PATCH] fix: flowise-603
+
+---
+ .../controllers/openai-assistants/index.ts    | 31 +++++++++++++++++--
+ .../src/controllers/text-to-speech/index.ts   | 10 +++++-
+ .../routes/openai-assistants-files/index.ts   | 10 +++++-
+ .../server/src/routes/text-to-speech/index.ts |  3 +-
+ .../server/src/services/assistants/index.ts   |  3 +-
+ .../src/services/openai-assistants/index.ts   | 15 +++++----
+ .../src/services/text-to-speech/index.ts      |  5 ++-
+ 7 files changed, 63 insertions(+), 14 deletions(-)
+
+diff --git a/packages/server/src/controllers/openai-assistants/index.ts b/packages/server/src/controllers/openai-assistants/index.ts
+index fc49f0bc9ed..45f340af971 100644
+--- a/packages/server/src/controllers/openai-assistants/index.ts
++++ b/packages/server/src/controllers/openai-assistants/index.ts
+@@ -19,7 +19,14 @@ const getAllOpenaiAssistants = async (req: Request, res: Response, next: NextFun
+                 `Error: openaiAssistantsController.getAllOpenaiAssistants - credential not provided!`
+             )
+         }
+-        const apiResponse = await openaiAssistantsService.getAllOpenaiAssistants(req.query.credential as string)
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: openaiAssistantsController.getAllOpenaiAssistants - workspace ${workspaceId} not found!`
++            )
++        }
++        const apiResponse = await openaiAssistantsService.getAllOpenaiAssistants(req.query.credential as string, workspaceId)
+         return res.json(apiResponse)
+     } catch (error) {
+         next(error)
+@@ -41,7 +48,18 @@ const getSingleOpenaiAssistant = async (req: Request, res: Response, next: NextF
+                 `Error: openaiAssistantsController.getSingleOpenaiAssistant - credential not provided!`
+             )
+         }
+-        const apiResponse = await openaiAssistantsService.getSingleOpenaiAssistant(req.query.credential as string, req.params.id)
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: openaiAssistantsController.getSingleOpenaiAssistant - workspace ${workspaceId} not found!`
++            )
++        }
++        const apiResponse = await openaiAssistantsService.getSingleOpenaiAssistant(
++            req.query.credential as string,
++            req.params.id,
++            workspaceId
++        )
+         return res.json(apiResponse)
+     } catch (error) {
+         next(error)
+@@ -98,6 +116,13 @@ const uploadAssistantFiles = async (req: Request, res: Response, next: NextFunct
+                 `Error: openaiAssistantsVectorStoreController.uploadFilesToAssistantVectorStore - credential not provided!`
+             )
+         }
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: openaiAssistantsController.uploadAssistantFiles - workspace ${workspaceId} not found!`
++            )
++        }
+         const files = req.files ?? []
+         const uploadFiles: { filePath: string; fileName: string }[] = []
+ 
+@@ -116,7 +141,7 @@ const uploadAssistantFiles = async (req: Request, res: Response, next: NextFunct
+             }
+         }
+ 
+-        const apiResponse = await openaiAssistantsService.uploadFilesToAssistant(req.query.credential as string, uploadFiles)
++        const apiResponse = await openaiAssistantsService.uploadFilesToAssistant(req.query.credential as string, uploadFiles, workspaceId)
+         return res.json(apiResponse)
+     } catch (error) {
+         next(error)
+diff --git a/packages/server/src/controllers/text-to-speech/index.ts b/packages/server/src/controllers/text-to-speech/index.ts
+index d2d848e5326..9671a6214bc 100644
+--- a/packages/server/src/controllers/text-to-speech/index.ts
++++ b/packages/server/src/controllers/text-to-speech/index.ts
+@@ -224,7 +224,15 @@ const getVoices = async (req: Request, res: Response, next: NextFunction) => {
+             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, `Error: textToSpeechController.getVoices - provider not provided!`)
+         }
+ 
+-        const voices = await textToSpeechService.getVoices(provider as any, credentialId as string)
++        const workspaceId = req.user?.activeWorkspaceId
++        if (!workspaceId) {
++            throw new InternalFlowiseError(
++                StatusCodes.NOT_FOUND,
++                `Error: textToSpeechController.getVoices - workspace ${workspaceId} not found!`
++            )
++        }
++
++        const voices = await textToSpeechService.getVoices(provider as any, credentialId as string, workspaceId)
+ 
+         return res.json(voices)
+     } catch (error) {
+diff --git a/packages/server/src/routes/openai-assistants-files/index.ts b/packages/server/src/routes/openai-assistants-files/index.ts
+index 302f8c2f82e..d3865be6735 100644
+--- a/packages/server/src/routes/openai-assistants-files/index.ts
++++ b/packages/server/src/routes/openai-assistants-files/index.ts
+@@ -1,10 +1,18 @@
+ import express from 'express'
+ import openaiAssistantsController from '../../controllers/openai-assistants'
+ import { getMulterStorage } from '../../utils'
++import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+ 
+ const router = express.Router()
+ 
+ router.post('/download/', openaiAssistantsController.getFileFromAssistant)
+-router.post('/upload/', getMulterStorage().array('files'), openaiAssistantsController.uploadAssistantFiles)
++
++// permission check must precede multer to reject unauthorized requests before file parsing
++router.post(
++    '/upload/',
++    checkAnyPermission('assistants:create,assistants:update'),
++    getMulterStorage().array('files'),
++    openaiAssistantsController.uploadAssistantFiles
++)
+ 
+ export default router
+diff --git a/packages/server/src/routes/text-to-speech/index.ts b/packages/server/src/routes/text-to-speech/index.ts
+index 56b892a535f..d41373aa1cc 100644
+--- a/packages/server/src/routes/text-to-speech/index.ts
++++ b/packages/server/src/routes/text-to-speech/index.ts
+@@ -1,5 +1,6 @@
+ import express from 'express'
+ import textToSpeechController from '../../controllers/text-to-speech'
++import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+ 
+ const router = express.Router()
+ 
+@@ -7,6 +8,6 @@ router.post('/generate', textToSpeechController.generateTextToSpeech)
+ 
+ router.post('/abort', textToSpeechController.abortTextToSpeech)
+ 
+-router.get('/voices', textToSpeechController.getVoices)
++router.get('/voices', checkAnyPermission('chatflows:config,agentflows:config'), textToSpeechController.getVoices)
+ 
+ export default router
+diff --git a/packages/server/src/services/assistants/index.ts b/packages/server/src/services/assistants/index.ts
+index 25eed15f2b9..b2bc22d4df7 100644
+--- a/packages/server/src/services/assistants/index.ts
++++ b/packages/server/src/services/assistants/index.ts
+@@ -183,7 +183,8 @@ const deleteAssistant = async (assistantId: string, isDeleteBoth: any, workspace
+         try {
+             const assistantDetails = JSON.parse(assistant.details)
+             const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
+-                id: assistant.credential
++                id: assistant.credential,
++                workspaceId: workspaceId
+             })
+ 
+             if (!credential) {
+diff --git a/packages/server/src/services/openai-assistants/index.ts b/packages/server/src/services/openai-assistants/index.ts
+index e9ccf43d4bd..99724b3d918 100644
+--- a/packages/server/src/services/openai-assistants/index.ts
++++ b/packages/server/src/services/openai-assistants/index.ts
+@@ -12,11 +12,12 @@ import { getFileFromUpload, removeSpecificFileFromUpload } from 'flowise-compone
+ // ----------------------------------------
+ 
+ // List available assistants
+-const getAllOpenaiAssistants = async (credentialId: string): Promise<any> => {
++const getAllOpenaiAssistants = async (credentialId: string, workspaceId: string): Promise<any> => {
+     try {
+         const appServer = getRunningExpressApp()
+         const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
+-            id: credentialId
++            id: credentialId,
++            workspaceId: workspaceId
+         })
+         if (!credential) {
+             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Credential ${credentialId} not found in the database!`)
+@@ -40,11 +41,12 @@ const getAllOpenaiAssistants = async (credentialId: string): Promise<any> => {
+ }
+ 
+ // Get assistant object
+-const getSingleOpenaiAssistant = async (credentialId: string, assistantId: string): Promise<any> => {
++const getSingleOpenaiAssistant = async (credentialId: string, assistantId: string, workspaceId: string): Promise<any> => {
+     try {
+         const appServer = getRunningExpressApp()
+         const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
+-            id: credentialId
++            id: credentialId,
++            workspaceId: workspaceId
+         })
+         if (!credential) {
+             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Credential ${credentialId} not found in the database!`)
+@@ -82,10 +84,11 @@ const getSingleOpenaiAssistant = async (credentialId: string, assistantId: strin
+     }
+ }
+ 
+-const uploadFilesToAssistant = async (credentialId: string, files: { filePath: string; fileName: string }[]) => {
++const uploadFilesToAssistant = async (credentialId: string, files: { filePath: string; fileName: string }[], workspaceId: string) => {
+     const appServer = getRunningExpressApp()
+     const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
+-        id: credentialId
++        id: credentialId,
++        workspaceId: workspaceId
+     })
+     if (!credential) {
+         throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Credential ${credentialId} not found in the database!`)
+diff --git a/packages/server/src/services/text-to-speech/index.ts b/packages/server/src/services/text-to-speech/index.ts
+index 22a11ede7eb..c975bfb02c1 100644
+--- a/packages/server/src/services/text-to-speech/index.ts
++++ b/packages/server/src/services/text-to-speech/index.ts
+@@ -4,6 +4,7 @@ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+ import { getVoices } from 'flowise-components'
+ import { databaseEntities } from '../../utils'
++import credentialsService from '../credentials'
+ 
+ export enum TextToSpeechProvider {
+     OPENAI = 'openai',
+@@ -23,12 +24,14 @@ export interface TTSResponse {
+     contentType: string
+ }
+ 
+-const getVoicesForProvider = async (provider: string, credentialId?: string): Promise<any[]> => {
++const getVoicesForProvider = async (provider: string, credentialId: string | undefined, workspaceId: string): Promise<any[]> => {
+     try {
+         if (!credentialId) {
+             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Credential ID required for this provider')
+         }
+ 
++        await credentialsService.assertCredentialInWorkspace(credentialId, workspaceId)
++
+         const appServer = getRunningExpressApp()
+         const options = {
+             orgId: '',

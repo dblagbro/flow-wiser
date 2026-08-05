@@ -1,0 +1,220 @@
+From 85e97b26eab6e04f6c73c2afc5577cd2b6e2be8f Mon Sep 17 00:00:00 2001
+From: Iokin Pardo <iokinpardo@users.noreply.github.com>
+Date: Sun, 2 Nov 2025 20:03:24 +0100
+Subject: [PATCH] fix: ignore disconnected agentflow nodes
+
+---
+ README.md                                     |  9 +++
+ packages/server/src/utils/buildAgentflow.ts   | 63 +++++++++++++++++-
+ packages/server/test/index.test.ts            |  2 +
+ .../test/utils/build-agentflow.util.test.ts   | 64 +++++++++++++++++++
+ 4 files changed, 135 insertions(+), 3 deletions(-)
+ create mode 100644 packages/server/test/utils/build-agentflow.util.test.ts
+
+diff --git a/README.md b/README.md
+index 1c7eb27e92d..9b7f79ac90e 100644
+--- a/README.md
++++ b/README.md
+@@ -24,6 +24,7 @@ English | [繁體中文](./i18n/README-TW.md) | [简体中文](./i18n/README-ZH.
+ ## 📚 Table of Contents
+ 
+ -   [⚡ Quick Start](#-quick-start)
++-   [✨ Features](#-features)
+ -   [🐳 Docker](#-docker)
+ -   [👨‍💻 Developers](#-developers)
+ -   [🌱 Env Variables](#-env-variables)
+@@ -50,6 +51,14 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
+ 
+ 3. Open [http://localhost:3000](http://localhost:3000)
+ 
++## ✨ Features
++
++### Agentflow disconnected node tolerance
++
++-   **Purpose / What it does:** Allows Agentflow executions to ignore nodes on the canvas that are not connected to the Start node, so unfinished ideas can remain while testing.
++-   **Usage example:** Leave experimental Agent or Condition nodes detached from Start and run the flow—only the connected graph executes.
++-   **Dependencies / breaking changes:** None.
++
+ ## 🐳 Docker
+ 
+ ### Docker Compose
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index 5144eacd58f..e45c16aeba4 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1439,7 +1439,58 @@ const executeNode = async ({
+     }
+ }
+ 
+-const checkForMultipleStartNodes = (startingNodeIds: string[], isRecursive: boolean, nodes: IReactFlowNode[]) => {
++const getReachableNodesFromStart = (graph: INodeDirectedGraph, startNodeId: string) => {
++    const visited = new Set<string>()
++    const stack = [startNodeId]
++
++    while (stack.length) {
++        const currentNodeId = stack.pop() as string
++        if (visited.has(currentNodeId)) {
++            continue
++        }
++
++        visited.add(currentNodeId)
++
++        const neighbours = graph[currentNodeId] ?? []
++        for (const neighbour of neighbours) {
++            if (!visited.has(neighbour)) {
++                stack.push(neighbour)
++            }
++        }
++    }
++
++    return visited
++}
++
++const filterDisconnectedStartingNodes = (
++    startingNodeIds: string[],
++    graph: INodeDirectedGraph,
++    nodes: IReactFlowNode[]
++) => {
++    if (!startingNodeIds.length) {
++        return startingNodeIds
++    }
++
++    const startAgentflowNode = nodes.find((node) => node.data.name === 'startAgentflow')
++    if (!startAgentflowNode) {
++        return startingNodeIds
++    }
++
++    const reachableNodes = getReachableNodesFromStart(graph, startAgentflowNode.id)
++    if (!reachableNodes.size) {
++        return startingNodeIds
++    }
++
++    const filteredStartingNodes = startingNodeIds.filter((nodeId) => reachableNodes.has(nodeId))
++
++    return filteredStartingNodes.length ? filteredStartingNodes : startingNodeIds
++}
++
++const checkForMultipleStartNodes = (
++    startingNodeIds: string[],
++    isRecursive: boolean,
++    nodes: IReactFlowNode[]
++) => {
+     // For non-recursive, loop through and check if each starting node is inside an iteration node, if yes, delete it
+     const clonedStartingNodeIds = [...startingNodeIds]
+     for (const nodeId of clonedStartingNodeIds) {
+@@ -1758,7 +1809,8 @@ export const executeAgentFlow = async ({
+         humanInput.startNodeId = startNodeId
+     } else if (isRecursive && parentExecutionId) {
+         const { startingNodeIds: startingNodeIdsFromFlow } = getStartingNode(nodeDependencies)
+-        startingNodeIds.push(...startingNodeIdsFromFlow)
++        const filteredStartingNodeIds = filterDisconnectedStartingNodes(startingNodeIdsFromFlow, graph, nodes)
++        startingNodeIds.push(...filteredStartingNodeIds)
+         checkForMultipleStartNodes(startingNodeIds, isRecursive, nodes)
+ 
+         // For recursive calls with a valid parent execution ID, don't create a new execution
+@@ -1777,7 +1829,8 @@ export const executeAgentFlow = async ({
+         }
+     } else {
+         const { startingNodeIds: startingNodeIdsFromFlow } = getStartingNode(nodeDependencies)
+-        startingNodeIds.push(...startingNodeIdsFromFlow)
++        const filteredStartingNodeIds = filterDisconnectedStartingNodes(startingNodeIdsFromFlow, graph, nodes)
++        startingNodeIds.push(...filteredStartingNodeIds)
+         checkForMultipleStartNodes(startingNodeIds, isRecursive, nodes)
+ 
+         // Only create a new execution if this is not a recursive call
+@@ -2280,3 +2333,7 @@ export const executeAgentFlow = async ({
+ 
+     return result
+ }
++
++export const __test__ = {
++    filterDisconnectedStartingNodes
++}
+diff --git a/packages/server/test/index.test.ts b/packages/server/test/index.test.ts
+index 8c038f44f62..4b67cb6afac 100644
+--- a/packages/server/test/index.test.ts
++++ b/packages/server/test/index.test.ts
+@@ -3,6 +3,7 @@ import { getRunningExpressApp } from '../src/utils/getRunningExpressApp'
+ import { organizationUserRouteTest } from './routes/v1/organization-user.route.test'
+ import { userRouteTest } from './routes/v1/user.route.test'
+ import { apiKeyTest } from './utils/api-key.util.test'
++import { buildAgentflowTest } from './utils/build-agentflow.util.test'
+ 
+ // ⏱️ Extend test timeout to 6 minutes for long setups (increase as tests grow)
+ jest.setTimeout(360000)
+@@ -25,4 +26,5 @@ describe('Routes Test', () => {
+ 
+ describe('Utils Test', () => {
+     apiKeyTest()
++    buildAgentflowTest()
+ })
+diff --git a/packages/server/test/utils/build-agentflow.util.test.ts b/packages/server/test/utils/build-agentflow.util.test.ts
+new file mode 100644
+index 00000000000..0b79446a864
+--- /dev/null
++++ b/packages/server/test/utils/build-agentflow.util.test.ts
+@@ -0,0 +1,64 @@
++import { constructGraphs, getStartingNode } from '../../src/utils'
++import { __test__ } from '../../src/utils/buildAgentflow'
++
++const createNode = (id: string, name: string) =>
++    ({
++        id,
++        position: { x: 0, y: 0 },
++        type: 'default',
++        data: {
++            id,
++            label: name,
++            name,
++            category: 'test',
++            inputs: {},
++            outputs: {},
++            summary: '',
++            description: '',
++            inputAnchors: [],
++            inputParams: [],
++            outputAnchors: []
++        } as any,
++        positionAbsolute: { x: 0, y: 0 },
++        z: 0,
++        handleBounds: { source: [], target: [] },
++        width: 0,
++        height: 0,
++        selected: false,
++        dragging: false
++    })
++
++const createEdge = (source: string, target: string) => ({
++    source,
++    sourceHandle: 'output',
++    target,
++    targetHandle: 'input',
++    type: 'default',
++    id: `${source}->${target}`,
++    data: { label: '' }
++})
++
++describe('buildAgentflow utils', () => {
++    it('filters out starting nodes that are not connected to startAgentflow', () => {
++        const startNode = createNode('start-node', 'startAgentflow')
++        const connectedNode = createNode('connected-node', 'Agent')
++        const disconnectedNode = createNode('floating-node', 'LLM')
++
++        const nodes = [startNode, connectedNode, disconnectedNode]
++        const edges = [createEdge(startNode.id, connectedNode.id)]
++
++        const { graph, nodeDependencies } = constructGraphs(nodes, edges)
++        const { startingNodeIds } = getStartingNode(nodeDependencies)
++
++        expect(startingNodeIds).toEqual(expect.arrayContaining([startNode.id, disconnectedNode.id]))
++
++        const filteredStartingNodeIds = __test__.filterDisconnectedStartingNodes(startingNodeIds, graph, nodes)
++
++        expect(filteredStartingNodeIds).toContain(startNode.id)
++        expect(filteredStartingNodeIds).not.toContain(disconnectedNode.id)
++    })
++})
++
++export const buildAgentflowTest = () => {
++    // Tests are registered at import time for compatibility with existing index runner.
++}

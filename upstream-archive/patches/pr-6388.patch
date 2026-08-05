@@ -1,0 +1,22 @@
+From 160556625b90a040be8e4e065630c5bc27ea1b63 Mon Sep 17 00:00:00 2001
+From: charliesheh <59520443+charliesheh@users.noreply.github.com>
+Date: Thu, 14 May 2026 12:29:04 -0700
+Subject: [PATCH] Expose artifacts in Agentflow variable resolution
+
+---
+ packages/server/src/utils/buildAgentflow.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index e38ccbec092..935490ea67d 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -441,7 +441,7 @@ export const resolveVariables = async (
+             if (nodeData && nodeData.data) {
+                 // Replace the reference with actual value
+                 const nodeOutput = nodeData.data['output'] as ICommonObject
+-                const actualValue = nodeOutput?.content ?? nodeOutput?.http?.data
++                const actualValue = nodeOutput?.content ?? nodeOutput?.http?.data ?? nodeOutput?.artifacts
+                 // For arrays and objects, stringify them to prevent toString() conversion issues
+                 const formattedValue =
+                     Array.isArray(actualValue) || (typeof actualValue === 'object' && actualValue !== null)

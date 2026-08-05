@@ -1,0 +1,568 @@
+From bed1faefe140d367b396e1c9f16caebd8a0c9afb Mon Sep 17 00:00:00 2001
+From: Aladdin Aliyev <213189260+aliyevaladddin@users.noreply.github.com>
+Date: Wed, 27 May 2026 23:04:31 +0000
+Subject: [PATCH] fix: correct spelling of "separate" in documentation across
+ multiple files
+
+---
+ packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts | 2 +-
+ .../nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts      | 2 +-
+ .../components/nodes/documentloaders/Airtable/Airtable.ts     | 2 +-
+ .../ApifyWebsiteContentCrawler/ApifyWebsiteContentCrawler.ts  | 2 +-
+ packages/components/nodes/documentloaders/Cheerio/Cheerio.ts  | 2 +-
+ .../components/nodes/documentloaders/Confluence/Confluence.ts | 2 +-
+ packages/components/nodes/documentloaders/Csv/Csv.ts          | 2 +-
+ packages/components/nodes/documentloaders/Docx/Docx.ts        | 2 +-
+ packages/components/nodes/documentloaders/Figma/Figma.ts      | 4 ++--
+ packages/components/nodes/documentloaders/File/File.ts        | 2 +-
+ packages/components/nodes/documentloaders/Folder/Folder.ts    | 2 +-
+ packages/components/nodes/documentloaders/Gitbook/Gitbook.ts  | 2 +-
+ packages/components/nodes/documentloaders/Github/Github.ts    | 2 +-
+ .../nodes/documentloaders/GoogleDrive/GoogleDrive.ts          | 2 +-
+ .../nodes/documentloaders/GoogleSheets/GoogleSheets.ts        | 2 +-
+ packages/components/nodes/documentloaders/Jira/Jira.ts        | 2 +-
+ packages/components/nodes/documentloaders/Json/Json.ts        | 2 +-
+ .../components/nodes/documentloaders/Jsonlines/Jsonlines.ts   | 2 +-
+ .../nodes/documentloaders/MicrosoftExcel/MicrosoftExcel.ts    | 2 +-
+ .../MicrosoftPowerpoint/MicrosoftPowerpoint.ts                | 2 +-
+ .../nodes/documentloaders/MicrosoftWord/MicrosoftWord.ts      | 2 +-
+ packages/components/nodes/documentloaders/Notion/NotionDB.ts  | 2 +-
+ .../components/nodes/documentloaders/Notion/NotionFolder.ts   | 2 +-
+ .../components/nodes/documentloaders/Notion/NotionPage.ts     | 2 +-
+ packages/components/nodes/documentloaders/Pdf/Pdf.ts          | 2 +-
+ .../components/nodes/documentloaders/PlainText/PlainText.ts   | 2 +-
+ .../components/nodes/documentloaders/Playwright/Playwright.ts | 2 +-
+ .../components/nodes/documentloaders/Puppeteer/Puppeteer.ts   | 2 +-
+ .../nodes/documentloaders/S3Directory/S3Directory.ts          | 2 +-
+ packages/components/nodes/documentloaders/S3File/S3File.ts    | 4 ++--
+ .../components/nodes/documentloaders/SearchApi/SearchAPI.ts   | 2 +-
+ packages/components/nodes/documentloaders/SerpApi/SerpAPI.ts  | 2 +-
+ packages/components/nodes/documentloaders/Spider/Spider.ts    | 2 +-
+ packages/components/nodes/documentloaders/Text/Text.ts        | 2 +-
+ .../nodes/documentloaders/Unstructured/UnstructuredFile.ts    | 2 +-
+ packages/components/nodes/llms/Ollama/Ollama.ts               | 2 +-
+ packages/server/marketplaces/chatflows/Local QnA.json         | 2 +-
+ packages/server/marketplaces/chatflows/SQL DB Chain.json      | 4 ++--
+ 38 files changed, 41 insertions(+), 41 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
+index b18d1eb3e16..94d3bb4248b 100644
+--- a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
++++ b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts
+@@ -212,7 +212,7 @@ class ChatOllama_ChatModels implements INode {
+                 rows: 4,
+                 placeholder: 'AI assistant:',
+                 description:
+-                    'Sets the stop sequences to use. Use comma to seperate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
++                    'Sets the stop sequences to use. Use comma to separate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
+                 optional: true,
+                 additionalParams: true
+             },
+diff --git a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
+index c33c1a985e8..e198f187191 100644
+--- a/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
++++ b/packages/components/nodes/chatmodels/ChatOllama/ChatOllama_LlamaIndex.ts
+@@ -158,7 +158,7 @@ class ChatOllama_LlamaIndex_ChatModels implements INode {
+                 rows: 4,
+                 placeholder: 'AI assistant:',
+                 description:
+-                    'Sets the stop sequences to use. Use comma to seperate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
++                    'Sets the stop sequences to use. Use comma to separate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
+                 optional: true,
+                 additionalParams: true
+             },
+diff --git a/packages/components/nodes/documentloaders/Airtable/Airtable.ts b/packages/components/nodes/documentloaders/Airtable/Airtable.ts
+index fef69300594..410ff78a723 100644
+--- a/packages/components/nodes/documentloaders/Airtable/Airtable.ts
++++ b/packages/components/nodes/documentloaders/Airtable/Airtable.ts
+@@ -109,7 +109,7 @@ class Airtable_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/ApifyWebsiteContentCrawler/ApifyWebsiteContentCrawler.ts b/packages/components/nodes/documentloaders/ApifyWebsiteContentCrawler/ApifyWebsiteContentCrawler.ts
+index 281bd76f448..be6497fafbb 100644
+--- a/packages/components/nodes/documentloaders/ApifyWebsiteContentCrawler/ApifyWebsiteContentCrawler.ts
++++ b/packages/components/nodes/documentloaders/ApifyWebsiteContentCrawler/ApifyWebsiteContentCrawler.ts
+@@ -113,7 +113,7 @@ class ApifyWebsiteContentCrawler_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Cheerio/Cheerio.ts b/packages/components/nodes/documentloaders/Cheerio/Cheerio.ts
+index e062fb4c43d..08af05216d5 100644
+--- a/packages/components/nodes/documentloaders/Cheerio/Cheerio.ts
++++ b/packages/components/nodes/documentloaders/Cheerio/Cheerio.ts
+@@ -94,7 +94,7 @@ class Cheerio_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Confluence/Confluence.ts b/packages/components/nodes/documentloaders/Confluence/Confluence.ts
+index ddf6ec87822..6c4ea901729 100644
+--- a/packages/components/nodes/documentloaders/Confluence/Confluence.ts
++++ b/packages/components/nodes/documentloaders/Confluence/Confluence.ts
+@@ -74,7 +74,7 @@ class Confluence_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Csv/Csv.ts b/packages/components/nodes/documentloaders/Csv/Csv.ts
+index 5ada8824081..2c1ce3f2ebd 100644
+--- a/packages/components/nodes/documentloaders/Csv/Csv.ts
++++ b/packages/components/nodes/documentloaders/Csv/Csv.ts
+@@ -59,7 +59,7 @@ class Csv_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Docx/Docx.ts b/packages/components/nodes/documentloaders/Docx/Docx.ts
+index 6a8c3385b79..b9beb95ee66 100644
+--- a/packages/components/nodes/documentloaders/Docx/Docx.ts
++++ b/packages/components/nodes/documentloaders/Docx/Docx.ts
+@@ -52,7 +52,7 @@ class Docx_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Figma/Figma.ts b/packages/components/nodes/documentloaders/Figma/Figma.ts
+index a08b3a57dc8..07509fb4786 100644
+--- a/packages/components/nodes/documentloaders/Figma/Figma.ts
++++ b/packages/components/nodes/documentloaders/Figma/Figma.ts
+@@ -47,7 +47,7 @@ class Figma_DocumentLoaders implements INode {
+                 type: 'string',
+                 placeholder: '0, 1, 2',
+                 description:
+-                    'A list of Node IDs, seperated by comma. Refer to <a target="_blank" href="https://www.figma.com/community/plugin/758276196886757462/Node-Inspector">official guide</a> on how to get Node IDs'
++                    'A list of Node IDs, separated by comma. Refer to <a target="_blank" href="https://www.figma.com/community/plugin/758276196886757462/Node-Inspector">official guide</a> on how to get Node IDs'
+             },
+             {
+                 label: 'Recursive',
+@@ -75,7 +75,7 @@ class Figma_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/File/File.ts b/packages/components/nodes/documentloaders/File/File.ts
+index c369a39633f..3fea04e9df1 100644
+--- a/packages/components/nodes/documentloaders/File/File.ts
++++ b/packages/components/nodes/documentloaders/File/File.ts
+@@ -97,7 +97,7 @@ class File_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Folder/Folder.ts b/packages/components/nodes/documentloaders/Folder/Folder.ts
+index 5823051fa59..3217a815d47 100644
+--- a/packages/components/nodes/documentloaders/Folder/Folder.ts
++++ b/packages/components/nodes/documentloaders/Folder/Folder.ts
+@@ -94,7 +94,7 @@ class Folder_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Gitbook/Gitbook.ts b/packages/components/nodes/documentloaders/Gitbook/Gitbook.ts
+index 9142261a185..5984fb054a6 100644
+--- a/packages/components/nodes/documentloaders/Gitbook/Gitbook.ts
++++ b/packages/components/nodes/documentloaders/Gitbook/Gitbook.ts
+@@ -60,7 +60,7 @@ class Gitbook_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Github/Github.ts b/packages/components/nodes/documentloaders/Github/Github.ts
+index 70d06265aa8..e9d1ccd8e2d 100644
+--- a/packages/components/nodes/documentloaders/Github/Github.ts
++++ b/packages/components/nodes/documentloaders/Github/Github.ts
+@@ -119,7 +119,7 @@ class Github_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/GoogleDrive/GoogleDrive.ts b/packages/components/nodes/documentloaders/GoogleDrive/GoogleDrive.ts
+index ef4f7b22fe2..7d2a93ab1ca 100644
+--- a/packages/components/nodes/documentloaders/GoogleDrive/GoogleDrive.ts
++++ b/packages/components/nodes/documentloaders/GoogleDrive/GoogleDrive.ts
+@@ -175,7 +175,7 @@ class GoogleDrive_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/GoogleSheets/GoogleSheets.ts b/packages/components/nodes/documentloaders/GoogleSheets/GoogleSheets.ts
+index 8ec0d9f15d7..d9ebfe8285f 100644
+--- a/packages/components/nodes/documentloaders/GoogleSheets/GoogleSheets.ts
++++ b/packages/components/nodes/documentloaders/GoogleSheets/GoogleSheets.ts
+@@ -113,7 +113,7 @@ class GoogleSheets_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Jira/Jira.ts b/packages/components/nodes/documentloaders/Jira/Jira.ts
+index cbf691c5d1a..3d09b7efb39 100644
+--- a/packages/components/nodes/documentloaders/Jira/Jira.ts
++++ b/packages/components/nodes/documentloaders/Jira/Jira.ts
+@@ -81,7 +81,7 @@ class Jira_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Json/Json.ts b/packages/components/nodes/documentloaders/Json/Json.ts
+index 298bd239d5f..daf085e4422 100644
+--- a/packages/components/nodes/documentloaders/Json/Json.ts
++++ b/packages/components/nodes/documentloaders/Json/Json.ts
+@@ -105,7 +105,7 @@ class Json_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Jsonlines/Jsonlines.ts b/packages/components/nodes/documentloaders/Jsonlines/Jsonlines.ts
+index f731ec646d0..6fb58e0cf31 100644
+--- a/packages/components/nodes/documentloaders/Jsonlines/Jsonlines.ts
++++ b/packages/components/nodes/documentloaders/Jsonlines/Jsonlines.ts
+@@ -88,7 +88,7 @@ class Jsonlines_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/MicrosoftExcel/MicrosoftExcel.ts b/packages/components/nodes/documentloaders/MicrosoftExcel/MicrosoftExcel.ts
+index f38de8aac8e..2c60022b80d 100644
+--- a/packages/components/nodes/documentloaders/MicrosoftExcel/MicrosoftExcel.ts
++++ b/packages/components/nodes/documentloaders/MicrosoftExcel/MicrosoftExcel.ts
+@@ -51,7 +51,7 @@ class MicrosoftExcel_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/MicrosoftPowerpoint/MicrosoftPowerpoint.ts b/packages/components/nodes/documentloaders/MicrosoftPowerpoint/MicrosoftPowerpoint.ts
+index 40d9d19ac48..09a833cfdf4 100644
+--- a/packages/components/nodes/documentloaders/MicrosoftPowerpoint/MicrosoftPowerpoint.ts
++++ b/packages/components/nodes/documentloaders/MicrosoftPowerpoint/MicrosoftPowerpoint.ts
+@@ -51,7 +51,7 @@ class MicrosoftPowerpoint_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/MicrosoftWord/MicrosoftWord.ts b/packages/components/nodes/documentloaders/MicrosoftWord/MicrosoftWord.ts
+index 83860db6fd2..d64eff5a438 100644
+--- a/packages/components/nodes/documentloaders/MicrosoftWord/MicrosoftWord.ts
++++ b/packages/components/nodes/documentloaders/MicrosoftWord/MicrosoftWord.ts
+@@ -51,7 +51,7 @@ class MicrosoftWord_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Notion/NotionDB.ts b/packages/components/nodes/documentloaders/Notion/NotionDB.ts
+index 5dfa86ffdd8..ca951c8677e 100644
+--- a/packages/components/nodes/documentloaders/Notion/NotionDB.ts
++++ b/packages/components/nodes/documentloaders/Notion/NotionDB.ts
+@@ -60,7 +60,7 @@ class NotionDB_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Notion/NotionFolder.ts b/packages/components/nodes/documentloaders/Notion/NotionFolder.ts
+index ef572892c5e..87aac5244ec 100644
+--- a/packages/components/nodes/documentloaders/Notion/NotionFolder.ts
++++ b/packages/components/nodes/documentloaders/Notion/NotionFolder.ts
+@@ -53,7 +53,7 @@ class NotionFolder_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Notion/NotionPage.ts b/packages/components/nodes/documentloaders/Notion/NotionPage.ts
+index f6b115bf036..ac33389780a 100644
+--- a/packages/components/nodes/documentloaders/Notion/NotionPage.ts
++++ b/packages/components/nodes/documentloaders/Notion/NotionPage.ts
+@@ -61,7 +61,7 @@ class NotionPage_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Pdf/Pdf.ts b/packages/components/nodes/documentloaders/Pdf/Pdf.ts
+index 0f52f814915..08faf0a1b68 100644
+--- a/packages/components/nodes/documentloaders/Pdf/Pdf.ts
++++ b/packages/components/nodes/documentloaders/Pdf/Pdf.ts
+@@ -75,7 +75,7 @@ class Pdf_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/PlainText/PlainText.ts b/packages/components/nodes/documentloaders/PlainText/PlainText.ts
+index 2a68cb4066d..8fbc4985be0 100644
+--- a/packages/components/nodes/documentloaders/PlainText/PlainText.ts
++++ b/packages/components/nodes/documentloaders/PlainText/PlainText.ts
+@@ -54,7 +54,7 @@ class PlainText_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Playwright/Playwright.ts b/packages/components/nodes/documentloaders/Playwright/Playwright.ts
+index fcef1faddf3..0f13e8f8e40 100644
+--- a/packages/components/nodes/documentloaders/Playwright/Playwright.ts
++++ b/packages/components/nodes/documentloaders/Playwright/Playwright.ts
+@@ -136,7 +136,7 @@ class Playwright_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Puppeteer/Puppeteer.ts b/packages/components/nodes/documentloaders/Puppeteer/Puppeteer.ts
+index c22b05de94f..c7619d0fad4 100644
+--- a/packages/components/nodes/documentloaders/Puppeteer/Puppeteer.ts
++++ b/packages/components/nodes/documentloaders/Puppeteer/Puppeteer.ts
+@@ -132,7 +132,7 @@ class Puppeteer_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+index 10680aa9876..082284df3c4 100644
+--- a/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
++++ b/packages/components/nodes/documentloaders/S3Directory/S3Directory.ts
+@@ -113,7 +113,7 @@ class S3_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/S3File/S3File.ts b/packages/components/nodes/documentloaders/S3File/S3File.ts
+index 4ac60eb7583..838192d35d3 100644
+--- a/packages/components/nodes/documentloaders/S3File/S3File.ts
++++ b/packages/components/nodes/documentloaders/S3File/S3File.ts
+@@ -115,7 +115,7 @@ class S3_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+@@ -529,7 +529,7 @@ class S3_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true,
+diff --git a/packages/components/nodes/documentloaders/SearchApi/SearchAPI.ts b/packages/components/nodes/documentloaders/SearchApi/SearchAPI.ts
+index 19ed6d61370..8f0271ca47a 100644
+--- a/packages/components/nodes/documentloaders/SearchApi/SearchAPI.ts
++++ b/packages/components/nodes/documentloaders/SearchApi/SearchAPI.ts
+@@ -69,7 +69,7 @@ class SearchAPI_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/SerpApi/SerpAPI.ts b/packages/components/nodes/documentloaders/SerpApi/SerpAPI.ts
+index 6802a39a53f..ca0b3ecd965 100644
+--- a/packages/components/nodes/documentloaders/SerpApi/SerpAPI.ts
++++ b/packages/components/nodes/documentloaders/SerpApi/SerpAPI.ts
+@@ -59,7 +59,7 @@ class SerpAPI_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Spider/Spider.ts b/packages/components/nodes/documentloaders/Spider/Spider.ts
+index 3d22c07bde6..51999a63f31 100644
+--- a/packages/components/nodes/documentloaders/Spider/Spider.ts
++++ b/packages/components/nodes/documentloaders/Spider/Spider.ts
+@@ -157,7 +157,7 @@ class Spider_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Text/Text.ts b/packages/components/nodes/documentloaders/Text/Text.ts
+index 08008e9fefa..b4978485293 100644
+--- a/packages/components/nodes/documentloaders/Text/Text.ts
++++ b/packages/components/nodes/documentloaders/Text/Text.ts
+@@ -53,7 +53,7 @@ class Text_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/documentloaders/Unstructured/UnstructuredFile.ts b/packages/components/nodes/documentloaders/Unstructured/UnstructuredFile.ts
+index d1a372b0c94..16f33f57272 100644
+--- a/packages/components/nodes/documentloaders/Unstructured/UnstructuredFile.ts
++++ b/packages/components/nodes/documentloaders/Unstructured/UnstructuredFile.ts
+@@ -417,7 +417,7 @@ class UnstructuredFile_DocumentLoaders implements INode {
+                 type: 'string',
+                 rows: 4,
+                 description:
+-                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, seperated by comma. Use * to omit all metadata keys execept the ones you specify in the Additional Metadata field',
++                    'Each document loader comes with a default set of metadata keys that are extracted from the document. You can use this field to omit some of the default metadata keys. The value should be a list of keys, separated by comma. Use * to omit all metadata keys except the ones you specify in the Additional Metadata field',
+                 placeholder: 'key1, key2, key3.nestedKey1',
+                 optional: true,
+                 additionalParams: true
+diff --git a/packages/components/nodes/llms/Ollama/Ollama.ts b/packages/components/nodes/llms/Ollama/Ollama.ts
+index c40fce41c48..dc8fa64c28f 100644
+--- a/packages/components/nodes/llms/Ollama/Ollama.ts
++++ b/packages/components/nodes/llms/Ollama/Ollama.ts
+@@ -165,7 +165,7 @@ class Ollama_LLMs implements INode {
+                 rows: 4,
+                 placeholder: 'AI assistant:',
+                 description:
+-                    'Sets the stop sequences to use. Use comma to seperate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
++                    'Sets the stop sequences to use. Use comma to separate different sequences. Refer to <a target="_blank" href="https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values">docs</a> for more details',
+                 optional: true,
+                 additionalParams: true
+             },
+diff --git a/packages/server/marketplaces/chatflows/Local QnA.json b/packages/server/marketplaces/chatflows/Local QnA.json
+index 86f2e488a13..46b222acee7 100644
+--- a/packages/server/marketplaces/chatflows/Local QnA.json	
++++ b/packages/server/marketplaces/chatflows/Local QnA.json	
+@@ -478,7 +478,7 @@
+                         "type": "string",
+                         "rows": 4,
+                         "placeholder": "AI assistant:",
+-                        "description": "Sets the stop sequences to use. Use comma to seperate different sequences. Refer to <a target=\"_blank\" href=\"https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values\">docs</a> for more details",
++                        "description": "Sets the stop sequences to use. Use comma to separate different sequences. Refer to <a target=\"_blank\" href=\"https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values\">docs</a> for more details",
+                         "optional": true,
+                         "additionalParams": true,
+                         "id": "chatOllama_0-input-stop-string"
+diff --git a/packages/server/marketplaces/chatflows/SQL DB Chain.json b/packages/server/marketplaces/chatflows/SQL DB Chain.json
+index a2b62b675e8..0eaf3ad153b 100644
+--- a/packages/server/marketplaces/chatflows/SQL DB Chain.json	
++++ b/packages/server/marketplaces/chatflows/SQL DB Chain.json	
+@@ -230,7 +230,7 @@
+                         "label": "Include Tables",
+                         "name": "includesTables",
+                         "type": "string",
+-                        "description": "Tables to include for queries, seperated by comma. Can only use Include Tables or Ignore Tables",
++                        "description": "Tables to include for queries, separated by comma. Can only use Include Tables or Ignore Tables",
+                         "placeholder": "table1, table2",
+                         "additionalParams": true,
+                         "optional": true,
+@@ -240,7 +240,7 @@
+                         "label": "Ignore Tables",
+                         "name": "ignoreTables",
+                         "type": "string",
+-                        "description": "Tables to ignore for queries, seperated by comma. Can only use Ignore Tables or Include Tables",
++                        "description": "Tables to ignore for queries, separated by comma. Can only use Ignore Tables or Include Tables",
+                         "placeholder": "table1, table2",
+                         "additionalParams": true,
+                         "optional": true,

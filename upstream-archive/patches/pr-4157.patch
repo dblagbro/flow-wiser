@@ -1,0 +1,652 @@
+From 5b0a690507621f015f4ffe55a9f51a33881e7069 Mon Sep 17 00:00:00 2001
+From: mantrakp04 <mantrakp@gmail.com>
+Date: Tue, 11 Mar 2025 08:07:41 -0700
+Subject: [PATCH] Add multi-modal content support for various file types in
+ chat models
+
+- Extend multi-modal content handling to support PDF, audio, and video uploads
+- Add new content types for documents and media in interfaces
+- Update Anthropic and Google Generative AI chat models to handle additional file types
+- Refactor multi-modal utility functions to support broader content processing
+- Improve flexibility for different LLM models with multi-modal content
+---
+ .../chatmodels/ChatAnthropic/ChatAnthropic.ts |  28 ++-
+ .../ChatGoogleGenerativeAI.ts                 |  39 +++++
+ .../multiagents/Supervisor/Supervisor.ts      | 149 +++++++++++-----
+ packages/components/src/Interface.ts          |  19 +++
+ packages/components/src/multiModalUtils.ts    | 160 +++++++++++++++---
+ 5 files changed, 319 insertions(+), 76 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatAnthropic/ChatAnthropic.ts b/packages/components/nodes/chatmodels/ChatAnthropic/ChatAnthropic.ts
+index 7204801f9ec..891343e926e 100644
+--- a/packages/components/nodes/chatmodels/ChatAnthropic/ChatAnthropic.ts
++++ b/packages/components/nodes/chatmodels/ChatAnthropic/ChatAnthropic.ts
+@@ -113,6 +113,23 @@ class ChatAnthropic_ChatModels implements INode {
+                     'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
+                 default: false,
+                 optional: true
++            },
++            {
++                label: 'Image Resolution',
++                name: 'imageResolution',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Allow PDF Uploads',
++                name: 'allowPdfUploads',
++                type: 'boolean',
++                description:
++                    'Allow PDF input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#pdf" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
+             }
+         ]
+     }
+@@ -134,12 +151,13 @@ class ChatAnthropic_ChatModels implements INode {
+         const cache = nodeData.inputs?.cache as BaseCache
+         const extendedThinking = nodeData.inputs?.extendedThinking as boolean
+         const budgetTokens = nodeData.inputs?.budgetTokens as string
++        const imageResolution = nodeData.inputs?.imageResolution as string
++        const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++        const allowPdfUploads = nodeData.inputs?.allowPdfUploads as boolean
+ 
+         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+         const anthropicApiKey = getCredentialParam('anthropicApiKey', credentialData, nodeData)
+ 
+-        const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
+-
+         const obj: Partial<AnthropicInput> & BaseLLMParams & { anthropicApiKey?: string } = {
+             temperature: parseFloat(temperature),
+             modelName,
+@@ -161,7 +179,11 @@ class ChatAnthropic_ChatModels implements INode {
+ 
+         const multiModalOption: IMultiModalOption = {
+             image: {
+-                allowImageUploads: allowImageUploads ?? false
++                allowImageUploads: allowImageUploads ?? false,
++                imageResolution: imageResolution
++            },
++            pdf: {
++                allowPdfUploads: allowPdfUploads ?? false
+             }
+         }
+ 
+diff --git a/packages/components/nodes/chatmodels/ChatGoogleGenerativeAI/ChatGoogleGenerativeAI.ts b/packages/components/nodes/chatmodels/ChatGoogleGenerativeAI/ChatGoogleGenerativeAI.ts
+index 3b13ab271aa..f21fad7caa1 100644
+--- a/packages/components/nodes/chatmodels/ChatGoogleGenerativeAI/ChatGoogleGenerativeAI.ts
++++ b/packages/components/nodes/chatmodels/ChatGoogleGenerativeAI/ChatGoogleGenerativeAI.ts
+@@ -164,6 +164,33 @@ class GoogleGenerativeAI_ChatModels implements INode {
+                     'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
+                 default: false,
+                 optional: true
++            },
++            {
++                label: 'Allow PDF Uploads',
++                name: 'allowPdfUploads',
++                type: 'boolean',
++                description:
++                    'Allow PDF input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#pdf" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Allow Audio Uploads',
++                name: 'allowAudioUploads',
++                type: 'boolean',
++                description:
++                    'Allow audio input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#audio" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
++            },
++            {
++                label: 'Allow Video Uploads',
++                name: 'allowVideoUploads',
++                type: 'boolean',
++                description:
++                    'Allow video input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#video" target="_blank">docs</a> for more details.',
++                default: false,
++                optional: true
+             }
+         ]
+     }
+@@ -191,6 +218,9 @@ class GoogleGenerativeAI_ChatModels implements INode {
+         const streaming = nodeData.inputs?.streaming as boolean
+ 
+         const allowImageUploads = nodeData.inputs?.allowImageUploads as boolean
++        const allowPdfUploads = nodeData.inputs?.allowPdfUploads as boolean
++        const allowAudioUploads = nodeData.inputs?.allowAudioUploads as boolean
++        const allowVideoUploads = nodeData.inputs?.allowVideoUploads as boolean
+ 
+         const obj: Partial<GoogleGenerativeAIChatInput> = {
+             apiKey: apiKey,
+@@ -220,6 +250,15 @@ class GoogleGenerativeAI_ChatModels implements INode {
+         const multiModalOption: IMultiModalOption = {
+             image: {
+                 allowImageUploads: allowImageUploads ?? false
++            },
++            pdf: {
++                allowPdfUploads: allowPdfUploads ?? false
++            },
++            audio: {
++                allowAudioUploads: allowAudioUploads ?? false
++            },
++            video: {
++                allowVideoUploads: allowVideoUploads ?? false
+             }
+         }
+ 
+diff --git a/packages/components/nodes/multiagents/Supervisor/Supervisor.ts b/packages/components/nodes/multiagents/Supervisor/Supervisor.ts
+index 1cd78eae004..6958a7d768f 100644
+--- a/packages/components/nodes/multiagents/Supervisor/Supervisor.ts
++++ b/packages/components/nodes/multiagents/Supervisor/Supervisor.ts
+@@ -20,7 +20,7 @@ import { ChatMistralAI } from '@langchain/mistralai'
+ import { ChatOpenAI } from '../../chatmodels/ChatOpenAI/FlowiseChatOpenAI'
+ import { ChatAnthropic } from '../../chatmodels/ChatAnthropic/FlowiseChatAnthropic'
+ import { ChatGoogleGenerativeAI } from '../../chatmodels/ChatGoogleGenerativeAI/FlowiseChatGoogleGenerativeAI'
+-import { addImagesToMessages, llmSupportsVision } from '../../../src/multiModalUtils'
++import { addMultiModalContentToMessages, llmSupportsVision } from '../../../src/multiModalUtils'
+ 
+ const sysPrompt = `You are a supervisor tasked with managing a conversation between the following workers: {team_members}.
+ Given the following user request, respond with the worker to act next.
+@@ -209,6 +209,15 @@ class Supervisor_MultiAgents implements INode {
+                 prompt = messages.prompt
+                 multiModalMessageContent = messages.multiModalMessageContent
+ 
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
++
+                 if ((llm as any).bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+                 }
+@@ -226,13 +235,15 @@ class Supervisor_MultiAgents implements INode {
+                             return {
+                                 next: toolAgentAction.toolInput.next,
+                                 instructions: toolAgentAction.toolInput.instructions,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: toolAgentAction.toolInput.summarization
+                             }
+                         } else if (typeof x === 'object' && 'returnValues' in x) {
+                             return {
+                                 next: 'FINISH',
+                                 instructions: x.returnValues?.output,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: defaultSummarization
+                             }
+                         } else {
+                             return {
+@@ -249,10 +260,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                // @ts-ignore
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 // Force OpenAI to use tool
+                 const modelWithTool = llm.bind({
+@@ -272,13 +287,15 @@ class Supervisor_MultiAgents implements INode {
+                             return {
+                                 next: toolAgentAction.toolInput.next,
+                                 instructions: toolAgentAction.toolInput.instructions,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: toolAgentAction.toolInput.summarization
+                             }
+                         } else if (typeof x === 'object' && 'returnValues' in x) {
+                             return {
+                                 next: 'FINISH',
+                                 instructions: x.returnValues?.output,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: defaultSummarization
+                             }
+                         } else {
+                             return {
+@@ -299,9 +316,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(2, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 if (llm.bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+@@ -319,13 +341,15 @@ class Supervisor_MultiAgents implements INode {
+                             return {
+                                 next: toolAgentAction.toolInput.next,
+                                 instructions: toolAgentAction.toolInput.instructions,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: toolAgentAction.toolInput.summarization
+                             }
+                         } else if (typeof x === 'object' && 'returnValues' in x) {
+                             return {
+                                 next: 'FINISH',
+                                 instructions: x.returnValues?.output,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: defaultSummarization
+                             }
+                         } else {
+                             return {
+@@ -342,9 +366,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 if (llm.bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+@@ -362,13 +391,15 @@ class Supervisor_MultiAgents implements INode {
+                             return {
+                                 next: toolAgentAction.toolInput.next,
+                                 instructions: toolAgentAction.toolInput.instructions,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: toolAgentAction.toolInput.summarization
+                             }
+                         } else if (typeof x === 'object' && 'returnValues' in x) {
+                             return {
+                                 next: 'FINISH',
+                                 instructions: x.returnValues?.output,
+-                                team_members: members.join(', ')
++                                team_members: members.join(', '),
++                                summarization: defaultSummarization
+                             }
+                         } else {
+                             return {
+@@ -411,9 +442,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 // Force Mistral to use tool
+                 // @ts-ignore
+@@ -460,9 +496,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 if ((llm as any).bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+@@ -507,10 +548,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                // @ts-ignore
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 // Force OpenAI to use tool
+                 const modelWithTool = llm.bind({
+@@ -560,9 +605,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(2, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 if (llm.bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+@@ -606,9 +656,14 @@ class Supervisor_MultiAgents implements INode {
+                     ['human', userPrompt]
+                 ])
+ 
+-                const messages = await processImageMessage(1, llm, prompt, nodeData, options)
+-                prompt = messages.prompt
+-                multiModalMessageContent = messages.multiModalMessageContent
++                const multiModalContent = await addMultiModalContentToMessages(
++                    nodeData,
++                    options,
++                    llmSupportsVision(llm) ? llm.multiModalOption : undefined
++                )
++
++                // Filter out only image content
++                multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+                 if (llm.bindTools === undefined) {
+                     throw new Error(`This agent only compatible with function calling models.`)
+@@ -639,9 +694,8 @@ class Supervisor_MultiAgents implements INode {
+                         } else {
+                             return {
+                                 next: 'FINISH',
+-                                instructions: defaultInstruction,
+-                                team_members: members.join(', '),
+-                                summarization: defaultSummarization
++                                instructions: 'Conversation finished',
++                                team_members: members.join(', ')
+                             }
+                         }
+                     })
+@@ -715,16 +769,21 @@ const processImageMessage = async (
+ 
+     if (llmSupportsVision(llm)) {
+         const visionChatModel = llm as IVisionChatModal
+-        multiModalMessageContent = await addImagesToMessages(nodeData, options, llm.multiModalOption)
++        if (visionChatModel.multiModalOption) {
++            const multiModalContent = await addMultiModalContentToMessages(nodeData, options, visionChatModel.multiModalOption)
++
++            // Filter out only image content
++            multiModalMessageContent = multiModalContent.filter((content) => content.type === 'image_url') as MessageContentImageUrl[]
+ 
+-        if (multiModalMessageContent?.length) {
+-            visionChatModel.setVisionModel()
++            if (multiModalMessageContent?.length) {
++                visionChatModel.setVisionModel()
+ 
+-            const msg = HumanMessagePromptTemplate.fromTemplate([...multiModalMessageContent])
++                const msg = HumanMessagePromptTemplate.fromTemplate([...multiModalMessageContent])
+ 
+-            prompt.promptMessages.splice(index, 0, msg)
+-        } else {
+-            visionChatModel.revertToOriginalModel()
++                prompt.promptMessages.splice(index, 0, msg)
++            } else {
++                visionChatModel.revertToOriginalModel()
++            }
+         }
+     }
+ 
+diff --git a/packages/components/src/Interface.ts b/packages/components/src/Interface.ts
+index 68979ca66c3..9505406a751 100644
+--- a/packages/components/src/Interface.ts
++++ b/packages/components/src/Interface.ts
+@@ -252,6 +252,8 @@ export interface IFileUpload {
+ export interface IMultiModalOption {
+     image?: Record<string, any>
+     audio?: Record<string, any>
++    pdf?: Record<string, any>
++    video?: Record<string, any>
+ }
+ 
+ export type MessageContentText = {
+@@ -269,6 +271,23 @@ export type MessageContentImageUrl = {
+           }
+ }
+ 
++export type MessageContentDocument = {
++    type: 'document'
++    source: {
++        type: string
++        data: string
++        mediaType: string
++    }
++}
++
++export type MessageContentMedia = {
++    type: 'media'
++    mimeType: string
++    data: string
++}
++
++export type MessageContent = MessageContentText | MessageContentImageUrl | MessageContentDocument | MessageContentMedia
++
+ export interface IDocument<Metadata extends Record<string, any> = Record<string, any>> {
+     pageContent: string
+     metadata: Metadata
+diff --git a/packages/components/src/multiModalUtils.ts b/packages/components/src/multiModalUtils.ts
+index 412361aa6c2..63bacde2e72 100644
+--- a/packages/components/src/multiModalUtils.ts
++++ b/packages/components/src/multiModalUtils.ts
+@@ -1,45 +1,141 @@
+-import { IVisionChatModal, ICommonObject, IFileUpload, IMultiModalOption, INodeData, MessageContentImageUrl } from './Interface'
++import {
++    IVisionChatModal,
++    ICommonObject,
++    IFileUpload,
++    IMultiModalOption,
++    INodeData,
++    MessageContentImageUrl,
++    MessageContentDocument,
++    MessageContentMedia,
++    MessageContent
++} from './Interface'
+ import { getFileFromStorage } from './storageUtils'
+ 
+-export const addImagesToMessages = async (
++export const addMultiModalContentToMessages = async (
+     nodeData: INodeData,
+     options: ICommonObject,
+     multiModalOption?: IMultiModalOption
+-): Promise<MessageContentImageUrl[]> => {
+-    const imageContent: MessageContentImageUrl[] = []
++): Promise<MessageContent[]> => {
++    const multiModalContent: MessageContent[] = []
+     let model = nodeData.inputs?.model
+ 
+     if (llmSupportsVision(model) && multiModalOption) {
+-        // Image Uploaded
+-        if (multiModalOption.image && multiModalOption.image.allowImageUploads && options?.uploads && options?.uploads.length > 0) {
+-            const imageUploads = getImageUploads(options.uploads)
+-            for (const upload of imageUploads) {
+-                let bf = upload.data
+-                if (upload.type == 'stored-file') {
+-                    const contents = await getFileFromStorage(upload.name, options.chatflowid, options.chatId)
+-                    // as the image is stored in the server, read the file and convert it to base64
+-                    bf = 'data:' + upload.mime + ';base64,' + contents.toString('base64')
+-
+-                    imageContent.push({
+-                        type: 'image_url',
+-                        image_url: {
+-                            url: bf,
+-                            detail: multiModalOption.image.imageResolution ?? 'low'
++        if (options?.uploads && options?.uploads.length > 0) {
++            // Handle images
++            if (multiModalOption.image && multiModalOption.image.allowImageUploads) {
++                const imageUploads = getImageUploads(options.uploads)
++                for (const upload of imageUploads) {
++                    let bf = upload.data
++                    if (upload.type == 'stored-file') {
++                        const contents = await getFileFromStorage(upload.name, options.chatflowid, options.chatId)
++                        // as the image is stored in the server, read the file and convert it to base64
++                        bf = 'data:' + upload.mime + ';base64,' + contents.toString('base64')
++
++                        multiModalContent.push({
++                            type: 'image_url',
++                            image_url: {
++                                url: bf,
++                                detail: multiModalOption.image.imageResolution ?? 'low'
++                            }
++                        })
++                    } else if (upload.type == 'url' && bf) {
++                        multiModalContent.push({
++                            type: 'image_url',
++                            image_url: {
++                                url: bf,
++                                detail: multiModalOption.image.imageResolution ?? 'low'
++                            }
++                        })
++                    }
++                }
++            }
++
++            // Handle PDFs for Claude
++            if (multiModalOption.pdf && multiModalOption.pdf.allowPdfUploads) {
++                const pdfUploads = getPdfUploads(options.uploads)
++                for (const upload of pdfUploads) {
++                    if (upload.type == 'stored-file') {
++                        const contents = await getFileFromStorage(upload.name, options.chatflowid, options.chatId)
++                        const base64Data = contents.toString('base64')
++
++                        // Check if model is Claude
++                        if (model?.constructor?.name?.includes('ChatAnthropic')) {
++                            multiModalContent.push({
++                                type: 'document',
++                                source: {
++                                    type: 'base64',
++                                    data: base64Data,
++                                    mediaType: 'application/pdf'
++                                }
++                            } as MessageContentDocument)
+                         }
+-                    })
+-                } else if (upload.type == 'url' && bf) {
+-                    imageContent.push({
+-                        type: 'image_url',
+-                        image_url: {
+-                            url: bf,
+-                            detail: multiModalOption.image.imageResolution ?? 'low'
++                        // For Google/Gemini models
++                        else if (
++                            model?.constructor?.name?.includes('ChatGoogleGenerativeAI') ||
++                            model?.constructor?.name?.includes('ChatVertexAI')
++                        ) {
++                            multiModalContent.push({
++                                type: 'media',
++                                mimeType: 'application/pdf',
++                                data: base64Data
++                            } as MessageContentMedia)
+                         }
+-                    })
++                    }
++                }
++            }
++
++            // Handle audio for Google/Gemini
++            if (multiModalOption.audio && multiModalOption.audio.allowAudioUploads) {
++                const audioUploads = getAudioUploads(options.uploads)
++                for (const upload of audioUploads) {
++                    if (
++                        upload.type == 'stored-file' &&
++                        (model?.constructor?.name?.includes('ChatGoogleGenerativeAI') || model?.constructor?.name?.includes('ChatVertexAI'))
++                    ) {
++                        const contents = await getFileFromStorage(upload.name, options.chatflowid, options.chatId)
++                        const base64Data = contents.toString('base64')
++
++                        multiModalContent.push({
++                            type: 'media',
++                            mimeType: upload.mime,
++                            data: base64Data
++                        } as MessageContentMedia)
++                    }
++                }
++            }
++
++            // Handle video for Google/Gemini
++            if (multiModalOption.video && multiModalOption.video.allowVideoUploads) {
++                const videoUploads = getVideoUploads(options.uploads)
++                for (const upload of videoUploads) {
++                    if (
++                        upload.type == 'stored-file' &&
++                        (model?.constructor?.name?.includes('ChatGoogleGenerativeAI') || model?.constructor?.name?.includes('ChatVertexAI'))
++                    ) {
++                        const contents = await getFileFromStorage(upload.name, options.chatflowid, options.chatId)
++                        const base64Data = contents.toString('base64')
++
++                        multiModalContent.push({
++                            type: 'media',
++                            mimeType: upload.mime,
++                            data: base64Data
++                        } as MessageContentMedia)
++                    }
+                 }
+             }
+         }
+     }
+-    return imageContent
++    return multiModalContent
++}
++
++// Legacy support - this will be deprecated in a future release
++export const addImagesToMessages = async (
++    nodeData: INodeData,
++    options: ICommonObject,
++    multiModalOption?: IMultiModalOption
++): Promise<MessageContentImageUrl[]> => {
++    const content = await addMultiModalContentToMessages(nodeData, options, multiModalOption)
++    return content.filter((item) => item.type === 'image_url') as MessageContentImageUrl[]
+ }
+ 
+ export const getAudioUploads = (uploads: IFileUpload[]) => {
+@@ -50,4 +146,12 @@ export const getImageUploads = (uploads: IFileUpload[]) => {
+     return uploads.filter((upload: IFileUpload) => upload.mime.startsWith('image/'))
+ }
+ 
++export const getPdfUploads = (uploads: IFileUpload[]) => {
++    return uploads.filter((upload: IFileUpload) => upload.mime === 'application/pdf')
++}
++
++export const getVideoUploads = (uploads: IFileUpload[]) => {
++    return uploads.filter((upload: IFileUpload) => upload.mime.startsWith('video/'))
++}
++
+ export const llmSupportsVision = (value: any): value is IVisionChatModal => !!value?.multiModalOption

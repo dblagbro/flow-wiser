@@ -1,0 +1,300 @@
+From 5a8b4bbb526c722250df33aa3acd518490c10ef7 Mon Sep 17 00:00:00 2001
+From: David Lo Dico <david@eurouter.ai>
+Date: Mon, 6 Apr 2026 12:24:19 +0200
+Subject: [PATCH 1/3] feat: add EUrouter integration with ChatEUrouter node
+
+---
+ .../credentials/EUrouterApi.credential.ts     |  23 +++
+ .../chatmodels/ChatEUrouter/ChatEUrouter.ts   | 177 ++++++++++++++++++
+ .../chatmodels/ChatEUrouter/eurouter.svg      |   5 +
+ packages/server/src/utils/index.ts            |   3 +-
+ 4 files changed, 207 insertions(+), 1 deletion(-)
+ create mode 100644 packages/components/credentials/EUrouterApi.credential.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+ create mode 100644 packages/components/nodes/chatmodels/ChatEUrouter/eurouter.svg
+
+diff --git a/packages/components/credentials/EUrouterApi.credential.ts b/packages/components/credentials/EUrouterApi.credential.ts
+new file mode 100644
+index 00000000000..c7e94482f7a
+--- /dev/null
++++ b/packages/components/credentials/EUrouterApi.credential.ts
+@@ -0,0 +1,23 @@
++import { INodeCredential, INodeParams } from '../src/Interface'
++
++class EUrouterApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'EUrouter API'
++        this.name = 'eUrouterApi'
++        this.version = 1.0
++        this.inputs = [
++            {
++                label: 'EUrouter API Key',
++                name: 'eUrouterApiKey',
++                type: 'password'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: EUrouterApi }
+diff --git a/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+new file mode 100644
+index 00000000000..67058b72946
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+@@ -0,0 +1,177 @@
++import { BaseCache } from '@langchain/core/caches'
++import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++
++class ChatEUrouter_ChatModels implements INode {
++    readonly baseURL: string = 'https://api.eurouter.ai/api/v1'
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'EUrouter'
++        this.name = 'chatEUrouter'
++        this.version = 1.0
++        this.type = 'ChatEUrouter'
++        this.icon = 'eurouter.svg'
++        this.category = 'Chat Models'
++        this.description = 'EU-hosted, GDPR-friendly AI gateway with access to 68+ models via OpenAI-compatible API'
++        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['eUrouterApi']
++        }
++        this.inputs = [
++            {
++                label: 'Cache',
++                name: 'cache',
++                type: 'BaseCache',
++                optional: true
++            },
++            {
++                label: 'Model Name',
++                name: 'modelName',
++                type: 'string',
++                default: 'claude-sonnet-4-6',
++                description:
++                    'Enter the model name (e.g., claude-sonnet-4-6, claude-opus-4-6, deepseek-r1, mistral-large-3). See https://www.eurouter.ai/models for the full catalog.'
++            },
++            {
++                label: 'Temperature',
++                name: 'temperature',
++                type: 'number',
++                step: 0.1,
++                default: 0.7,
++                optional: true
++            },
++            {
++                label: 'Streaming',
++                name: 'streaming',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Max Tokens',
++                name: 'maxTokens',
++                type: 'number',
++                step: 1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Top Probability',
++                name: 'topP',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Frequency Penalty',
++                name: 'frequencyPenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Presence Penalty',
++                name: 'presencePenalty',
++                type: 'number',
++                step: 0.1,
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Base Options',
++                name: 'baseOptions',
++                type: 'json',
++                optional: true,
++                additionalParams: true,
++                description: 'Additional options to pass to the EUrouter client. This should be a JSON object.'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const temperature = nodeData.inputs?.temperature as string
++        const modelName = nodeData.inputs?.modelName as string
++        const maxTokens = nodeData.inputs?.maxTokens as string
++        const topP = nodeData.inputs?.topP as string
++        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
++        const presencePenalty = nodeData.inputs?.presencePenalty as string
++        const streaming = nodeData.inputs?.streaming as boolean
++        const baseOptions = nodeData.inputs?.baseOptions
++
++        if (nodeData.inputs?.credentialId) {
++            nodeData.credential = nodeData.inputs?.credentialId
++        }
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const openAIApiKey = getCredentialParam('eUrouterApiKey', credentialData, nodeData)
++
++        if (!openAIApiKey || openAIApiKey.trim() === '') {
++            throw new Error(
++                'EUrouter API Key is missing or empty. Please provide a valid EUrouter API key in the credential configuration.'
++            )
++        }
++
++        if (!modelName || modelName.trim() === '') {
++            throw new Error(
++                'Model Name is required. Please enter a valid model name (e.g., claude-sonnet-4-6, claude-opus-4-6, deepseek-r1).'
++            )
++        }
++
++        const cache = nodeData.inputs?.cache as BaseCache
++
++        const obj: ChatOpenAIFields = {
++            temperature: parseFloat(temperature),
++            modelName,
++            openAIApiKey,
++            apiKey: openAIApiKey,
++            streaming: streaming ?? true
++        }
++
++        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
++        if (topP) obj.topP = parseFloat(topP)
++        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
++        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
++        if (cache) obj.cache = cache
++
++        let parsedBaseOptions: any | undefined = undefined
++
++        if (baseOptions) {
++            try {
++                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                if (parsedBaseOptions.baseURL) {
++                    console.warn("The 'baseURL' parameter is not allowed when using the ChatEUrouter node.")
++                    parsedBaseOptions.baseURL = undefined
++                }
++            } catch (exception) {
++                throw new Error('Invalid JSON in the BaseOptions: ' + exception)
++            }
++        }
++
++        const model = new ChatOpenAI({
++            ...obj,
++            configuration: {
++                baseURL: this.baseURL,
++                ...parsedBaseOptions
++            }
++        })
++        return model
++    }
++}
++
++module.exports = { nodeClass: ChatEUrouter_ChatModels }
+diff --git a/packages/components/nodes/chatmodels/ChatEUrouter/eurouter.svg b/packages/components/nodes/chatmodels/ChatEUrouter/eurouter.svg
+new file mode 100644
+index 00000000000..6a9ab1fe314
+--- /dev/null
++++ b/packages/components/nodes/chatmodels/ChatEUrouter/eurouter.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
++  <rect width="100" height="100" rx="16" fill="#1a365d"/>
++  <text x="50" y="38" text-anchor="middle" fill="#ffd700" font-family="Arial,sans-serif" font-weight="bold" font-size="20">EU</text>
++  <text x="50" y="70" text-anchor="middle" fill="#ffffff" font-family="Arial,sans-serif" font-weight="bold" font-size="16">router</text>
++</svg>
+diff --git a/packages/server/src/utils/index.ts b/packages/server/src/utils/index.ts
+index 7ea3adbfd8e..946bd3b9ecf 100644
+--- a/packages/server/src/utils/index.ts
++++ b/packages/server/src/utils/index.ts
+@@ -1489,7 +1489,8 @@ export const isFlowValidForStream = (reactFlowNodes: IReactFlowNode[], endingNod
+             'chatFireworks',
+             'ChatSambanova',
+             'chatBaiduWenxin',
+-            'chatCometAPI'
++            'chatCometAPI',
++            'chatEUrouter'
+         ],
+         LLMs: ['azureOpenAI', 'openAI', 'ollama']
+     }
+
+From dd0ea7f930bb8575d5203bde4819c37d5d68f384 Mon Sep 17 00:00:00 2001
+From: David Lo Dico <david@eurouter.ai>
+Date: Mon, 6 Apr 2026 16:30:53 +0200
+Subject: [PATCH 2/3] feat: add EUrouter app attribution headers
+
+---
+ .../components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts  | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+index 67058b72946..2c9a1db2907 100644
+--- a/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
++++ b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+@@ -167,6 +167,10 @@ class ChatEUrouter_ChatModels implements INode {
+             ...obj,
+             configuration: {
+                 baseURL: this.baseURL,
++                defaultHeaders: {
++                    'HTTP-Referer': 'https://flowiseai.com',
++                    'X-EUrouter-Title': 'Flowise',
++                },
+                 ...parsedBaseOptions
+             }
+         })
+
+From 7f001b8af0cb03b6baecc5bb96a7215f4aeae02a Mon Sep 17 00:00:00 2001
+From: David Lo Dico <david_LD@Live.nl>
+Date: Thu, 9 Apr 2026 12:16:59 +0200
+Subject: [PATCH 3/3] fix: preserve EURouter baseURL in config
+
+---
+ .../components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts    | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+index 2c9a1db2907..8af4dfd851b 100644
+--- a/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
++++ b/packages/components/nodes/chatmodels/ChatEUrouter/ChatEUrouter.ts
+@@ -156,7 +156,7 @@ class ChatEUrouter_ChatModels implements INode {
+                 parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
+                 if (parsedBaseOptions.baseURL) {
+                     console.warn("The 'baseURL' parameter is not allowed when using the ChatEUrouter node.")
+-                    parsedBaseOptions.baseURL = undefined
++                    delete parsedBaseOptions.baseURL
+                 }
+             } catch (exception) {
+                 throw new Error('Invalid JSON in the BaseOptions: ' + exception)

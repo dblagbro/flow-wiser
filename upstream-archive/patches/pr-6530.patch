@@ -1,0 +1,148 @@
+From b3de95e9672d320a54f266534f9a9cfb8c17d14c Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 18 Jun 2026 01:01:16 +0530
+Subject: [PATCH 1/2] fix: decode base64 embeddings to float32 arrays to
+ prevent Chroma crash
+
+---
+ .../OpenAIEmbedding/OpenAIEmbedding.ts        | 32 +++++++++++++++++++
+ .../OpenAIEmbeddingCustom.ts                  | 29 +++++++++++++++++
+ 2 files changed, 61 insertions(+)
+
+diff --git a/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts b/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
+index 767b15b9756..8681012fc22 100644
+--- a/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
++++ b/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
+@@ -3,6 +3,20 @@ import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ import { MODEL_TYPE, getModels } from '../../../src/modelLoader'
+ 
++/**
++ * Decodes a base64-encoded embedding string into a number[].
++ * OpenAI's base64 encoding uses little-endian IEEE 754 float32 (4 bytes per float).
++ *
++ * This is needed because LangChain's OpenAIEmbeddings does not decode base64 responses —
++ * it passes the raw base64 string through as the embedding value, which causes downstream
++ * vector stores (e.g. Chroma) to crash with "TypeError: e.every is not a function".
++ */
++function decodeBase64Embedding(base64String: string): number[] {
++    const binaryBuffer = Buffer.from(base64String, 'base64')
++    const float32Array = new Float32Array(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength / 4)
++    return Array.from(float32Array)
++}
++
+ class OpenAIEmbedding_Embeddings implements INode {
+     label: string
+     name: string
+@@ -154,6 +168,24 @@ class OpenAIEmbedding_Embeddings implements INode {
+         }
+ 
+         const model = new OpenAIEmbeddings(obj)
++
++        // If encoding format is base64, wrap the embedding methods to decode base64 responses
++        // into proper number[] arrays. LangChain's OpenAIEmbeddings does not handle this —
++        // it passes raw base64 strings through, causing vector stores to crash.
++        if (encodingFormat === 'base64') {
++            const originalEmbedDocuments = model.embedDocuments.bind(model)
++            model.embedDocuments = async (texts: string[]): Promise<number[][]> => {
++                const results = await originalEmbedDocuments(texts)
++                return results.map((embedding: any) => (typeof embedding === 'string' ? decodeBase64Embedding(embedding) : embedding))
++            }
++
++            const originalEmbedQuery = model.embedQuery.bind(model)
++            model.embedQuery = async (text: string): Promise<number[]> => {
++                const result = await originalEmbedQuery(text)
++                return typeof result === 'string' ? decodeBase64Embedding(result as any) : result
++            }
++        }
++
+         return model
+     }
+ }
+diff --git a/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts b/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
+index 8e23108ee67..309fc79d0e4 100644
+--- a/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
++++ b/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
+@@ -2,6 +2,17 @@ import { ClientOptions, OpenAIEmbeddings, OpenAIEmbeddingsParams } from '@langch
+ import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+ 
++/**
++ * Decodes OpenAI base64 embeddings into `number[]`.
++ * Required because LangChain returns the raw base64 string,
++ * while vector stores expect a numeric embedding array.
++ */
++function decodeBase64Embedding(base64String: string): number[] {
++    const binaryBuffer = Buffer.from(base64String, 'base64')
++    const float32Array = new Float32Array(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength / 4)
++    return Array.from(float32Array)
++}
++
+ class OpenAIEmbeddingCustom_Embeddings implements INode {
+     label: string
+     name: string
+@@ -141,6 +152,24 @@ class OpenAIEmbeddingCustom_Embeddings implements INode {
+         }
+ 
+         const model = new OpenAIEmbeddings(obj)
++
++        // If encoding format is base64, wrap the embedding methods to decode base64 responses
++        // into proper number[] arrays. LangChain's OpenAIEmbeddings does not handle this —
++        // it passes raw base64 strings through, causing vector stores to crash.
++        if (encodingFormat === 'base64') {
++            const originalEmbedDocuments = model.embedDocuments.bind(model)
++            model.embedDocuments = async (texts: string[]): Promise<number[][]> => {
++                const results = await originalEmbedDocuments(texts)
++                return results.map((embedding: any) => (typeof embedding === 'string' ? decodeBase64Embedding(embedding) : embedding))
++            }
++
++            const originalEmbedQuery = model.embedQuery.bind(model)
++            model.embedQuery = async (text: string): Promise<number[]> => {
++                const result = await originalEmbedQuery(text)
++                return typeof result === 'string' ? decodeBase64Embedding(result as any) : result
++            }
++        }
++
+         return model
+     }
+ }
+
+From 5fbebac1cc35a7edc7ab3fdb4b465ad5352a8b2a Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Thu, 18 Jun 2026 10:15:19 +0530
+Subject: [PATCH 2/2] fix(embeddings): slice ArrayBuffer to fix Float32Array
+ alignment crashes suggested by Gemini code review
+
+---
+ .../nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts        | 3 ++-
+ .../embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts  | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts b/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
+index 8681012fc22..654221294a0 100644
+--- a/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
++++ b/packages/components/nodes/embeddings/OpenAIEmbedding/OpenAIEmbedding.ts
+@@ -13,7 +13,8 @@ import { MODEL_TYPE, getModels } from '../../../src/modelLoader'
+  */
+ function decodeBase64Embedding(base64String: string): number[] {
+     const binaryBuffer = Buffer.from(base64String, 'base64')
+-    const float32Array = new Float32Array(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength / 4)
++    const arrayBuffer = binaryBuffer.buffer.slice(binaryBuffer.byteOffset, binaryBuffer.byteOffset + binaryBuffer.byteLength)
++    const float32Array = new Float32Array(arrayBuffer)
+     return Array.from(float32Array)
+ }
+ 
+diff --git a/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts b/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
+index 309fc79d0e4..d95a30b856f 100644
+--- a/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
++++ b/packages/components/nodes/embeddings/OpenAIEmbeddingCustom/OpenAIEmbeddingCustom.ts
+@@ -9,7 +9,8 @@ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../
+  */
+ function decodeBase64Embedding(base64String: string): number[] {
+     const binaryBuffer = Buffer.from(base64String, 'base64')
+-    const float32Array = new Float32Array(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength / 4)
++    const arrayBuffer = binaryBuffer.buffer.slice(binaryBuffer.byteOffset, binaryBuffer.byteOffset + binaryBuffer.byteLength)
++    const float32Array = new Float32Array(arrayBuffer)
+     return Array.from(float32Array)
+ }
+ 

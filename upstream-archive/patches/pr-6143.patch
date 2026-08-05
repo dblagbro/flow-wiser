@@ -1,0 +1,91 @@
+From 7cf7a736a1aa9be54ca08ef4625a630c90d4f648 Mon Sep 17 00:00:00 2001
+From: suyua9 <1521777066@qq.com>
+Date: Sat, 4 Apr 2026 00:36:52 +0800
+Subject: [PATCH 1/2] fix(server): trim show community nodes env
+
+---
+ packages/server/src/AppConfig.test.ts | 35 +++++++++++++++++++++++++++
+ packages/server/src/AppConfig.ts      | 10 +++++++-
+ 2 files changed, 44 insertions(+), 1 deletion(-)
+ create mode 100644 packages/server/src/AppConfig.test.ts
+
+diff --git a/packages/server/src/AppConfig.test.ts b/packages/server/src/AppConfig.test.ts
+new file mode 100644
+index 00000000000..0ea89eb5659
+--- /dev/null
++++ b/packages/server/src/AppConfig.test.ts
+@@ -0,0 +1,35 @@
++import { afterEach, describe, expect, it, jest } from '@jest/globals'
++
++const ORIGINAL_ENV = process.env
++
++describe('AppConfig', () => {
++    afterEach(() => {
++        process.env = ORIGINAL_ENV
++        jest.resetModules()
++    })
++
++    it('treats whitespace-padded true values as enabled', async () => {
++        process.env = { ...ORIGINAL_ENV, SHOW_COMMUNITY_NODES: ' true ' }
++
++        const { appConfig } = await import('./AppConfig')
++
++        expect(appConfig.showCommunityNodes).toBe(true)
++    })
++
++    it('keeps whitespace-padded false values disabled', async () => {
++        process.env = { ...ORIGINAL_ENV, SHOW_COMMUNITY_NODES: ' false ' }
++
++        const { appConfig } = await import('./AppConfig')
++
++        expect(appConfig.showCommunityNodes).toBe(false)
++    })
++
++    it('defaults to disabled when the env var is unset', async () => {
++        process.env = { ...ORIGINAL_ENV }
++        delete process.env.SHOW_COMMUNITY_NODES
++
++        const { appConfig } = await import('./AppConfig')
++
++        expect(appConfig.showCommunityNodes).toBe(false)
++    })
++})
+diff --git a/packages/server/src/AppConfig.ts b/packages/server/src/AppConfig.ts
+index 8a838254e0a..b9582a309ca 100644
+--- a/packages/server/src/AppConfig.ts
++++ b/packages/server/src/AppConfig.ts
+@@ -1,4 +1,12 @@
++const parseBooleanEnv = (value: string | undefined, defaultValue: boolean) => {
++    if (value === undefined) {
++        return defaultValue
++    }
++
++    return value.trim().toLowerCase() === 'true'
++}
++
+ export const appConfig = {
+-    showCommunityNodes: process.env.SHOW_COMMUNITY_NODES ? process.env.SHOW_COMMUNITY_NODES.toLowerCase() === 'true' : false
++    showCommunityNodes: parseBooleanEnv(process.env.SHOW_COMMUNITY_NODES, false)
+     // todo: add more config options here like database, log, storage, credential and allow modification from UI
+ }
+
+From 4d303d018b129e8220ead5e409c7fc429a1dd63d Mon Sep 17 00:00:00 2001
+From: suyua9 <1521777066@qq.com>
+Date: Sat, 4 Apr 2026 00:45:42 +0800
+Subject: [PATCH 2/2] fix(server): handle nullish community node env
+
+---
+ packages/server/src/AppConfig.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/src/AppConfig.ts b/packages/server/src/AppConfig.ts
+index b9582a309ca..e5061d74414 100644
+--- a/packages/server/src/AppConfig.ts
++++ b/packages/server/src/AppConfig.ts
+@@ -1,5 +1,5 @@
+ const parseBooleanEnv = (value: string | undefined, defaultValue: boolean) => {
+-    if (value === undefined) {
++    if (value == null) {
+         return defaultValue
+     }
+ 

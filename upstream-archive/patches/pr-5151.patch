@@ -1,0 +1,165 @@
+From 7fd959c6c8e1c2b0a8cb601b0d1c89cb1fc31b49 Mon Sep 17 00:00:00 2001
+From: sauravbaid3 <sauravbaid3@gmail.com>
+Date: Fri, 29 Aug 2025 23:12:27 +0530
+Subject: [PATCH] fix: consistently strip HTML from tool input before JSON
+ parsing
+
+---
+ .../components/nodes/tools/OpenAPIToolkit/OpenAPIToolkit.ts  | 3 ++-
+ packages/components/nodes/tools/RequestsDelete/core.ts       | 5 +++--
+ packages/components/nodes/tools/RequestsGet/core.ts          | 5 +++--
+ packages/components/nodes/tools/RequestsPost/RequestsPost.ts | 2 +-
+ packages/components/nodes/tools/RequestsPost/core.ts         | 3 ++-
+ packages/components/nodes/tools/RequestsPut/RequestsPut.ts   | 2 +-
+ packages/components/nodes/tools/RequestsPut/core.ts          | 3 ++-
+ 7 files changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/packages/components/nodes/tools/OpenAPIToolkit/OpenAPIToolkit.ts b/packages/components/nodes/tools/OpenAPIToolkit/OpenAPIToolkit.ts
+index ccc7ef7d36b..8728cd1040d 100644
+--- a/packages/components/nodes/tools/OpenAPIToolkit/OpenAPIToolkit.ts
++++ b/packages/components/nodes/tools/OpenAPIToolkit/OpenAPIToolkit.ts
+@@ -5,6 +5,7 @@ import $RefParser from '@apidevtools/json-schema-ref-parser'
+ import { z, ZodSchema, ZodTypeAny } from 'zod'
+ import { defaultCode, DynamicStructuredTool, howToUseCode } from './core'
+ import { DataSource } from 'typeorm'
++import { getBaseClasses, getVars, stripHTMLFromToolInput } from '../../../src/utils'
+ 
+ class OpenAPIToolkit_Tools implements INode {
+     label: string
+@@ -80,7 +81,7 @@ class OpenAPIToolkit_Tools implements INode {
+         const _headers = nodeData.inputs?.headers as string
+         const removeNulls = nodeData.inputs?.removeNulls as boolean
+ 
+-        const headers = typeof _headers === 'object' ? _headers : _headers ? JSON.parse(_headers) : {}
++        const headers = typeof _headers === 'object' ? _headers : _headers ? JSON.parse(stripHTMLFromToolInput(_headers)) : {}
+ 
+         let data
+         if (yamlFileBase64.startsWith('FILE-STORAGE::')) {
+diff --git a/packages/components/nodes/tools/RequestsDelete/core.ts b/packages/components/nodes/tools/RequestsDelete/core.ts
+index a60dee95983..5aeeb14733a 100644
+--- a/packages/components/nodes/tools/RequestsDelete/core.ts
++++ b/packages/components/nodes/tools/RequestsDelete/core.ts
+@@ -1,6 +1,7 @@
+ import { z } from 'zod'
+ import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
+ import { secureFetch } from '../../../src/httpSecurity'
++import { stripHTMLFromToolInput } from '../../../src/utils'
+ 
+ export const desc = `Use this when you need to execute a DELETE request to remove data from a website.`
+ 
+@@ -22,7 +23,7 @@ const createRequestsDeleteSchema = (queryParamsSchema?: string) => {
+     // If queryParamsSchema is provided, parse it and add dynamic query params
+     if (queryParamsSchema) {
+         try {
+-            const parsedSchema = JSON.parse(queryParamsSchema)
++            const parsedSchema = JSON.parse(stripHTMLFromToolInput(queryParamsSchema))
+             const queryParamsObject: Record<string, z.ZodTypeAny> = {}
+ 
+             Object.entries(parsedSchema).forEach(([key, config]: [string, any]) => {
+@@ -108,7 +109,7 @@ export class RequestsDeleteTool extends DynamicStructuredTool {
+ 
+         if (this.queryParamsSchema && params.queryParams && Object.keys(params.queryParams).length > 0) {
+             try {
+-                const parsedSchema = JSON.parse(this.queryParamsSchema)
++                const parsedSchema = JSON.parse(stripHTMLFromToolInput(this.queryParamsSchema))
+                 const pathParams: Array<{ key: string; value: string }> = []
+ 
+                 Object.entries(params.queryParams).forEach(([key, value]) => {
+diff --git a/packages/components/nodes/tools/RequestsGet/core.ts b/packages/components/nodes/tools/RequestsGet/core.ts
+index 931a494e8f9..4b6492d85d3 100644
+--- a/packages/components/nodes/tools/RequestsGet/core.ts
++++ b/packages/components/nodes/tools/RequestsGet/core.ts
+@@ -1,6 +1,7 @@
+ import { z } from 'zod'
+ import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
+ import { secureFetch } from '../../../src/httpSecurity'
++import { stripHTMLFromToolInput } from '../../../src/utils'
+ 
+ export const desc = `Use this when you need to execute a GET request to get data from a website.`
+ 
+@@ -22,7 +23,7 @@ const createRequestsGetSchema = (queryParamsSchema?: string) => {
+     // If queryParamsSchema is provided, parse it and add dynamic query params
+     if (queryParamsSchema) {
+         try {
+-            const parsedSchema = JSON.parse(queryParamsSchema)
++            const parsedSchema = JSON.parse(stripHTMLFromToolInput(queryParamsSchema))
+             const queryParamsObject: Record<string, z.ZodTypeAny> = {}
+ 
+             Object.entries(parsedSchema).forEach(([key, config]: [string, any]) => {
+@@ -108,7 +109,7 @@ export class RequestsGetTool extends DynamicStructuredTool {
+ 
+         if (this.queryParamsSchema && params.queryParams && Object.keys(params.queryParams).length > 0) {
+             try {
+-                const parsedSchema = JSON.parse(this.queryParamsSchema)
++                const parsedSchema = JSON.parse(stripHTMLFromToolInput(this.queryParamsSchema))
+                 const pathParams: Array<{ key: string; value: string }> = []
+ 
+                 Object.entries(params.queryParams).forEach(([key, value]) => {
+diff --git a/packages/components/nodes/tools/RequestsPost/RequestsPost.ts b/packages/components/nodes/tools/RequestsPost/RequestsPost.ts
+index 326084d9c52..0e100b6e88d 100644
+--- a/packages/components/nodes/tools/RequestsPost/RequestsPost.ts
++++ b/packages/components/nodes/tools/RequestsPost/RequestsPost.ts
+@@ -144,7 +144,7 @@ class RequestsPost_Tools implements INode {
+             obj.headers = parsedHeaders
+         }
+         if (body) {
+-            const parsedBody = typeof body === 'object' ? body : JSON.parse(body)
++            const parsedBody = typeof body === 'object' ? body : JSON.parse(stripHTMLFromToolInput(body))
+             obj.body = parsedBody
+         }
+ 
+diff --git a/packages/components/nodes/tools/RequestsPost/core.ts b/packages/components/nodes/tools/RequestsPost/core.ts
+index bbffe9379fb..6a31c827ed3 100644
+--- a/packages/components/nodes/tools/RequestsPost/core.ts
++++ b/packages/components/nodes/tools/RequestsPost/core.ts
+@@ -1,6 +1,7 @@
+ import { z } from 'zod'
+ import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
+ import { secureFetch } from '../../../src/httpSecurity'
++import { stripHTMLFromToolInput } from '../../../src/utils'
+ 
+ export const desc = `Use this when you want to execute a POST request to create or update a resource.`
+ 
+@@ -27,7 +28,7 @@ const createRequestsPostSchema = (bodySchema?: string) => {
+     // If bodySchema is provided, parse it and add dynamic body params
+     if (bodySchema) {
+         try {
+-            const parsedSchema = JSON.parse(bodySchema)
++            const parsedSchema = JSON.parse(stripHTMLFromToolInput(bodySchema))
+             const bodyParamsObject: Record<string, z.ZodTypeAny> = {}
+ 
+             Object.entries(parsedSchema).forEach(([key, config]: [string, any]) => {
+diff --git a/packages/components/nodes/tools/RequestsPut/RequestsPut.ts b/packages/components/nodes/tools/RequestsPut/RequestsPut.ts
+index c269401571e..f827f57d37d 100644
+--- a/packages/components/nodes/tools/RequestsPut/RequestsPut.ts
++++ b/packages/components/nodes/tools/RequestsPut/RequestsPut.ts
+@@ -144,7 +144,7 @@ class RequestsPut_Tools implements INode {
+             obj.headers = parsedHeaders
+         }
+         if (body) {
+-            const parsedBody = typeof body === 'object' ? body : JSON.parse(body)
++            const parsedBody = typeof body === 'object' ? body : JSON.parse(stripHTMLFromToolInput(body))
+             obj.body = parsedBody
+         }
+ 
+diff --git a/packages/components/nodes/tools/RequestsPut/core.ts b/packages/components/nodes/tools/RequestsPut/core.ts
+index 28003f9d046..8c61c33a0e8 100644
+--- a/packages/components/nodes/tools/RequestsPut/core.ts
++++ b/packages/components/nodes/tools/RequestsPut/core.ts
+@@ -1,6 +1,7 @@
+ import { z } from 'zod'
+ import { DynamicStructuredTool } from '../OpenAPIToolkit/core'
+ import { secureFetch } from '../../../src/httpSecurity'
++import { stripHTMLFromToolInput } from '../../../src/utils'
+ 
+ export const desc = `Use this when you want to execute a PUT request to update or replace a resource.`
+ 
+@@ -27,7 +28,7 @@ const createRequestsPutSchema = (bodySchema?: string) => {
+     // If bodySchema is provided, parse it and add dynamic body params
+     if (bodySchema) {
+         try {
+-            const parsedSchema = JSON.parse(bodySchema)
++            const parsedSchema = JSON.parse(stripHTMLFromToolInput(bodySchema))
+             const bodyParamsObject: Record<string, z.ZodTypeAny> = {}
+ 
+             Object.entries(parsedSchema).forEach(([key, config]: [string, any]) => {

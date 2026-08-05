@@ -1,0 +1,390 @@
+From 2b5f283a3488909b66e7bee67cf1027ad9163362 Mon Sep 17 00:00:00 2001
+From: Maxiweb <mmax@hotmail.co.uk>
+Date: Sun, 6 Jul 2025 15:43:10 +0100
+Subject: [PATCH 1/3] Added unit test for validateKey util
+
+---
+ .../test/utils/validateKey.util.test.ts       | 116 ++++++++++++++++++
+ 1 file changed, 116 insertions(+)
+ create mode 100644 packages/server/test/utils/validateKey.util.test.ts
+
+diff --git a/packages/server/test/utils/validateKey.util.test.ts b/packages/server/test/utils/validateKey.util.test.ts
+new file mode 100644
+index 00000000000..7a09e8acab9
+--- /dev/null
++++ b/packages/server/test/utils/validateKey.util.test.ts
+@@ -0,0 +1,116 @@
++import { validateChatflowAPIKey, validateAPIKey, getAPIKeyWorkspaceID } from '../../src/utils/validateKey'
++import apikeyService from '../../src/services/apikey'
++import { compareKeys } from '../../src/utils/apiKey'
++import { Request } from 'express'
++
++jest.mock('../../src/services/apikey')
++jest.mock('../../src/utils/apiKey')
++
++const mockedCompareKeys = compareKeys as jest.Mock
++const mockedApikeyService = apikeyService as jest.Mocked<typeof apikeyService>
++
++describe('API Key Validators', () => {
++    const createMockRequest = (headers: Record<string, string> = {}): Request => {
++        return {
++            headers,
++            cookies: {},
++            query: {},
++            params: {},
++            body: {},
++            get: jest.fn()
++        } as unknown as Request
++    }
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++    })
++
++    describe('validateChatflowAPIKey', () => {
++        it('should return true if chatflow has no apikeyid', async () => {
++            const req = createMockRequest()
++            const result = await validateChatflowAPIKey(req, { apikeyid: null } as any)
++            expect(result).toBe(true)
++        })
++
++        it('should return false if apikeyid exists but no Authorization header', async () => {
++            const req = createMockRequest()
++            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++            expect(result).toBe(false)
++        })
++
++        it('should return false if no matching key is found', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++            expect(result).toBe(false)
++        })
++
++        it('should return false if key does not match', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
++            mockedCompareKeys.mockReturnValueOnce(false)
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++            expect(result).toBe(false)
++        })
++
++        it('should return true if key matches', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
++            mockedCompareKeys.mockReturnValueOnce(true)
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++            expect(result).toBe(true)
++        })
++    })
++
++    describe('validateAPIKey', () => {
++        it('should return false if no Authorization header', async () => {
++            const req = createMockRequest()
++            const result = await validateAPIKey(req)
++            expect(result).toBe(false)
++        })
++
++        it('should return false if no matching apiKey', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateAPIKey(req)
++            expect(result).toBe(false)
++        })
++
++        it('should return false if apiKey does not match', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
++            mockedCompareKeys.mockReturnValueOnce(false)
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateAPIKey(req)
++            expect(result).toBe(false)
++        })
++
++        it('should return true if apiKey matches', async () => {
++            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
++            mockedCompareKeys.mockReturnValueOnce(true)
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await validateAPIKey(req)
++            expect(result).toBe(true)
++        })
++    })
++
++    describe('getAPIKeyWorkspaceID', () => {
++        it('should return undefined if no Authorization header', async () => {
++            const req = createMockRequest()
++            const result = await getAPIKeyWorkspaceID(req)
++            expect(result).toBeUndefined()
++        })
++
++        it('should return undefined if key is not found', async () => {
++            mockedApikeyService.getApiKey.mockResolvedValueOnce(undefined)
++
++            const req = createMockRequest({ authorization: 'Bearer someKey' })
++            const result = await getAPIKeyWorkspaceID(req)
++            expect(result).toBeUndefined()
++        })
++    })
++})
+
+From 32527dfbf07884908f5ff1d623b9ba673523be17 Mon Sep 17 00:00:00 2001
+From: Maxiweb <mmax@hotmail.co.uk>
+Date: Sun, 6 Jul 2025 16:01:30 +0100
+Subject: [PATCH 2/3] Added validate key test to test index
+
+---
+ packages/server/test/index.test.ts            |   2 +
+ .../test/utils/validateKey.util.test.ts       | 192 +++++++++---------
+ 2 files changed, 95 insertions(+), 99 deletions(-)
+
+diff --git a/packages/server/test/index.test.ts b/packages/server/test/index.test.ts
+index 8c038f44f62..08164c7b00a 100644
+--- a/packages/server/test/index.test.ts
++++ b/packages/server/test/index.test.ts
+@@ -3,6 +3,7 @@ import { getRunningExpressApp } from '../src/utils/getRunningExpressApp'
+ import { organizationUserRouteTest } from './routes/v1/organization-user.route.test'
+ import { userRouteTest } from './routes/v1/user.route.test'
+ import { apiKeyTest } from './utils/api-key.util.test'
++import { validateKeyTest } from './utils/validateKey.util.test'
+ 
+ // ⏱️ Extend test timeout to 6 minutes for long setups (increase as tests grow)
+ jest.setTimeout(360000)
+@@ -25,4 +26,5 @@ describe('Routes Test', () => {
+ 
+ describe('Utils Test', () => {
+     apiKeyTest()
++    validateKeyTest()
+ })
+diff --git a/packages/server/test/utils/validateKey.util.test.ts b/packages/server/test/utils/validateKey.util.test.ts
+index 7a09e8acab9..18fdc5084f9 100644
+--- a/packages/server/test/utils/validateKey.util.test.ts
++++ b/packages/server/test/utils/validateKey.util.test.ts
+@@ -9,108 +9,102 @@ jest.mock('../../src/utils/apiKey')
+ const mockedCompareKeys = compareKeys as jest.Mock
+ const mockedApikeyService = apikeyService as jest.Mocked<typeof apikeyService>
+ 
+-describe('API Key Validators', () => {
+-    const createMockRequest = (headers: Record<string, string> = {}): Request => {
+-        return {
+-            headers,
+-            cookies: {},
+-            query: {},
+-            params: {},
+-            body: {},
+-            get: jest.fn()
+-        } as unknown as Request
+-    }
+-
+-    beforeEach(() => {
+-        jest.clearAllMocks()
+-    })
+-
+-    describe('validateChatflowAPIKey', () => {
+-        it('should return true if chatflow has no apikeyid', async () => {
+-            const req = createMockRequest()
+-            const result = await validateChatflowAPIKey(req, { apikeyid: null } as any)
+-            expect(result).toBe(true)
+-        })
+-
+-        it('should return false if apikeyid exists but no Authorization header', async () => {
+-            const req = createMockRequest()
+-            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
+-            expect(result).toBe(false)
+-        })
+-
+-        it('should return false if no matching key is found', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
+-            expect(result).toBe(false)
+-        })
+-
+-        it('should return false if key does not match', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
+-            mockedCompareKeys.mockReturnValueOnce(false)
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
+-            expect(result).toBe(false)
+-        })
+-
+-        it('should return true if key matches', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
+-            mockedCompareKeys.mockReturnValueOnce(true)
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
+-            expect(result).toBe(true)
+-        })
+-    })
+-
+-    describe('validateAPIKey', () => {
+-        it('should return false if no Authorization header', async () => {
+-            const req = createMockRequest()
+-            const result = await validateAPIKey(req)
+-            expect(result).toBe(false)
++const createMockRequest = (headers: Record<string, string> = {}): Request => {
++    return {
++        headers,
++        cookies: {},
++        query: {},
++        params: {},
++        body: {},
++        get: jest.fn(),
++    } as unknown as Request
++}
++
++export function validateKeyTest() {
++    describe('Validate Key Utils', () => {
++        describe('validateChatflowAPIKey', () => {
++            it('should return true if chatflow has no apikeyid', async () => {
++                const req = createMockRequest()
++                const result = await validateChatflowAPIKey(req, { apikeyid: null } as any)
++                expect(result).toBe(true)
++            })
++
++            it('should return false if apikeyid exists but no Authorization header', async () => {
++                const req = createMockRequest()
++                const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++                expect(result).toBe(false)
++            })
++
++            it('should return false if no matching key is found', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++                expect(result).toBe(false)
++            })
++
++            it('should return false if key does not match', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
++                mockedCompareKeys.mockReturnValueOnce(false)
++
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++                expect(result).toBe(false)
++            })
++
++            it('should return true if key matches', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ id: 'abc', apiSecret: 'secret' }])
++                mockedCompareKeys.mockReturnValueOnce(true)
++
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateChatflowAPIKey(req, { apikeyid: 'abc' } as any)
++                expect(result).toBe(true)
++            })
+         })
+ 
+-        it('should return false if no matching apiKey', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateAPIKey(req)
+-            expect(result).toBe(false)
++        describe('validateAPIKey', () => {
++            it('should return false if no Authorization header', async () => {
++                const req = createMockRequest()
++                const result = await validateAPIKey(req)
++                expect(result).toBe(false)
++            })
++
++            it('should return false if no matching apiKey', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([])
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateAPIKey(req)
++                expect(result).toBe(false)
++            })
++
++            it('should return false if apiKey does not match', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
++                mockedCompareKeys.mockReturnValueOnce(false)
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateAPIKey(req)
++                expect(result).toBe(false)
++            })
++
++            it('should return true if apiKey matches', async () => {
++                mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
++                mockedCompareKeys.mockReturnValueOnce(true)
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await validateAPIKey(req)
++                expect(result).toBe(true)
++            })
+         })
+ 
+-        it('should return false if apiKey does not match', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
+-            mockedCompareKeys.mockReturnValueOnce(false)
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateAPIKey(req)
+-            expect(result).toBe(false)
+-        })
+-
+-        it('should return true if apiKey matches', async () => {
+-            mockedApikeyService.getAllApiKeys.mockResolvedValueOnce([{ apiKey: 'someKey', apiSecret: 'secret' }])
+-            mockedCompareKeys.mockReturnValueOnce(true)
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await validateAPIKey(req)
+-            expect(result).toBe(true)
+-        })
+-    })
+-
+-    describe('getAPIKeyWorkspaceID', () => {
+-        it('should return undefined if no Authorization header', async () => {
+-            const req = createMockRequest()
+-            const result = await getAPIKeyWorkspaceID(req)
+-            expect(result).toBeUndefined()
+-        })
+-
+-        it('should return undefined if key is not found', async () => {
+-            mockedApikeyService.getApiKey.mockResolvedValueOnce(undefined)
+-
+-            const req = createMockRequest({ authorization: 'Bearer someKey' })
+-            const result = await getAPIKeyWorkspaceID(req)
+-            expect(result).toBeUndefined()
++        describe('getAPIKeyWorkspaceID', () => {
++            it('should return undefined if no Authorization header', async () => {
++                const req = createMockRequest()
++                const result = await getAPIKeyWorkspaceID(req)
++                expect(result).toBeUndefined()
++            })
++
++            it('should return undefined if key is not found', async () => {
++                mockedApikeyService.getApiKey.mockResolvedValueOnce(undefined)
++                const req = createMockRequest({ authorization: 'Bearer someKey' })
++                const result = await getAPIKeyWorkspaceID(req)
++                expect(result).toBeUndefined()
++            })
+         })
+     })
+-})
++}
+
+From b1bd37c975363b3fe6bd1b84fa7deda9033de148 Mon Sep 17 00:00:00 2001
+From: Maxiweb <mmax@hotmail.co.uk>
+Date: Sun, 6 Jul 2025 16:52:36 +0100
+Subject: [PATCH 3/3] fixed lint issue
+
+---
+ packages/server/test/utils/validateKey.util.test.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/server/test/utils/validateKey.util.test.ts b/packages/server/test/utils/validateKey.util.test.ts
+index 18fdc5084f9..307f0a57012 100644
+--- a/packages/server/test/utils/validateKey.util.test.ts
++++ b/packages/server/test/utils/validateKey.util.test.ts
+@@ -16,7 +16,7 @@ const createMockRequest = (headers: Record<string, string> = {}): Request => {
+         query: {},
+         params: {},
+         body: {},
+-        get: jest.fn(),
++        get: jest.fn()
+     } as unknown as Request
+ }
+ 

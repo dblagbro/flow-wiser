@@ -1,0 +1,87 @@
+From 7f026546f85484aa4182d56a13eefc1d52022dfb Mon Sep 17 00:00:00 2001
+From: Javi-vahe <14846631+Javi-vahe@users.noreply.github.com>
+Date: Wed, 3 Jun 2026 21:52:02 +0800
+Subject: [PATCH 1/2] fix(chatopenai): support stop in base options
+
+---
+ .../nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index 03c13fee9b0..db8d50ae68c 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -286,6 +286,25 @@ class ChatOpenAI_ChatModels implements INode {
+             }
+         }
+ 
++        if (parsedBaseOptions?.stop) {
++            const stop = parsedBaseOptions.stop
++
++            if (!obj.stop) {
++                obj.stop = Array.isArray(stop)
++                    ? stop.map((item) => String(item).trim()).filter(Boolean)
++                    : String(stop)
++                          .split(',')
++                          .map((item) => item.trim())
++                          .filter(Boolean)
++            }
++
++            delete parsedBaseOptions.stop
++
++            if (Object.keys(parsedBaseOptions).length === 0) {
++                parsedBaseOptions = undefined
++            }
++        }
++
+         if (basePath || parsedBaseOptions) {
+             obj.configuration = {
+                 baseURL: basePath,
+
+From 6b84689c3305658795a9b86cdf0e523e487c2e91 Mon Sep 17 00:00:00 2001
+From: Javi-vahe <14846631+Javi-vahe@users.noreply.github.com>
+Date: Sat, 6 Jun 2026 16:30:38 +0800
+Subject: [PATCH 2/2] fix(chatopenai): avoid mutating base options
+
+---
+ .../nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts       | 13 ++++---------
+ 1 file changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+index db8d50ae68c..efe39111919 100644
+--- a/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
++++ b/packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts
+@@ -280,16 +280,17 @@ class ChatOpenAI_ChatModels implements INode {
+ 
+         if (baseOptions) {
+             try {
+-                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
++                parsedBaseOptions = typeof baseOptions === 'object' ? { ...baseOptions } : JSON.parse(baseOptions)
+             } catch (exception) {
+                 throw new Error("Invalid JSON in the ChatOpenAI's BaseOptions: " + exception)
+             }
+         }
+ 
+         if (parsedBaseOptions?.stop) {
+-            const stop = parsedBaseOptions.stop
++            const { stop, ...restBaseOptions } = parsedBaseOptions
++            parsedBaseOptions = Object.keys(restBaseOptions).length ? restBaseOptions : undefined
+ 
+-            if (!obj.stop) {
++            if (!isReasoningModelOpenAI(modelName) && !obj.stop) {
+                 obj.stop = Array.isArray(stop)
+                     ? stop.map((item) => String(item).trim()).filter(Boolean)
+                     : String(stop)
+@@ -297,12 +298,6 @@ class ChatOpenAI_ChatModels implements INode {
+                           .map((item) => item.trim())
+                           .filter(Boolean)
+             }
+-
+-            delete parsedBaseOptions.stop
+-
+-            if (Object.keys(parsedBaseOptions).length === 0) {
+-                parsedBaseOptions = undefined
+-            }
+         }
+ 
+         if (basePath || parsedBaseOptions) {

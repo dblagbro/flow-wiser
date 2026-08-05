@@ -1,0 +1,216 @@
+From 7e5b368d521f4dcb72fc7d8b69c10915b2590439 Mon Sep 17 00:00:00 2001
+From: Stable Genius <259448942+stablegenius49@users.noreply.github.com>
+Date: Sun, 1 Mar 2026 09:04:02 -0800
+Subject: [PATCH] feat(memory): add Momento chat memory node
+
+---
+ .../nodes/memory/MomentoMemory/Momento.svg    |   4 +
+ .../memory/MomentoMemory/MomentoMemory.ts     | 188 ++++++++++++++++++
+ 2 files changed, 192 insertions(+)
+ create mode 100644 packages/components/nodes/memory/MomentoMemory/Momento.svg
+ create mode 100644 packages/components/nodes/memory/MomentoMemory/MomentoMemory.ts
+
+diff --git a/packages/components/nodes/memory/MomentoMemory/Momento.svg b/packages/components/nodes/memory/MomentoMemory/Momento.svg
+new file mode 100644
+index 00000000000..22e9474d796
+--- /dev/null
++++ b/packages/components/nodes/memory/MomentoMemory/Momento.svg
+@@ -0,0 +1,4 @@
++<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
++<circle cx="19.25" cy="13.25" r="1.25" fill="black"/>
++<path d="M15.221 7.55121L10.827 24.7611C10.5157 25.9803 8.8952 26.2323 8.2283 25.1653C7.75236 24.4038 7.5 23.5238 7.5 22.6259V20C7.5 17.7909 5.70914 16 3.5 16C3.22697 16 3.00858 15.7732 3.01891 15.5004L3.03784 15C3.54847 8.28755 9.15672 3 16 3C23.1797 3 29 8.8203 29 16C29 19.7112 27.4448 23.0593 24.9506 25.4279C24.5239 25.8332 23.8449 25.725 23.5205 25.234L21.5723 22.2851C21.3795 21.9932 21.2145 21.6792 21.1483 21.3356C20.8998 20.044 21.3021 18.6979 22.2481 17.7519L24 16C25.608 14.392 24.9616 11.6539 22.8043 10.9348L19.518 9.83932C18.8662 9.62206 18.3274 9.15477 18.0201 8.54025L17.4083 7.31663C16.9222 6.34444 15.4899 6.49805 15.221 7.55121Z" fill="black" stroke="black"/>
++</svg>
+diff --git a/packages/components/nodes/memory/MomentoMemory/MomentoMemory.ts b/packages/components/nodes/memory/MomentoMemory/MomentoMemory.ts
+new file mode 100644
+index 00000000000..6f35ef09cbf
+--- /dev/null
++++ b/packages/components/nodes/memory/MomentoMemory/MomentoMemory.ts
+@@ -0,0 +1,188 @@
++import { CacheClient, Configurations, CredentialProvider } from '@gomomento/sdk'
++import { mapStoredMessageToChatMessage, AIMessage, HumanMessage, BaseMessage, StoredMessage } from '@langchain/core/messages'
++import { BufferMemory, BufferMemoryInput } from 'langchain/memory'
++import {
++    convertBaseMessagetoIMessage,
++    getBaseClasses,
++    getCredentialData,
++    getCredentialParam,
++    mapChatMessageToBaseMessage
++} from '../../../src/utils'
++import { FlowiseMemory, ICommonObject, IMessage, INode, INodeData, INodeParams, MemoryMethods, MessageType } from '../../../src/Interface'
++
++class Momento_Memory implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Momento Chat Memory'
++        this.name = 'MomentoChatMemory'
++        this.version = 1.0
++        this.type = 'MomentoChatMemory'
++        this.icon = 'Momento.svg'
++        this.category = 'Memory'
++        this.description = 'Stores the conversation in Momento cache'
++        this.baseClasses = [this.type, ...getBaseClasses(BufferMemory)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['momentoCacheApi']
++        }
++        this.inputs = [
++            {
++                label: 'Session Id',
++                name: 'sessionId',
++                type: 'string',
++                description:
++                    'If not specified, a random id will be used. Learn <a target="_blank" href="https://docs.flowiseai.com/memory/long-term-memory#ui-and-embedded-chat">more</a>',
++                default: '',
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Session Timeouts',
++                name: 'sessionTTL',
++                type: 'number',
++                description: 'Seconds till a session expires. If not specified, defaults to 24 hours.',
++                additionalParams: true,
++                optional: true
++            },
++            {
++                label: 'Memory Key',
++                name: 'memoryKey',
++                type: 'string',
++                default: 'chat_history',
++                additionalParams: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        return initializeMomento(nodeData, options)
++    }
++}
++
++const initializeMomento = async (nodeData: INodeData, options: ICommonObject): Promise<BufferMemory> => {
++    const sessionId = nodeData.inputs?.sessionId as string
++    const memoryKey = nodeData.inputs?.memoryKey as string
++    const _sessionTTL = nodeData.inputs?.sessionTTL as string
++    const parsedSessionTTL = _sessionTTL ? parseInt(_sessionTTL, 10) : undefined
++    const sessionTTL = parsedSessionTTL && !isNaN(parsedSessionTTL) ? parsedSessionTTL : undefined
++
++    const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++    const cacheName = getCredentialParam('momentoCache', credentialData, nodeData)
++    const apiKey = getCredentialParam('momentoApiKey', credentialData, nodeData)
++
++    const cacheClient = new CacheClient({
++        configuration: Configurations.Laptop.v1(),
++        credentialProvider: CredentialProvider.fromString({ apiKey }),
++        defaultTtlSeconds: sessionTTL ?? 60 * 60 * 24
++    })
++
++    const orgId = options.orgId as string
++
++    return new BufferMemoryExtended({
++        memoryKey: memoryKey ?? 'chat_history',
++        cacheName,
++        cacheClient,
++        sessionId,
++        orgId
++    })
++}
++
++interface BufferMemoryExtendedInput {
++    cacheName: string
++    cacheClient: CacheClient
++    sessionId: string
++    orgId: string
++}
++
++class BufferMemoryExtended extends FlowiseMemory implements MemoryMethods {
++    cacheName: string
++    cacheClient: CacheClient
++    sessionId = ''
++    orgId = ''
++
++    constructor(fields: BufferMemoryInput & BufferMemoryExtendedInput) {
++        super(fields)
++        this.cacheName = fields.cacheName
++        this.cacheClient = fields.cacheClient
++        this.sessionId = fields.sessionId
++        this.orgId = fields.orgId
++    }
++
++    private resolveSessionId(overrideSessionId = ''): string {
++        return overrideSessionId || this.sessionId || 'flowise_default_session'
++    }
++
++    private async readStoredMessages(id: string): Promise<StoredMessage[]> {
++        const getResponse = await this.cacheClient.get(this.cacheName, id)
++        const valueString = typeof (getResponse as any).valueString === 'function' ? (getResponse as any).valueString() : undefined
++        if (!valueString) return []
++
++        try {
++            const parsed = JSON.parse(valueString)
++            if (!Array.isArray(parsed)) return []
++            return parsed.filter((message) => message?.type && message?.data?.content)
++        } catch {
++            return []
++        }
++    }
++
++    private async writeStoredMessages(id: string, messages: StoredMessage[]): Promise<void> {
++        await this.cacheClient.set(this.cacheName, id, JSON.stringify(messages))
++    }
++
++    async getChatMessages(
++        overrideSessionId = '',
++        returnBaseMessages = false,
++        prependMessages?: IMessage[]
++    ): Promise<IMessage[] | BaseMessage[]> {
++        const id = this.resolveSessionId(overrideSessionId)
++        const storedMessages = await this.readStoredMessages(id)
++
++        const baseMessages = storedMessages.map(mapStoredMessageToChatMessage)
++        if (prependMessages?.length) {
++            baseMessages.unshift(...(await mapChatMessageToBaseMessage(prependMessages, this.orgId)))
++        }
++
++        return returnBaseMessages ? baseMessages : convertBaseMessagetoIMessage(baseMessages)
++    }
++
++    async addChatMessages(msgArray: { text: string; type: MessageType }[], overrideSessionId = ''): Promise<void> {
++        const id = this.resolveSessionId(overrideSessionId)
++        const existingMessages = await this.readStoredMessages(id)
++
++        const input = msgArray.find((msg) => msg.type === 'userMessage')
++        const output = msgArray.find((msg) => msg.type === 'apiMessage')
++
++        if (input) {
++            const newInputMessage = new HumanMessage(input.text)
++            existingMessages.push(newInputMessage.toDict())
++        }
++
++        if (output) {
++            const newOutputMessage = new AIMessage(output.text)
++            existingMessages.push(newOutputMessage.toDict())
++        }
++
++        await this.writeStoredMessages(id, existingMessages)
++    }
++
++    async clearChatMessages(overrideSessionId = ''): Promise<void> {
++        const id = this.resolveSessionId(overrideSessionId)
++        await this.cacheClient.delete(this.cacheName, id)
++        await this.clear()
++    }
++}
++
++module.exports = { nodeClass: Momento_Memory }

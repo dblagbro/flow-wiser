@@ -1,0 +1,248 @@
+From 5e8ba84956b2e6b1b23afa2935719e8592791583 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Madrigal=20Jim=C3=A9nez=20Rub=C3=A9n?= <RuMadr@ice.go.cr>
+Date: Wed, 4 Mar 2026 15:42:41 -0600
+Subject: [PATCH 1/4] Fix: defensive JSON parsing in analytics handler
+
+---
+ packages/components/src/google-utils.ts | 8 +++++---
+ packages/components/src/handler.ts      | 8 +++++---
+ packages/components/src/utils.ts        | 9 +++++++++
+ 3 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/packages/components/src/google-utils.ts b/packages/components/src/google-utils.ts
+index f868e669998..4b54c533c2b 100644
+--- a/packages/components/src/google-utils.ts
++++ b/packages/components/src/google-utils.ts
+@@ -1,4 +1,4 @@
+-import { getCredentialData, getCredentialParam, type ICommonObject, type INodeData } from '.'
++import { getCredentialData, getCredentialParam, safeJsonParse, type ICommonObject, type INodeData } from '.'
+ import type { ChatVertexAIInput, VertexAIInput } from '@langchain/google-vertexai'
+ 
+ type SupportedAuthOptions = ChatVertexAIInput['authOptions'] | VertexAIInput['authOptions']
+@@ -19,8 +19,10 @@ export const buildGoogleCredentials = async (nodeData: INodeData, options: IComm
+             )
+ 
+         if (googleApplicationCredentialFilePath && !googleApplicationCredential) authOptions.keyFile = googleApplicationCredentialFilePath
+-        else if (!googleApplicationCredentialFilePath && googleApplicationCredential)
+-            authOptions.credentials = JSON.parse(googleApplicationCredential)
++        else if (!googleApplicationCredentialFilePath && googleApplicationCredential) {
++            const parsedCredential = safeJsonParse(googleApplicationCredential)
++            authOptions.credentials = parsedCredential ?? googleApplicationCredential
++        }
+ 
+         if (projectID) authOptions.projectId = projectID
+     }
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 0101d8dacde..610b39e46b1 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -25,7 +25,7 @@ import { ChainValues } from '@langchain/core/utils/types'
+ import { AgentAction } from '@langchain/core/agents'
+ import { LunaryHandler } from '@langchain/community/callbacks/handlers/lunary'
+ 
+-import { getCredentialData, getCredentialParam, getEnvironmentVariable } from './utils'
++import { getCredentialData, getCredentialParam, getEnvironmentVariable, safeJsonParse } from './utils'
+ import { EvaluationRunTracer } from '../evaluation/EvaluationRunTracer'
+ import { EvaluationRunTracerLlama } from '../evaluation/EvaluationRunTracerLlama'
+ import { ICommonObject, IDatabaseEntity, INodeData, IServerSideEventStreamer } from './Interface'
+@@ -517,7 +517,8 @@ export const additionalCallbacks = async (nodeData: INodeData, options: ICommonO
+     try {
+         if (!options.analytic) return []
+ 
+-        const analytic = JSON.parse(options.analytic)
++        const analytic = safeJsonParse(options.analytic ?? '')
++        if (!analytic || typeof analytic !== 'object' || Array.isArray(analytic)) return []
+         const callbacks: any = []
+ 
+         for (const provider in analytic) {
+@@ -776,7 +777,8 @@ export class AnalyticHandler {
+         try {
+             if (!this.options.analytic) return
+ 
+-            const analytic = JSON.parse(this.options.analytic)
++            const analytic = safeJsonParse(this.options.analytic ?? '')
++            if (!analytic || typeof analytic !== 'object' || Array.isArray(analytic)) return
+             for (const provider in analytic) {
+                 const providerStatus = analytic[provider].status as boolean
+                 if (providerStatus) {
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 91bf5d4f1cb..6d3d776378b 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -124,6 +124,15 @@ const defaultAllowExternalDependencies = ['axios', 'moment', 'node-fetch']
+ 
+ export const defaultAllowBuiltInDep = ['assert', 'buffer', 'crypto', 'events', 'path', 'querystring', 'timers', 'url', 'zlib']
+ 
++export function safeJsonParse(input: string) {
++    if (!input || input.trim() === '') return null
++    try {
++        return JSON.parse(input)
++    } catch {
++        return null
++    }
++}
++
+ /**
+  * Get base classes of components
+  *
+
+From ff2f2871ef857394f4100396fcaf3cb6acd6f8b1 Mon Sep 17 00:00:00 2001
+From: Team Infinix Dev <teaminfinixdev@gmail.com>
+Date: Mon, 9 Mar 2026 13:39:36 -0600
+Subject: [PATCH 2/4] Update packages/components/src/utils.ts
+
+Co-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>
+---
+ packages/components/src/utils.ts | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index 6d3d776378b..e73741f745b 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -124,10 +124,12 @@ const defaultAllowExternalDependencies = ['axios', 'moment', 'node-fetch']
+ 
+ export const defaultAllowBuiltInDep = ['assert', 'buffer', 'crypto', 'events', 'path', 'querystring', 'timers', 'url', 'zlib']
+ 
+-export function safeJsonParse(input: string) {
+-    if (!input || input.trim() === '') return null
++export function safeJsonParse(input: unknown) {
++    if (typeof input !== 'string') return null
++    const trimmed = input.trim()
++    if (!trimmed) return null
+     try {
+-        return JSON.parse(input)
++        return JSON.parse(trimmed)
+     } catch {
+         return null
+     }
+
+From 1896071fd3fa9fc244972a83e3a85ec3393d86ea Mon Sep 17 00:00:00 2001
+From: Team Infinix Dev <teaminfinixdev@gmail.com>
+Date: Mon, 9 Mar 2026 13:39:57 -0600
+Subject: [PATCH 3/4] Update packages/components/src/google-utils.ts
+
+Co-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>
+---
+ packages/components/src/google-utils.ts | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/packages/components/src/google-utils.ts b/packages/components/src/google-utils.ts
+index 4b54c533c2b..01d5fabf77d 100644
+--- a/packages/components/src/google-utils.ts
++++ b/packages/components/src/google-utils.ts
+@@ -21,7 +21,11 @@ export const buildGoogleCredentials = async (nodeData: INodeData, options: IComm
+         if (googleApplicationCredentialFilePath && !googleApplicationCredential) authOptions.keyFile = googleApplicationCredentialFilePath
+         else if (!googleApplicationCredentialFilePath && googleApplicationCredential) {
+             const parsedCredential = safeJsonParse(googleApplicationCredential)
+-            authOptions.credentials = parsedCredential ?? googleApplicationCredential
++            if (parsedCredential && typeof parsedCredential === 'object' && !Array.isArray(parsedCredential)) {
++                authOptions.credentials = parsedCredential
++            } else {
++                throw new Error('Invalid Google Application Credential JSON; expected a JSON object.')
++            }
+         }
+ 
+         if (projectID) authOptions.projectId = projectID
+
+From c399973cb126cf993c03d4a559bc55cbdd437edf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Madrigal=20Jim=C3=A9nez=20Rub=C3=A9n?= <RuMadr@ice.go.cr>
+Date: Mon, 9 Mar 2026 23:00:34 -0600
+Subject: [PATCH 4/4] refactor: use parseJsonBody as suggested in review
+
+---
+ packages/components/src/google-utils.ts | 10 ++++++++--
+ packages/components/src/handler.ts      | 18 +++++++++++++++---
+ packages/components/src/utils.ts        | 11 -----------
+ 3 files changed, 23 insertions(+), 16 deletions(-)
+
+diff --git a/packages/components/src/google-utils.ts b/packages/components/src/google-utils.ts
+index 01d5fabf77d..619a4d849a1 100644
+--- a/packages/components/src/google-utils.ts
++++ b/packages/components/src/google-utils.ts
+@@ -1,4 +1,4 @@
+-import { getCredentialData, getCredentialParam, safeJsonParse, type ICommonObject, type INodeData } from '.'
++import { getCredentialData, getCredentialParam, parseJsonBody, type ICommonObject, type INodeData } from '.'
+ import type { ChatVertexAIInput, VertexAIInput } from '@langchain/google-vertexai'
+ 
+ type SupportedAuthOptions = ChatVertexAIInput['authOptions'] | VertexAIInput['authOptions']
+@@ -20,7 +20,13 @@ export const buildGoogleCredentials = async (nodeData: INodeData, options: IComm
+ 
+         if (googleApplicationCredentialFilePath && !googleApplicationCredential) authOptions.keyFile = googleApplicationCredentialFilePath
+         else if (!googleApplicationCredentialFilePath && googleApplicationCredential) {
+-            const parsedCredential = safeJsonParse(googleApplicationCredential)
++            let parsedCredential: unknown
++            try {
++                parsedCredential = parseJsonBody(googleApplicationCredential)
++            } catch (e) {
++                throw new Error('Invalid Google Application Credential JSON; expected a JSON object.')
++            }
++
+             if (parsedCredential && typeof parsedCredential === 'object' && !Array.isArray(parsedCredential)) {
+                 authOptions.credentials = parsedCredential
+             } else {
+diff --git a/packages/components/src/handler.ts b/packages/components/src/handler.ts
+index 610b39e46b1..940315d4949 100644
+--- a/packages/components/src/handler.ts
++++ b/packages/components/src/handler.ts
+@@ -25,7 +25,7 @@ import { ChainValues } from '@langchain/core/utils/types'
+ import { AgentAction } from '@langchain/core/agents'
+ import { LunaryHandler } from '@langchain/community/callbacks/handlers/lunary'
+ 
+-import { getCredentialData, getCredentialParam, getEnvironmentVariable, safeJsonParse } from './utils'
++import { getCredentialData, getCredentialParam, getEnvironmentVariable, parseJsonBody } from './utils'
+ import { EvaluationRunTracer } from '../evaluation/EvaluationRunTracer'
+ import { EvaluationRunTracerLlama } from '../evaluation/EvaluationRunTracerLlama'
+ import { ICommonObject, IDatabaseEntity, INodeData, IServerSideEventStreamer } from './Interface'
+@@ -517,7 +517,13 @@ export const additionalCallbacks = async (nodeData: INodeData, options: ICommonO
+     try {
+         if (!options.analytic) return []
+ 
+-        const analytic = safeJsonParse(options.analytic ?? '')
++        let analytic: unknown
++        try {
++            analytic = parseJsonBody(options.analytic ?? '')
++        } catch (e) {
++            return []
++        }
++
+         if (!analytic || typeof analytic !== 'object' || Array.isArray(analytic)) return []
+         const callbacks: any = []
+ 
+@@ -777,7 +783,13 @@ export class AnalyticHandler {
+         try {
+             if (!this.options.analytic) return
+ 
+-            const analytic = safeJsonParse(this.options.analytic ?? '')
++            let analytic: unknown
++            try {
++                analytic = parseJsonBody(this.options.analytic ?? '')
++            } catch (e) {
++                return
++            }
++
+             if (!analytic || typeof analytic !== 'object' || Array.isArray(analytic)) return
+             for (const provider in analytic) {
+                 const providerStatus = analytic[provider].status as boolean
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index e73741f745b..91bf5d4f1cb 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -124,17 +124,6 @@ const defaultAllowExternalDependencies = ['axios', 'moment', 'node-fetch']
+ 
+ export const defaultAllowBuiltInDep = ['assert', 'buffer', 'crypto', 'events', 'path', 'querystring', 'timers', 'url', 'zlib']
+ 
+-export function safeJsonParse(input: unknown) {
+-    if (typeof input !== 'string') return null
+-    const trimmed = input.trim()
+-    if (!trimmed) return null
+-    try {
+-        return JSON.parse(trimmed)
+-    } catch {
+-        return null
+-    }
+-}
+-
+ /**
+  * Get base classes of components
+  *

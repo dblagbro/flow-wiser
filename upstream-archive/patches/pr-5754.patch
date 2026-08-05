@@ -1,0 +1,225 @@
+From ac835b98522592247b9155128df8b4b552a9d727 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 14 Feb 2026 14:44:04 +0530
+Subject: [PATCH 1/6] fix: #5736 Navigate to canvas after FlowListTable rename
+
+---
+ .../src/ui-component/button/FlowListMenu.jsx  | 21 ++++++++++++-------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index 198b7f8476f..68621bd9e38 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -1,5 +1,6 @@
+ import { useState } from 'react'
+ import { useDispatch } from 'react-redux'
++import { useNavigate } from 'react-router-dom';
+ import PropTypes from 'prop-types'
+ 
+ import { styled, alpha } from '@mui/material/styles'
+@@ -75,6 +76,7 @@ const StyledMenu = styled((props) => (
+ }))
+ 
+ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, setError, updateFlowsApi, currentPage, pageLimit }) {
++    const navigate = useNavigate();
+     const { confirm } = useConfirm()
+     const dispatch = useDispatch()
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+@@ -183,17 +185,20 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+             chatflow
+         }
+         try {
+-            await updateChatflowApi.request(chatflow.id, updateBody)
+-            const params = {
+-                page: currentPage,
+-                limit: pageLimit
+-            }
++            await updateChatflowApi.request(chatflow.id, { name: chatflowName });  
++            
++            enqueueSnackbar({
++                message: 'Flow renamed successfully!',
++                options: { variant: 'success' }
++            });
++            
++            
+             if (isAgentCanvas && isAgentflowV2) {
+-                await updateFlowsApi.request('AGENTFLOW', params)
++                navigate(`/v2/agentcanvas/${chatflow.id}`, { replace: true });
+             } else if (isAgentCanvas) {
+-                await updateFlowsApi.request('MULTIAGENT', params)
++                navigate(`/agentcanvas/${chatflow.id}`, { replace: true });
+             } else {
+-                await updateFlowsApi.request(params)
++                navigate(`/canvas/${chatflow.id}`, { replace: true });
+             }
+         } catch (error) {
+             if (setError) setError(error)
+
+From 0a2e1499dda9578c819a2c9b86d773ffbcc16da4 Mon Sep 17 00:00:00 2001
+From: KUNDAN SOLANKI <116949800+KUNDAN1334@users.noreply.github.com>
+Date: Sat, 14 Feb 2026 15:46:46 +0530
+Subject: [PATCH 2/6] Update
+ packages/ui/src/ui-component/button/FlowListMenu.jsx
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/ui/src/ui-component/button/FlowListMenu.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index 68621bd9e38..9109b23e1fa 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -1,6 +1,6 @@
+ import { useState } from 'react'
+ import { useDispatch } from 'react-redux'
+-import { useNavigate } from 'react-router-dom';
++import { useNavigate } from 'react-router-dom'
+ import PropTypes from 'prop-types'
+ 
+ import { styled, alpha } from '@mui/material/styles'
+
+From 319b2dda9bafe85129842052b0affdc39dfb42da Mon Sep 17 00:00:00 2001
+From: KUNDAN SOLANKI <116949800+KUNDAN1334@users.noreply.github.com>
+Date: Sat, 14 Feb 2026 15:47:00 +0530
+Subject: [PATCH 3/6] Update
+ packages/ui/src/ui-component/button/FlowListMenu.jsx
+
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+---
+ packages/ui/src/ui-component/button/FlowListMenu.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index 9109b23e1fa..4806d5337f3 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -76,7 +76,7 @@ const StyledMenu = styled((props) => (
+ }))
+ 
+ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, setError, updateFlowsApi, currentPage, pageLimit }) {
+-    const navigate = useNavigate();
++    const navigate = useNavigate()
+     const { confirm } = useConfirm()
+     const dispatch = useDispatch()
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+
+From 32420f2761ea5f9e92963ac759b7237817b71829 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 14 Feb 2026 22:25:37 +0530
+Subject: [PATCH 4/6] v2
+
+---
+ .../src/ui-component/button/FlowListMenu.jsx  | 34 ++++++-------------
+ 1 file changed, 10 insertions(+), 24 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index 4806d5337f3..fcb30dcc544 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -180,41 +180,27 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+     }
+ 
+     const saveFlowRename = async (chatflowName) => {
+-        const updateBody = {
+-            name: chatflowName,
+-            chatflow
+-        }
+         try {
+-            await updateChatflowApi.request(chatflow.id, { name: chatflowName });  
+-            
++            await updateChatflowApi.request(chatflow.id, { name: chatflowName })
++            setFlowDialogOpen(false)
+             enqueueSnackbar({
+                 message: 'Flow renamed successfully!',
+                 options: { variant: 'success' }
+-            });
+-            
+-            
++            })
++
+             if (isAgentCanvas && isAgentflowV2) {
+-                navigate(`/v2/agentcanvas/${chatflow.id}`, { replace: true });
++                navigate(`/v2/agentcanvas/${chatflow.id}`, { replace: true })
+             } else if (isAgentCanvas) {
+-                navigate(`/agentcanvas/${chatflow.id}`, { replace: true });
++                navigate(`/agentcanvas/${chatflow.id}`, { replace: true })
+             } else {
+-                navigate(`/canvas/${chatflow.id}`, { replace: true });
++                navigate(`/canvas/${chatflow.id}`, { replace: true })
+             }
+         } catch (error) {
+-            if (setError) setError(error)
+             enqueueSnackbar({
+-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+-                options: {
+-                    key: new Date().getTime() + Math.random(),
+-                    variant: 'error',
+-                    persist: true,
+-                    action: (key) => (
+-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+-                            <IconX />
+-                        </Button>
+-                    )
+-                }
++                message: `Rename failed: ${typeof error.response?.data === 'object' ? error.response.data.message : error.response.data}`,
++                options: { variant: 'error', persist: true }
+             })
++            if (setError) setError(error)
+         }
+     }
+ 
+
+From 678b6430d778c996a9719afa103b8f90d237ade9 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 18 Apr 2026 11:33:05 +0530
+Subject: [PATCH 5/6] fix: remove replace: true from post-rename navigation to
+ preserve browser history
+
+---
+ packages/ui/src/ui-component/button/FlowListMenu.jsx | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index fcb30dcc544..afff40fa7aa 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -189,11 +189,11 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+             })
+ 
+             if (isAgentCanvas && isAgentflowV2) {
+-                navigate(`/v2/agentcanvas/${chatflow.id}`, { replace: true })
++                navigate(`/v2/agentcanvas/${chatflow.id}`)
+             } else if (isAgentCanvas) {
+-                navigate(`/agentcanvas/${chatflow.id}`, { replace: true })
++                navigate(`/v2/agentcanvas/${chatflow.id}`)
+             } else {
+-                navigate(`/canvas/${chatflow.id}`, { replace: true })
++                navigate(`/canvas/${chatflow.id}`)
+             }
+         } catch (error) {
+             enqueueSnackbar({
+
+From 4d3072ae8f3f1af21da53b996aa8891c2cab56a9 Mon Sep 17 00:00:00 2001
+From: KUNDAN1334 <kundan.22bcon1334@jecrcu.edu.in>
+Date: Sat, 18 Apr 2026 11:35:06 +0530
+Subject: [PATCH 6/6] Update FlowListMenu.jsx
+
+---
+ packages/ui/src/ui-component/button/FlowListMenu.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/button/FlowListMenu.jsx b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+index afff40fa7aa..4c4bb701d40 100644
+--- a/packages/ui/src/ui-component/button/FlowListMenu.jsx
++++ b/packages/ui/src/ui-component/button/FlowListMenu.jsx
+@@ -191,7 +191,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
+             if (isAgentCanvas && isAgentflowV2) {
+                 navigate(`/v2/agentcanvas/${chatflow.id}`)
+             } else if (isAgentCanvas) {
+-                navigate(`/v2/agentcanvas/${chatflow.id}`)
++                navigate(`/agentcanvas/${chatflow.id}`)
+             } else {
+                 navigate(`/canvas/${chatflow.id}`)
+             }

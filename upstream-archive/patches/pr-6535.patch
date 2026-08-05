@@ -1,0 +1,522 @@
+From a87f1cc56c7f1f496d6141bb6d9418589de376bd Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:49:48 +0530
+Subject: [PATCH 1/8] feat(server): add abortExecution service
+
+---
+ .../server/src/services/executions/index.ts   | 66 ++++++++++++++++++-
+ 1 file changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/services/executions/index.ts b/packages/server/src/services/executions/index.ts
+index 062337aad02..8e11756d48a 100644
+--- a/packages/server/src/services/executions/index.ts
++++ b/packages/server/src/services/executions/index.ts
+@@ -4,7 +4,7 @@ import { ChatMessage } from '../../database/entities/ChatMessage'
+ import { Execution } from '../../database/entities/Execution'
+ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+ import { getErrorMessage } from '../../errors/utils'
+-import { ExecutionState, IAgentflowExecutedData } from '../../Interface'
++import { ExecutionState, IAgentflowExecutedData, MODE } from '../../Interface'
+ import { _removeCredentialId } from '../../utils'
+ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+ 
+@@ -163,10 +163,72 @@ const deleteExecutions = async (executionIds: string[], workspaceId?: string): P
+     }
+ }
+ 
++/**
++ * Abort a running execution by triggering its AbortController and updating the state to STOPPED
++ * @param executionId The execution ID to abort
++ * @param workspaceId Optional workspace ID for access control
++ * @returns Object with success status
++ */
++const abortExecution = async (executionId: string, workspaceId?: string): Promise<{ success: boolean }> => {
++    try {
++        const appServer = getRunningExpressApp()
++        const executionRepository = appServer.AppDataSource.getRepository(Execution)
++
++        const query: any = { id: executionId }
++        if (workspaceId) query.workspaceId = workspaceId
++
++        const execution = await executionRepository.findOneBy(query)
++        if (!execution) {
++            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Execution ${executionId} not found`)
++        }
++
++        if (execution.state !== 'INPROGRESS') {
++            throw new InternalFlowiseError(
++                StatusCodes.BAD_REQUEST,
++                `Execution ${executionId} is not in progress (current state: ${execution.state})`
++            )
++        }
++
++        // Abort the running process using the same key format as buildChatflow/PredictionQueue: chatflowId_chatId
++        const abortControllerId = `${execution.agentflowId}_${execution.sessionId}`
++
++        if (process.env.MODE === MODE.QUEUE) {
++            // In queue mode, publish an abort event for the worker to process
++            await appServer.queueManager.getPredictionQueueEventsProducer().publishEvent({
++                eventName: 'abort',
++                id: abortControllerId
++            })
++        } else {
++            // In main mode, abort directly from the pool
++            appServer.abortControllerPool.abort(abortControllerId)
++        }
++
++        // Update execution state to STOPPED
++        const updateData = new Execution()
++        Object.assign(updateData, {
++            state: 'STOPPED' as ExecutionState,
++            stoppedDate: new Date()
++        })
++        executionRepository.merge(execution, updateData)
++        await executionRepository.save(execution)
++
++        return { success: true }
++    } catch (error) {
++        if (error instanceof InternalFlowiseError) {
++            throw error
++        }
++        throw new InternalFlowiseError(
++            StatusCodes.INTERNAL_SERVER_ERROR,
++            `Error: executionsService.abortExecution - ${getErrorMessage(error)}`
++        )
++    }
++}
++
+ export default {
+     getExecutionById,
+     getAllExecutions,
+     deleteExecutions,
+     getPublicExecutionById,
+-    updateExecution
++    updateExecution,
++    abortExecution
+ }
+
+From 8fd66dea636d55a61b62d5c24bf1f2a18e048133 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:54:52 +0530
+Subject: [PATCH 2/8] feat(server): add abortExecution controller
+
+---
+ .../server/src/controllers/executions/index.ts     | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/controllers/executions/index.ts b/packages/server/src/controllers/executions/index.ts
+index 074b0efa9a9..6cd610d7a83 100644
+--- a/packages/server/src/controllers/executions/index.ts
++++ b/packages/server/src/controllers/executions/index.ts
+@@ -112,10 +112,22 @@ const deleteExecutions = async (req: Request, res: Response, next: NextFunction)
+     }
+ }
+ 
++const abortExecution = async (req: Request, res: Response, next: NextFunction) => {
++    try {
++        const executionId = req.params.id
++        const workspaceId = req.user?.activeWorkspaceId
++        const result = await executionsService.abortExecution(executionId, workspaceId)
++        return res.json(result)
++    } catch (error) {
++        next(error)
++    }
++}
++
+ export default {
+     getAllExecutions,
+     deleteExecutions,
+     getExecutionById,
+     getPublicExecutionById,
+-    updateExecution
++    updateExecution,
++    abortExecution
+ }
+
+From 7126358657823df3fe254db3db67d5541b44d63b Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:54:55 +0530
+Subject: [PATCH 3/8] feat(server): add POST /:id/abort route
+
+---
+ packages/server/src/routes/executions/index.ts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/packages/server/src/routes/executions/index.ts b/packages/server/src/routes/executions/index.ts
+index 1b9458f625c..21e809f059b 100644
+--- a/packages/server/src/routes/executions/index.ts
++++ b/packages/server/src/routes/executions/index.ts
+@@ -7,6 +7,9 @@ const router = express.Router()
+ router.get('/', checkAnyPermission('executions:view'), executionController.getAllExecutions)
+ router.get(['/', '/:id'], checkAnyPermission('executions:view'), executionController.getExecutionById)
+ 
++// ABORT
++router.post('/:id/abort', checkAnyPermission('executions:update'), executionController.abortExecution)
++
+ // PUT
+ router.put(['/', '/:id'], checkAnyPermission('executions:update'), executionController.updateExecution)
+ 
+
+From 5df31a9891ed1639f0618be086813b4faa52d56d Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:54:59 +0530
+Subject: [PATCH 4/8] feat(ui): add abortExecution API endpoint
+
+---
+ packages/ui/src/api/executions.js | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/api/executions.js b/packages/ui/src/api/executions.js
+index 9135fa7cd8b..3c8fac04936 100644
+--- a/packages/ui/src/api/executions.js
++++ b/packages/ui/src/api/executions.js
+@@ -5,11 +5,13 @@ const deleteExecutions = (executionIds) => client.delete('/executions', { data:
+ const getExecutionById = (executionId) => client.get(`/executions/${executionId}`)
+ const getExecutionByIdPublic = (executionId) => client.get(`/public-executions/${executionId}`)
+ const updateExecution = (executionId, body) => client.put(`/executions/${executionId}`, body)
++const abortExecution = (executionId) => client.post(`/executions/${executionId}/abort`)
+ 
+ export default {
+     getAllExecutions,
+     deleteExecutions,
+     getExecutionById,
+     getExecutionByIdPublic,
+-    updateExecution
++    updateExecution,
++    abortExecution
+ }
+
+From 5440846d6038bf0c660d325bc7e64df805c271d1 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:55:02 +0530
+Subject: [PATCH 5/8] feat(ui): add abort chip in execution details drawer
+
+---
+ .../agentexecutions/ExecutionDetails.jsx      | 31 +++++++++++++++++--
+ 1 file changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+index e89b4c81067..cdc448e1fda 100644
+--- a/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
++++ b/packages/ui/src/views/agentexecutions/ExecutionDetails.jsx
+@@ -33,7 +33,8 @@ import {
+     IconRelationOneToManyFilled,
+     IconShare,
+     IconWorld,
+-    IconX
++    IconX,
++    IconPlayerStop
+ } from '@tabler/icons-react'
+ 
+ // Project imports
+@@ -293,7 +294,17 @@ const MIN_DRAWER_WIDTH = 400
+ const DEFAULT_DRAWER_WIDTH = window.innerWidth - 400
+ const MAX_DRAWER_WIDTH = window.innerWidth
+ 
+-export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose, onProceedSuccess, onUpdateSharing, onRefresh }) => {
++export const ExecutionDetails = ({
++    open,
++    isPublic,
++    execution,
++    metadata,
++    onClose,
++    onProceedSuccess,
++    onUpdateSharing,
++    onRefresh,
++    onAbortExecution
++}) => {
+     const [drawerWidth, setDrawerWidth] = useState(Math.min(DEFAULT_DRAWER_WIDTH, MAX_DRAWER_WIDTH))
+     const [executionTree, setExecution] = useState([])
+     const [expandedItems, setExpandedItems] = useState([])
+@@ -825,6 +836,19 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
+                             >
+                                 <IconRefresh size={20} />
+                             </IconButton>
++                            {!isPublic && localMetadata?.state === 'INPROGRESS' && (
++                                <Available permission='executions:update'>
++                                    <Chip
++                                        sx={{ ml: 1 }}
++                                        icon={<IconPlayerStop size={15} />}
++                                        variant='outlined'
++                                        color='error'
++                                        label='Abort'
++                                        className={'button'}
++                                        onClick={() => onAbortExecution && onAbortExecution(localMetadata?.id)}
++                                    />
++                                </Available>
++                            )}
+                         </Box>
+                     </Box>
+                 </Box>
+@@ -983,7 +1007,8 @@ ExecutionDetails.propTypes = {
+     onClose: PropTypes.func,
+     onProceedSuccess: PropTypes.func,
+     onUpdateSharing: PropTypes.func,
+-    onRefresh: PropTypes.func
++    onRefresh: PropTypes.func,
++    onAbortExecution: PropTypes.func
+ }
+ 
+ ExecutionDetails.displayName = 'ExecutionDetails'
+
+From 82a6718050d740e70cb5c031c2604af8918b2839 Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:55:06 +0530
+Subject: [PATCH 6/8] feat(ui): wire up abort handler and success toast
+
+---
+ .../ui/src/views/agentexecutions/index.jsx    | 41 ++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/packages/ui/src/views/agentexecutions/index.jsx b/packages/ui/src/views/agentexecutions/index.jsx
+index 2a6e366509b..4002fe3a80e 100644
+--- a/packages/ui/src/views/agentexecutions/index.jsx
++++ b/packages/ui/src/views/agentexecutions/index.jsx
+@@ -32,17 +32,18 @@ import { Available } from '@/ui-component/rbac/available'
+ // API
+ import executionsApi from '@/api/executions'
+ import useApi from '@/hooks/useApi'
+-import { useSelector } from 'react-redux'
++import { useSelector, useDispatch } from 'react-redux'
+ 
+ // icons
+ import execution_empty from '@/assets/images/executions_empty.svg'
+-import { IconTrash } from '@tabler/icons-react'
++import { IconTrash, IconX } from '@tabler/icons-react'
+ 
+ // const
+ import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
+ import { ExecutionsListTable } from '@/ui-component/table/ExecutionsListTable'
+ import { omit } from 'lodash'
+ import { ExecutionDetails } from './ExecutionDetails'
++import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction } from '@/store/actions'
+ 
+ // ==============================|| AGENT EXECUTIONS ||============================== //
+ 
+@@ -54,6 +55,9 @@ const AgentExecutions = () => {
+     const getAllExecutions = useApi(executionsApi.getAllExecutions)
+     const deleteExecutionsApi = useApi(executionsApi.deleteExecutions)
+     const getExecutionByIdApi = useApi(executionsApi.getExecutionById)
++    const abortExecutionApi = useApi(executionsApi.abortExecution)
++
++    const dispatch = useDispatch()
+ 
+     const [error, setError] = useState(null)
+     const [isLoading, setLoading] = useState(true)
+@@ -172,6 +176,10 @@ const AgentExecutions = () => {
+         setOpenDeleteDialog(false)
+     }
+ 
++    const handleAbortExecution = (executionId) => {
++        abortExecutionApi.request(executionId)
++    }
++
+     useEffect(() => {
+         getAllExecutions.request({ page: 1, limit: DEFAULT_ITEMS_PER_PAGE })
+ 
+@@ -212,6 +220,33 @@ const AgentExecutions = () => {
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [deleteExecutionsApi.data])
+ 
++    useEffect(() => {
++        if (abortExecutionApi.data) {
++            // Show success toast
++            dispatch(
++                enqueueSnackbarAction({
++                    message: 'Execution aborted successfully',
++                    options: {
++                        key: new Date().getTime() + Math.random(),
++                        variant: 'success',
++                        action: (key) => (
++                            <Button style={{ color: 'white' }} onClick={() => dispatch(closeSnackbarAction(key))}>
++                                <IconX />
++                            </Button>
++                        )
++                    }
++                })
++            )
++            // Refresh the executions list
++            getAllExecutions.request({
++                page: currentPage,
++                limit: pageLimit
++            })
++        }
++
++        // eslint-disable-next-line react-hooks/exhaustive-deps
++    }, [abortExecutionApi.data])
++
+     useEffect(() => {
+         if (getExecutionByIdApi.data) {
+             const execution = getExecutionByIdApi.data
+@@ -384,6 +419,7 @@ const AgentExecutions = () => {
+                                 data={executions}
+                                 isLoading={isLoading}
+                                 onSelectionChange={handleExecutionSelectionChange}
++                                onAbortExecution={handleAbortExecution}
+                                 onExecutionRowClick={(execution) => {
+                                     setOpenDrawer(true)
+                                     const executionDetails =
+@@ -416,6 +452,7 @@ const AgentExecutions = () => {
+                                     getAllExecutions.request()
+                                     getExecutionByIdApi.request(executionId)
+                                 }}
++                                onAbortExecution={handleAbortExecution}
+                             />
+                         </>
+                     )}
+
+From 6a0d81757ebe92d7790b41152f282f830b7dc79b Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:55:10 +0530
+Subject: [PATCH 7/8] feat(ui): add actions column with stop button and status
+ chips
+
+---
+ .../table/ExecutionsListTable.jsx             | 62 ++++++++++++++++++-
+ 1 file changed, 61 insertions(+), 1 deletion(-)
+
+diff --git a/packages/ui/src/ui-component/table/ExecutionsListTable.jsx b/packages/ui/src/ui-component/table/ExecutionsListTable.jsx
+index 1b7dd68f996..0deee35ec02 100644
+--- a/packages/ui/src/ui-component/table/ExecutionsListTable.jsx
++++ b/packages/ui/src/ui-component/table/ExecutionsListTable.jsx
+@@ -5,6 +5,8 @@ import moment from 'moment'
+ import { styled } from '@mui/material/styles'
+ import {
+     Box,
++    Chip,
++    IconButton,
+     Paper,
+     Skeleton,
+     Table,
+@@ -14,6 +16,7 @@ import {
+     TableHead,
+     TableRow,
+     TableSortLabel,
++    Tooltip,
+     useTheme,
+     Checkbox
+ } from '@mui/material'
+@@ -86,7 +89,7 @@ const getIconColor = (state) => {
+     }
+ }
+ 
+-export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSelectionChange }) => {
++export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSelectionChange, onAbortExecution }) => {
+     const theme = useTheme()
+     const customization = useSelector((state) => state.customization)
+ 
+@@ -198,6 +201,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
+                                     Created
+                                 </TableSortLabel>
+                             </StyledTableCell>
++                            <StyledTableCell>Actions</StyledTableCell>
+                         </TableRow>
+                     </TableHead>
+                     <TableBody>
+@@ -222,6 +226,9 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
+                                     <StyledTableCell>
+                                         <Skeleton variant='text' />
+                                     </StyledTableCell>
++                                    <StyledTableCell>
++                                        <Skeleton variant='text' />
++                                    </StyledTableCell>
+                                 </StyledTableRow>
+                                 <StyledTableRow>
+                                     <StyledTableCell padding='checkbox'>
+@@ -283,6 +290,58 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
+                                             <StyledTableCell onClick={() => onExecutionRowClick(row)}>
+                                                 {moment(row.createdDate).format('MMM D, YYYY h:mm A')}
+                                             </StyledTableCell>
++                                            <StyledTableCell>
++                                                {row.state === 'INPROGRESS' && (
++                                                    <Tooltip title='Abort Execution'>
++                                                        <IconButton
++                                                            size='small'
++                                                            color='error'
++                                                            onClick={(event) => {
++                                                                event.stopPropagation()
++                                                                onAbortExecution && onAbortExecution(row.id)
++                                                            }}
++                                                        >
++                                                            <StopCircleIcon fontSize='small' />
++                                                        </IconButton>
++                                                    </Tooltip>
++                                                )}
++                                                {row.state === 'FINISHED' && (
++                                                    <Chip
++                                                        icon={<CheckCircleIcon sx={{ fontSize: 16 }} />}
++                                                        label='Finished'
++                                                        size='small'
++                                                        color='success'
++                                                        variant='outlined'
++                                                    />
++                                                )}
++                                                {(row.state === 'ERROR' || row.state === 'TIMEOUT') && (
++                                                    <Chip
++                                                        icon={<ErrorIcon sx={{ fontSize: 16 }} />}
++                                                        label={row.state === 'ERROR' ? 'Error' : 'Timeout'}
++                                                        size='small'
++                                                        color='error'
++                                                        variant='outlined'
++                                                    />
++                                                )}
++                                                {row.state === 'TERMINATED' && (
++                                                    <Chip
++                                                        icon={<ErrorIcon sx={{ fontSize: 16 }} />}
++                                                        label='Terminated'
++                                                        size='small'
++                                                        color='error'
++                                                        variant='outlined'
++                                                    />
++                                                )}
++                                                {row.state === 'STOPPED' && (
++                                                    <Chip
++                                                        icon={<StopCircleIcon sx={{ fontSize: 16 }} />}
++                                                        label='Stopped'
++                                                        size='small'
++                                                        color='warning'
++                                                        variant='outlined'
++                                                    />
++                                                )}
++                                            </StyledTableCell>
+                                         </StyledTableRow>
+                                     )
+                                 })}
+@@ -300,6 +359,7 @@ ExecutionsListTable.propTypes = {
+     isLoading: PropTypes.bool,
+     onExecutionRowClick: PropTypes.func,
+     onSelectionChange: PropTypes.func,
++    onAbortExecution: PropTypes.func,
+     className: PropTypes.string
+ }
+ 
+
+From a988ccfc7268f0d01c0dcbd687eecc1669e46ecb Mon Sep 17 00:00:00 2001
+From: SyncWithRaj <rajr127655@gmail.com>
+Date: Fri, 19 Jun 2026 18:59:33 +0530
+Subject: [PATCH 8/8] fix(server): directly assign properties to execution
+ object per PR review
+
+---
+ packages/server/src/services/executions/index.ts | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/packages/server/src/services/executions/index.ts b/packages/server/src/services/executions/index.ts
+index 8e11756d48a..b2539133a1e 100644
+--- a/packages/server/src/services/executions/index.ts
++++ b/packages/server/src/services/executions/index.ts
+@@ -204,12 +204,8 @@ const abortExecution = async (executionId: string, workspaceId?: string): Promis
+         }
+ 
+         // Update execution state to STOPPED
+-        const updateData = new Execution()
+-        Object.assign(updateData, {
+-            state: 'STOPPED' as ExecutionState,
+-            stoppedDate: new Date()
+-        })
+-        executionRepository.merge(execution, updateData)
++        execution.state = 'STOPPED' as ExecutionState
++        execution.stoppedDate = new Date()
+         await executionRepository.save(execution)
+ 
+         return { success: true }

@@ -1,0 +1,2095 @@
+From 74e2573683a39827821fe5f49c5d99dadbf7a957 Mon Sep 17 00:00:00 2001
+From: chaserRen <renzhifei1997@163.com>
+Date: Mon, 23 Mar 2026 14:45:52 +0800
+Subject: [PATCH 1/3] add MinerU Document Reader
+
+---
+ .../documentloaders/MinerU/FIELD_MATRIX.md    |   50 +
+ .../nodes/documentloaders/MinerU/MinerU.ts    | 1057 +++++++++++++++++
+ .../nodes/documentloaders/MinerU/README.md    |  253 ++++
+ .../nodes/documentloaders/MinerU/mineru.svg   |   22 +
+ 4 files changed, 1382 insertions(+)
+ create mode 100644 packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
+ create mode 100644 packages/components/nodes/documentloaders/MinerU/MinerU.ts
+ create mode 100644 packages/components/nodes/documentloaders/MinerU/README.md
+ create mode 100644 packages/components/nodes/documentloaders/MinerU/mineru.svg
+
+diff --git a/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md b/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
+new file mode 100644
+index 00000000000..018d2b6d4a3
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
+@@ -0,0 +1,50 @@
++# MinerU Node Field List and Display Validation Matrix
++
++## Final Field List
++
++1. `textSplitter`
++2. `mode` (`fast` | `accurate`, default `fast`)
++3. `inputMode` (`url` | `file`, default `file`)
++4. `fileUrls` (shown when `inputMode=url`)
++5. `fileUpload` (shown when `inputMode=file`)
++6. `token` (shown when `mode=accurate`)
++7. `accurateModel` (`auto` | `vlm` | `pipeline` | `html`, shown when `mode=accurate`)
++8. `ocr` (shown when `mode=accurate`)
++9. `formula` (shown when `mode=accurate`)
++10. `table` (shown when `mode=accurate`)
++11. `language` (default `ch`)
++12. `pageRange` (optional, empty means all pages)
++13. `splitPages` (optional advanced)
++14. `timeoutSeconds` (default `300`)
++15. `metadata` (optional advanced)
++
++## Display and Validation Matrix
++
++| Field            | Type         | Default                 | Show Condition   | Required             | Validation Rule                                    | API Mapping                                    |
++| ---------------- | ------------ | ----------------------- | ---------------- | -------------------- | -------------------------------------------------- | ---------------------------------------------- |
++| `mode`           | options      | `fast`                  | always           | yes                  | must be `fast` or `accurate`                       | routing only                                   |
++| `inputMode`      | options      | `file`                  | always           | yes                  | must be `url` or `file`                            | routing only                                   |
++| `fileUrls`       | string       | none                    | `inputMode=url`  | yes in URL mode      | split by newline/comma, at least one non-empty URL | `url` source                                   |
++| `fileUpload`     | file         | none                    | `inputMode=file` | yes in file mode     | at least one uploaded file                         | file upload source                             |
++| `token`          | password     | `MINERU_TOKEN` fallback | `mode=accurate`  | yes in accurate mode | non-empty after env fallback                       | `Authorization: Bearer <token>`                |
++| `accurateModel`  | options      | `auto`                  | `mode=accurate`  | no                   | enum only                                          | `model_version`                                |
++| `ocr`            | boolean      | `false`                 | `mode=accurate`  | no                   | boolean                                            | `is_ocr`                                       |
++| `formula`        | boolean      | `true`                  | `mode=accurate`  | no                   | boolean                                            | `enable_formula` (false only when disabled)    |
++| `table`          | boolean      | `true`                  | `mode=accurate`  | no                   | boolean                                            | `enable_table` (false only when disabled)      |
++| `language`       | string       | `ch`                    | always           | no                   | trimmed string                                     | `language`                                     |
++| `pageRange`      | string       | empty                   | always           | no                   | if provided must match page expression parser      | `page_range` (fast) / `page_ranges` (accurate) |
++| `splitPages`     | boolean      | `false`                 | always           | no                   | if true and PDF, current node requires `pageRange` | internal task split only                       |
++| `timeoutSeconds` | number       | `300`                   | always           | no                   | positive integer, fallback to `300`                | polling timeout                                |
++| `metadata`       | json         | empty                   | always           | no                   | valid JSON object/string                           | output metadata merge                          |
++| `textSplitter`   | TextSplitter | none                    | always           | no                   | valid Flowise splitter instance                    | post-processing                                |
++
++## Behavior Notes
++
++1. `pageRange` empty: node does not send page range field, so MinerU processes all pages by default.
++2. `splitPages=true`: this node currently requires `pageRange` for deterministic per-page tasks.
++3. Default UX after drag-and-drop:
++    - `mode=fast`
++    - accurate-only fields remain hidden until user switches to `accurate`.
++4. Recommended inline help placement:
++    - `mode` description includes API docs link.
++    - `token` description includes token apply link and API docs link.
+diff --git a/packages/components/nodes/documentloaders/MinerU/MinerU.ts b/packages/components/nodes/documentloaders/MinerU/MinerU.ts
+new file mode 100644
+index 00000000000..e501c880d49
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/MinerU/MinerU.ts
+@@ -0,0 +1,1057 @@
++import axios from 'axios'
++import { inflateRawSync } from 'node:zlib'
++import { TextSplitter } from '@langchain/textsplitters'
++import { getFileFromStorage, handleEscapeCharacters, INodeOutputsValue } from '../../../src'
++import { ICommonObject, IDocument, INode, INodeData, INodeParams } from '../../../src/Interface'
++
++type MinerUMode = 'flash' | 'precision'
++type InputMode = 'url' | 'file'
++type PrecisionModel = 'vlm' | 'pipeline' | 'html'
++
++interface MinerUTaskResult {
++    markdown: string
++    source: string
++    page?: number
++    filename?: string
++}
++
++interface SourceTask {
++    source: string
++    fileBuffer?: Buffer
++    pageRange?: string
++    page?: number
++}
++
++interface UploadFile {
++    fileName: string
++    buffer: Buffer
++}
++
++interface MinerUCommonConfig {
++    mode: MinerUMode
++    language: string
++    pageRange?: string
++    timeoutSeconds: number
++}
++
++interface MinerUPrecisionConfig extends MinerUCommonConfig {
++    mode: 'precision'
++    token: string
++    model: PrecisionModel
++    ocr: boolean
++    formula: boolean
++    table: boolean
++}
++
++interface MinerUFlashConfig extends MinerUCommonConfig {
++    mode: 'flash'
++}
++
++type MinerUConfig = MinerUPrecisionConfig | MinerUFlashConfig
++
++const DEFAULT_SOURCE_HEADER = process.env.MINERU_SOURCE_HEADER || 'Flowise'
++const DEFAULT_TIMEOUT_SECONDS = 300
++
++const DEFAULT_FLASH_BASE_URL = process.env.MINERU_FLASH_BASE_URL || 'https://mineru.net/api/v1/agent'
++const DEFAULT_ACCURATE_BASE_URL = process.env.MINERU_API_BASE_URL || 'https://mineru.net/api/v4'
++const DEFAULT_MINERU_TOKEN = process.env.MINERU_TOKEN || ''
++
++const SUPPORTED_FILE_TYPES = '.pdf,.png,.jpg,.jpeg,.jp2,.webp,.gif,.bmp,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.htm,.html'
++const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'jp2', 'webp', 'gif', 'bmp']
++const FLASH_ALLOWED_EXTENSIONS = ['pdf', ...IMAGE_EXTENSIONS, 'docx', 'pptx', 'xls', 'xlsx']
++const PRECISION_ALLOWED_EXTENSIONS = ['pdf', ...IMAGE_EXTENSIONS, 'doc', 'docx', 'ppt', 'pptx', 'htm', 'html']
++const FLASH_ALLOWED_FORMATS_TEXT = '.pdf, images, .DOCX, .PPTX, .XLS, .XLSX'
++const PRECISION_ALLOWED_FORMATS_TEXT = '.pdf, images, .DOC, .DOCX, .PPT, .PPTX, .html'
++
++const POLL_MIN_INTERVAL_MS = 2000
++const POLL_MAX_INTERVAL_MS = 30000
++
++const MIME_EXTENSION_MAP: Record<string, string> = {
++    'application/pdf': 'pdf',
++    'image/png': 'png',
++    'image/jpeg': 'jpg',
++    'image/webp': 'webp',
++    'image/gif': 'gif',
++    'image/bmp': 'bmp',
++    'application/msword': 'doc',
++    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
++    'application/vnd.ms-powerpoint': 'ppt',
++    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
++    'application/vnd.ms-excel': 'xls',
++    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
++    'text/html': 'html'
++}
++
++class MinerU_DocumentLoaders implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    outputs: INodeOutputsValue[]
++
++    constructor() {
++        this.label = 'MinerU Document Loader'
++        this.name = 'mineruDocumentLoader'
++        this.version = 2.0
++        this.type = 'Document'
++        this.icon = 'mineru.svg'
++        this.category = 'Document Loaders'
++        this.description = 'Load and parse documents with MinerU flash/precision modes'
++        this.baseClasses = [this.type]
++        this.inputs = [
++            {
++                label: 'Text Splitter',
++                name: 'textSplitter',
++                type: 'TextSplitter',
++                optional: true
++            },
++            {
++                label: 'Mode',
++                name: 'mode',
++                type: 'options',
++                description:
++                    'Flash mode is token-free. Precision mode requires MinerU token. See <a href="https://mineru.net/apiManage/docs" target="_blank" rel="noopener noreferrer">API docs</a>.',
++                options: [
++                    {
++                        label: 'Flash (No Token)',
++                        name: 'flash'
++                    },
++                    {
++                        label: 'Precision (Token Required)',
++                        name: 'precision'
++                    }
++                ],
++                default: 'flash'
++            },
++            {
++                label: 'Input Mode',
++                name: 'inputMode',
++                type: 'options',
++                options: [
++                    {
++                        label: 'URL',
++                        name: 'url'
++                    },
++                    {
++                        label: 'File Upload',
++                        name: 'file'
++                    }
++                ],
++                default: 'file'
++            },
++            {
++                label: 'File URLs',
++                name: 'fileUrls',
++                type: 'string',
++                rows: 4,
++                description: 'One URL per line, or separated by commas.',
++                placeholder: 'https://example.com/a.pdf,https://example.com/b.pdf',
++                show: {
++                    inputMode: ['url']
++                }
++            },
++            {
++                label: 'Upload Files',
++                name: 'fileUpload',
++                type: 'file',
++                fileType: SUPPORTED_FILE_TYPES,
++                show: {
++                    inputMode: ['file']
++                }
++            },
++            {
++                label: 'MinerU Token',
++                name: 'token',
++                type: 'password',
++                description:
++                    'Required in precision mode. Apply token at <a href="https://mineru.net/apiManage/token" target="_blank" rel="noopener noreferrer">token page</a>. Full API docs: <a href="https://mineru.net/apiManage/docs" target="_blank" rel="noopener noreferrer">mineru.net/apiManage/docs</a>. If empty, fallback to MINERU_TOKEN env.',
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['precision']
++                }
++            },
++            {
++                label: 'Precision Model',
++                name: 'model',
++                type: 'options',
++                options: [
++                    {
++                        label: 'VLM',
++                        name: 'vlm'
++                    },
++                    {
++                        label: 'Pipeline',
++                        name: 'pipeline'
++                    },
++                    {
++                        label: 'HTML',
++                        name: 'html'
++                    }
++                ],
++                default: 'pipeline',
++                additionalParams: true,
++                show: {
++                    mode: ['precision']
++                }
++            },
++            {
++                label: 'OCR',
++                name: 'ocr',
++                type: 'boolean',
++                default: false,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['precision']
++                }
++            },
++            {
++                label: 'Formula',
++                name: 'formula',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['precision']
++                }
++            },
++            {
++                label: 'Table',
++                name: 'table',
++                type: 'boolean',
++                default: true,
++                optional: true,
++                additionalParams: true,
++                show: {
++                    mode: ['precision']
++                }
++            },
++            {
++                label: 'Language',
++                name: 'language',
++                type: 'string',
++                description:
++                    'OCR language hint. Default: ch. Common values: ch, en. Full list in <a href="https://mineru.net/apiManage/docs" target="_blank" rel="noopener noreferrer">MinerU docs</a>.',
++                placeholder: 'ch',
++                optional: true
++            },
++            {
++                label: 'Page Range',
++                name: 'pageRange',
++                type: 'string',
++                description: 'PDF only. Examples: 1-10, 3, 1-5,8. Leave empty to process all pages.',
++                placeholder: '1-10',
++                optional: true
++            },
++            {
++                label: 'Split Pages',
++                name: 'splitPages',
++                type: 'boolean',
++                description: 'Create one document per page for PDF sources. Requires Page Range in this Flowise node.',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Timeout (Seconds)',
++                name: 'timeoutSeconds',
++                type: 'number',
++                default: DEFAULT_TIMEOUT_SECONDS,
++                description: 'Maximum seconds to wait for each extraction task.',
++                optional: true,
++                additionalParams: true
++            },
++            {
++                label: 'Additional Metadata',
++                name: 'metadata',
++                type: 'json',
++                description: 'Additional metadata to be added to the extracted documents',
++                optional: true,
++                additionalParams: true
++            }
++        ]
++        this.outputs = [
++            {
++                label: 'Document',
++                name: 'document',
++                description: 'Array of document objects containing metadata and pageContent',
++                baseClasses: [...this.baseClasses, 'json']
++            },
++            {
++                label: 'Text',
++                name: 'text',
++                description: 'Concatenated string from pageContent of documents',
++                baseClasses: ['string', 'json']
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const textSplitter = nodeData.inputs?.textSplitter as TextSplitter
++        const metadata = nodeData.inputs?.metadata
++        const output = nodeData.outputs?.output as string
++
++        const inputMode = ((nodeData.inputs?.inputMode as InputMode) || 'file') as InputMode
++        const mode = this.resolveMode(nodeData.inputs?.mode as string)
++        const language = ((nodeData.inputs?.language as string) || 'ch').trim()
++        const pageRange = ((nodeData.inputs?.pageRange as string) || '').trim()
++        const splitPages = this.asBoolean(nodeData.inputs?.splitPages, false)
++        const timeoutSeconds = this.resolveTimeoutSeconds(nodeData.inputs?.timeoutSeconds)
++
++        const baseConfig: MinerUCommonConfig = {
++            mode,
++            language: language || 'ch',
++            pageRange: pageRange || undefined,
++            timeoutSeconds
++        }
++
++        const config: MinerUConfig = this.buildConfig(nodeData, baseConfig)
++
++        const tasks =
++            inputMode === 'file'
++                ? await this.buildFileTasks(nodeData, options, mode, pageRange, splitPages)
++                : this.buildUrlTasks(nodeData, mode, pageRange, splitPages)
++
++        const results: MinerUTaskResult[] = []
++        for (const task of tasks) {
++            const result = await this.runTask(task, config)
++            results.push(result)
++        }
++
++        let docs: IDocument[] = results
++            .filter((r) => r.markdown)
++            .map((r) => ({
++                pageContent: r.markdown,
++                metadata: {
++                    source: r.source,
++                    loader: 'mineru',
++                    parser: 'mineru',
++                    output_format: 'markdown',
++                    mode,
++                    language: config.language,
++                    pages: r.page !== undefined ? String(r.page) : config.pageRange || null,
++                    split_pages: splitPages && r.page !== undefined,
++                    ...(mode === 'precision' ? { model: this.resolveModelLabel(nodeData) } : {}),
++                    ...(r.filename ? { filename: r.filename } : {}),
++                    ...(r.page !== undefined ? { page: r.page, page_source: r.source } : {})
++                }
++            }))
++
++        if (textSplitter) {
++            docs = await textSplitter.splitDocuments(docs)
++        }
++
++        if (metadata) {
++            const parsedMetadata = typeof metadata === 'object' ? metadata : JSON.parse(metadata)
++            docs = docs.map((doc) => ({
++                ...doc,
++                metadata: { ...doc.metadata, ...parsedMetadata }
++            }))
++        }
++
++        if (output === 'document') {
++            return docs
++        } else {
++            let finaltext = ''
++            for (const doc of docs) {
++                finaltext += `${doc.pageContent}\n`
++            }
++            return handleEscapeCharacters(finaltext, false)
++        }
++    }
++
++    private buildConfig(nodeData: INodeData, baseConfig: MinerUCommonConfig): MinerUConfig {
++        if (baseConfig.mode === 'flash') {
++            return {
++                ...baseConfig,
++                mode: 'flash'
++            }
++        }
++
++        const tokenInput = ((nodeData.inputs?.token as string) || '').trim()
++        const token = tokenInput || DEFAULT_MINERU_TOKEN
++        if (!token) {
++            throw new Error('MinerU precision mode requires token. Set node token or MINERU_TOKEN env.')
++        }
++
++        const inputModel = (nodeData.inputs?.model as string) || (nodeData.inputs?.accurateModel as string) || 'pipeline'
++        const model = this.resolveModelInput(inputModel)
++        const ocr = this.asBoolean(nodeData.inputs?.ocr, false)
++        const formula = this.asBoolean(nodeData.inputs?.formula, true)
++        const table = this.asBoolean(nodeData.inputs?.table, true)
++
++        return {
++            ...baseConfig,
++            mode: 'precision',
++            token,
++            model,
++            ocr,
++            formula,
++            table
++        }
++    }
++
++    private buildUrlTasks(nodeData: INodeData, mode: MinerUMode, pageRange: string, splitPages: boolean): SourceTask[] {
++        const fileUrls = nodeData.inputs?.fileUrls as string
++        if (!fileUrls) throw new Error('File URLs are required in URL mode')
++
++        const urls = fileUrls
++            .split(/[\n,]/)
++            .map((u: string) => u.trim())
++            .filter(Boolean)
++
++        if (urls.length === 0) throw new Error('No valid URLs provided')
++
++        const tasks: SourceTask[] = []
++        for (const url of urls) {
++            this.validateSourceTypeByMode(url, mode)
++            tasks.push(...this.expandTasksByPage(url, pageRange, splitPages))
++        }
++        return tasks
++    }
++
++    private async buildFileTasks(
++        nodeData: INodeData,
++        options: ICommonObject,
++        mode: MinerUMode,
++        pageRange: string,
++        splitPages: boolean
++    ): Promise<SourceTask[]> {
++        const uploadFiles = await this.resolveUploadFiles(nodeData, options)
++        const tasks: SourceTask[] = []
++
++        for (const file of uploadFiles) {
++            this.validateSourceTypeByMode(file.fileName, mode)
++            if (!splitPages || !this.looksLikePdf(file.fileName)) {
++                tasks.push({
++                    source: file.fileName,
++                    fileBuffer: file.buffer,
++                    pageRange: pageRange || undefined
++                })
++                continue
++            }
++
++            if (!pageRange) {
++                throw new Error('Split Pages is enabled, but Page Range is empty. Please provide Page Range in this node.')
++            }
++
++            const pages = this.parsePageRange(pageRange)
++            for (const page of pages) {
++                tasks.push({
++                    source: file.fileName,
++                    fileBuffer: file.buffer,
++                    pageRange: String(page),
++                    page
++                })
++            }
++        }
++
++        return tasks
++    }
++
++    private expandTasksByPage(source: string, pageRange: string, splitPages: boolean): SourceTask[] {
++        if (!splitPages || !this.looksLikePdf(source)) {
++            return [{ source, pageRange: pageRange || undefined }]
++        }
++
++        if (!pageRange) {
++            throw new Error('Split Pages is enabled, but Page Range is empty. Please provide Page Range in this node.')
++        }
++
++        const pages = this.parsePageRange(pageRange)
++        return pages.map((page) => ({
++            source,
++            pageRange: String(page),
++            page
++        }))
++    }
++
++    private async resolveUploadFiles(nodeData: INodeData, options: ICommonObject): Promise<UploadFile[]> {
++        const fileUploadValue = nodeData.inputs?.fileUpload as string
++        if (!fileUploadValue) throw new Error('File upload is required in File Upload mode')
++
++        const result: UploadFile[] = []
++        if (fileUploadValue.startsWith('FILE-STORAGE::')) {
++            const raw = fileUploadValue.replace('FILE-STORAGE::', '')
++            const fileNames = raw.startsWith('[') && raw.endsWith(']') ? (JSON.parse(raw) as string[]) : [raw]
++            const orgId = options.orgId
++            const chatflowid = options.chatflowid
++
++            for (const fileName of fileNames) {
++                if (!fileName) continue
++                const fileData = await getFileFromStorage(fileName, orgId, chatflowid)
++                result.push({
++                    fileName,
++                    buffer: Buffer.isBuffer(fileData) ? fileData : Buffer.from(fileData)
++                })
++            }
++            return result
++        }
++
++        const rawFiles =
++            fileUploadValue.startsWith('[') && fileUploadValue.endsWith(']') ? (JSON.parse(fileUploadValue) as string[]) : [fileUploadValue]
++        for (let i = 0; i < rawFiles.length; i += 1) {
++            const rawFile = rawFiles[i]
++            if (!rawFile) continue
++            result.push(this.decodeInlineUpload(rawFile, i))
++        }
++
++        return result
++    }
++
++    private decodeInlineUpload(rawFile: string, index: number): UploadFile {
++        const filenameMatch = rawFile.match(/,filename:([^,]+)$/)
++        const fileNameFromPayload = filenameMatch?.[1]?.trim()
++        const contentPart = filenameMatch ? rawFile.slice(0, filenameMatch.index) : rawFile
++
++        const commaIndex = contentPart.indexOf(',')
++        if (commaIndex < 0) {
++            throw new Error('Invalid uploaded file payload format')
++        }
++
++        const base64Payload = contentPart.slice(commaIndex + 1)
++        const buffer = Buffer.from(base64Payload, 'base64')
++
++        const mimeMatch = contentPart.match(/^data:([^;]+);base64,/i)
++        const ext = mimeMatch?.[1] ? MIME_EXTENSION_MAP[mimeMatch[1].toLowerCase()] || 'bin' : 'bin'
++        const guessedName = fileNameFromPayload || `upload_${Date.now()}_${index}.${ext}`
++
++        return {
++            fileName: guessedName,
++            buffer
++        }
++    }
++
++    private async runTask(task: SourceTask, config: MinerUConfig): Promise<MinerUTaskResult> {
++        this.validateSourceTypeByMode(task.source, config.mode)
++
++        if (task.fileBuffer && config.mode === 'flash') {
++            return this.submitFastFileTask(task, config)
++        }
++        if (task.fileBuffer && config.mode === 'precision') {
++            return this.submitAccurateFileTask(task, config)
++        }
++
++        if (config.mode === 'flash') {
++            return this.submitFastUrlTask(task, config)
++        }
++
++        if (!this.looksLikeUrl(task.source)) {
++            throw new Error(`Invalid URL source: ${task.source}`)
++        }
++        return this.submitAccurateUrlTask(task, config)
++    }
++
++    private async submitFastUrlTask(task: SourceTask, config: MinerUFlashConfig): Promise<MinerUTaskResult> {
++        const payload: Record<string, string> = {
++            url: task.source,
++            language: config.language
++        }
++        if (task.pageRange) {
++            payload.page_range = task.pageRange
++        }
++
++        const resp = await axios.post(`${DEFAULT_FLASH_BASE_URL}/parse/url`, payload, {
++            headers: this.buildHeaders(),
++            timeout: 30000
++        })
++
++        const taskId = this.getDataOrThrow(resp.data, `MinerU flash submit failed for ${task.source}`).task_id as string
++        return this.pollFastAndDownload(taskId, task, config.timeoutSeconds)
++    }
++
++    private async submitFastFileTask(task: SourceTask, config: MinerUFlashConfig): Promise<MinerUTaskResult> {
++        const fileName = task.source
++        if (!task.fileBuffer) {
++            throw new Error(`Missing file buffer for source: ${fileName}`)
++        }
++
++        const payload: Record<string, string> = {
++            file_name: this.basename(fileName),
++            language: config.language
++        }
++        if (task.pageRange) {
++            payload.page_range = task.pageRange
++        }
++
++        const resp = await axios.post(`${DEFAULT_FLASH_BASE_URL}/parse/file`, payload, {
++            headers: this.buildHeaders(),
++            timeout: 30000
++        })
++
++        const data = this.getDataOrThrow(resp.data, `MinerU flash file submit failed for ${fileName}`)
++        const taskId = data.task_id as string
++        const fileUrl = data.file_url as string
++        if (!fileUrl) throw new Error(`MinerU flash file upload URL missing for ${fileName}`)
++
++        await axios.put(fileUrl, task.fileBuffer, {
++            headers: { 'Content-Type': '' },
++            timeout: 120000,
++            transformRequest: [(body: Buffer) => body],
++            maxBodyLength: Infinity,
++            maxContentLength: Infinity
++        })
++
++        return this.pollFastAndDownload(taskId, task, config.timeoutSeconds)
++    }
++
++    private async pollFastAndDownload(taskId: string, task: SourceTask, timeoutSeconds: number): Promise<MinerUTaskResult> {
++        const deadline = Date.now() + timeoutSeconds * 1000
++        let interval = POLL_MIN_INTERVAL_MS
++
++        // eslint-disable-next-line no-constant-condition
++        while (true) {
++            const resp = await axios.get(`${DEFAULT_FLASH_BASE_URL}/parse/${taskId}`, {
++                headers: this.buildHeaders(),
++                timeout: 30000
++            })
++
++            const data = this.getDataOrThrow(resp.data, `MinerU flash polling failed for ${task.source}`)
++            const state = (data.state as string) || 'unknown'
++
++            if (state === 'done') {
++                const markdownUrl = data.markdown_url as string
++                if (!markdownUrl) throw new Error(`MinerU flash mode markdown_url missing for ${task.source}`)
++                const mdResp = await axios.get(markdownUrl, { timeout: 120000 })
++                return {
++                    markdown: mdResp.data as string,
++                    source: task.source,
++                    page: task.page,
++                    filename: data.file_name as string
++                }
++            }
++
++            if (state === 'failed') {
++                throw new Error(`MinerU flash mode failed for ${task.source}: ${data.err_msg || 'unknown'} (code: ${data.err_code || '?'})`)
++            }
++
++            if (Date.now() > deadline) {
++                throw new Error(`MinerU flash polling timeout for ${task.source} (task_id: ${taskId})`)
++            }
++
++            await this.sleep(interval)
++            interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS)
++        }
++    }
++
++    private async submitAccurateUrlTask(task: SourceTask, config: MinerUPrecisionConfig): Promise<MinerUTaskResult> {
++        const payload: Record<string, unknown> = {
++            url: task.source,
++            ...this.buildAccurateOptions(config, task.pageRange)
++        }
++
++        const resp = await axios.post(`${DEFAULT_ACCURATE_BASE_URL}/extract/task`, payload, {
++            headers: this.buildHeaders(config.token),
++            timeout: 30000
++        })
++
++        const taskId = this.getDataOrThrow(resp.data, `MinerU precision submit failed for ${task.source}`).task_id as string
++        return this.pollAccurateTaskAndDownload(taskId, task, config.timeoutSeconds, config.token)
++    }
++
++    private async submitAccurateFileTask(task: SourceTask, config: MinerUPrecisionConfig): Promise<MinerUTaskResult> {
++        const fileName = task.source
++        if (!task.fileBuffer) {
++            throw new Error(`Missing file buffer for source: ${fileName}`)
++        }
++        const payload: Record<string, unknown> = {
++            files: [{ name: this.basename(fileName) }],
++            ...this.buildAccurateOptions(config, task.pageRange)
++        }
++
++        const resp = await axios.post(`${DEFAULT_ACCURATE_BASE_URL}/file-urls/batch`, payload, {
++            headers: this.buildHeaders(config.token),
++            timeout: 30000
++        })
++
++        const data = this.getDataOrThrow(resp.data, `MinerU precision file submit failed for ${fileName}`)
++        const batchId = data.batch_id as string
++        const fileUrls = Array.isArray(data.file_urls) ? (data.file_urls as string[]) : []
++        const uploadUrl = fileUrls[0]
++
++        if (!batchId) {
++            throw new Error(`MinerU precision mode batch_id missing for ${fileName}`)
++        }
++        if (!uploadUrl) {
++            throw new Error(`MinerU precision mode upload URL missing for ${fileName}`)
++        }
++
++        await axios.put(uploadUrl, task.fileBuffer, {
++            headers: { 'Content-Type': '' },
++            timeout: 120000,
++            transformRequest: [(body: Buffer) => body],
++            maxBodyLength: Infinity,
++            maxContentLength: Infinity
++        })
++
++        return this.pollAccurateBatchAndDownload(batchId, task, config.timeoutSeconds, config.token)
++    }
++
++    private async pollAccurateTaskAndDownload(
++        taskId: string,
++        task: SourceTask,
++        timeoutSeconds: number,
++        token: string
++    ): Promise<MinerUTaskResult> {
++        const deadline = Date.now() + timeoutSeconds * 1000
++        let interval = POLL_MIN_INTERVAL_MS
++
++        // eslint-disable-next-line no-constant-condition
++        while (true) {
++            const resp = await axios.get(`${DEFAULT_ACCURATE_BASE_URL}/extract/task/${taskId}`, {
++                headers: this.buildHeaders(token),
++                timeout: 30000
++            })
++
++            const data = this.getDataOrThrow(resp.data, `MinerU precision polling failed for ${task.source}`)
++            const state = (data.state as string) || 'unknown'
++
++            if (state === 'done') {
++                const zipUrl = data.full_zip_url as string
++                if (!zipUrl) throw new Error(`MinerU precision mode full_zip_url missing for ${task.source}`)
++                const markdown = await this.downloadAccurateMarkdown(zipUrl, task.source)
++                return {
++                    markdown,
++                    source: task.source,
++                    page: task.page,
++                    filename: (data.file_name as string) || this.basename(task.source)
++                }
++            }
++
++            if (state === 'failed') {
++                throw new Error(
++                    `MinerU precision mode failed for ${task.source}: ${data.err_msg || 'unknown'} (code: ${data.err_code || '?'})`
++                )
++            }
++
++            if (Date.now() > deadline) {
++                throw new Error(`MinerU precision mode timeout for ${task.source} (task_id: ${taskId})`)
++            }
++
++            await this.sleep(interval)
++            interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS)
++        }
++    }
++
++    private async pollAccurateBatchAndDownload(
++        batchId: string,
++        task: SourceTask,
++        timeoutSeconds: number,
++        token: string
++    ): Promise<MinerUTaskResult> {
++        const deadline = Date.now() + timeoutSeconds * 1000
++        let interval = POLL_MIN_INTERVAL_MS
++
++        // eslint-disable-next-line no-constant-condition
++        while (true) {
++            const resp = await axios.get(`${DEFAULT_ACCURATE_BASE_URL}/extract-results/batch/${batchId}`, {
++                headers: this.buildHeaders(token),
++                timeout: 30000
++            })
++
++            const data = this.getDataOrThrow(resp.data, `MinerU precision batch polling failed for ${task.source}`)
++            const extractResult = Array.isArray(data.extract_result) ? data.extract_result[0] : undefined
++            if (!extractResult) {
++                if (Date.now() > deadline) {
++                    throw new Error(`MinerU precision batch timeout for ${task.source} (batch_id: ${batchId})`)
++                }
++                await this.sleep(interval)
++                interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS)
++                continue
++            }
++
++            const state = (extractResult.state as string) || 'unknown'
++            if (state === 'done') {
++                const zipUrl = extractResult.full_zip_url as string
++                if (!zipUrl) throw new Error(`MinerU precision mode full_zip_url missing for ${task.source}`)
++                const markdown = await this.downloadAccurateMarkdown(zipUrl, task.source)
++                return {
++                    markdown,
++                    source: task.source,
++                    page: task.page,
++                    filename: (extractResult.file_name as string) || this.basename(task.source)
++                }
++            }
++
++            if (state === 'failed') {
++                throw new Error(
++                    `MinerU precision mode failed for ${task.source}: ${extractResult.err_msg || 'unknown'} (code: ${
++                        extractResult.err_code || '?'
++                    })`
++                )
++            }
++
++            if (Date.now() > deadline) {
++                throw new Error(`MinerU precision batch timeout for ${task.source} (batch_id: ${batchId})`)
++            }
++
++            await this.sleep(interval)
++            interval = Math.min(interval * 2, POLL_MAX_INTERVAL_MS)
++        }
++    }
++
++    private async downloadAccurateMarkdown(zipUrl: string, source: string): Promise<string> {
++        const zipResp = await axios.get(zipUrl, {
++            responseType: 'arraybuffer',
++            timeout: 180000,
++            maxContentLength: Infinity,
++            maxBodyLength: Infinity
++        })
++        const zipBuffer = Buffer.from(zipResp.data)
++        return this.extractMarkdownFromZip(zipBuffer, source)
++    }
++
++    private extractMarkdownFromZip(zipBuffer: Buffer, source: string): string {
++        const eocdOffset = this.findEndOfCentralDirectory(zipBuffer)
++        const centralDirectorySize = zipBuffer.readUInt32LE(eocdOffset + 12)
++        const centralDirectoryOffset = zipBuffer.readUInt32LE(eocdOffset + 16)
++        const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize
++
++        let cursor = centralDirectoryOffset
++        while (cursor + 46 <= centralDirectoryEnd && cursor + 46 <= zipBuffer.length) {
++            const centralSignature = zipBuffer.readUInt32LE(cursor)
++            if (centralSignature !== 0x02014b50) break
++
++            const compressionMethod = zipBuffer.readUInt16LE(cursor + 10)
++            const compressedSize = zipBuffer.readUInt32LE(cursor + 20)
++            const fileNameLength = zipBuffer.readUInt16LE(cursor + 28)
++            const extraFieldLength = zipBuffer.readUInt16LE(cursor + 30)
++            const fileCommentLength = zipBuffer.readUInt16LE(cursor + 32)
++            const localHeaderOffset = zipBuffer.readUInt32LE(cursor + 42)
++
++            const fileNameStart = cursor + 46
++            const fileNameEnd = fileNameStart + fileNameLength
++            if (fileNameEnd > zipBuffer.length) {
++                throw new Error(`MinerU precision mode zip is invalid for ${source}`)
++            }
++            const fileName = zipBuffer.subarray(fileNameStart, fileNameEnd).toString('utf-8')
++
++            if (fileName.toLowerCase().endsWith('.md')) {
++                const markdownBuffer = this.readZipEntry(zipBuffer, localHeaderOffset, compressedSize, compressionMethod, source)
++                return markdownBuffer.toString('utf-8')
++            }
++
++            cursor = fileNameEnd + extraFieldLength + fileCommentLength
++        }
++
++        throw new Error(`MinerU precision mode zip has no markdown file for ${source}`)
++    }
++
++    private findEndOfCentralDirectory(zipBuffer: Buffer): number {
++        const minOffset = Math.max(0, zipBuffer.length - 65557)
++        for (let i = zipBuffer.length - 22; i >= minOffset; i -= 1) {
++            if (zipBuffer.readUInt32LE(i) === 0x06054b50) {
++                return i
++            }
++        }
++        throw new Error('MinerU precision mode zip parse failed: EOCD not found')
++    }
++
++    private readZipEntry(
++        zipBuffer: Buffer,
++        localHeaderOffset: number,
++        compressedSize: number,
++        compressionMethod: number,
++        source: string
++    ): Buffer {
++        if (localHeaderOffset + 30 > zipBuffer.length) {
++            throw new Error(`MinerU precision mode zip local header out of range for ${source}`)
++        }
++
++        const localSignature = zipBuffer.readUInt32LE(localHeaderOffset)
++        if (localSignature !== 0x04034b50) {
++            throw new Error(`MinerU precision mode invalid local header signature for ${source}`)
++        }
++
++        const fileNameLength = zipBuffer.readUInt16LE(localHeaderOffset + 26)
++        const extraFieldLength = zipBuffer.readUInt16LE(localHeaderOffset + 28)
++        const dataStart = localHeaderOffset + 30 + fileNameLength + extraFieldLength
++        const dataEnd = dataStart + compressedSize
++        if (dataEnd > zipBuffer.length) {
++            throw new Error(`MinerU precision mode zip entry out of range for ${source}`)
++        }
++
++        const compressedData: Buffer = Buffer.from(zipBuffer.subarray(dataStart, dataEnd))
++        if (compressionMethod === 0) {
++            return compressedData
++        }
++        if (compressionMethod === 8) {
++            return inflateRawSync(compressedData)
++        }
++        throw new Error(`MinerU precision mode unsupported zip compression method: ${compressionMethod}`)
++    }
++
++    private buildAccurateOptions(config: MinerUPrecisionConfig, pageRange?: string): Record<string, unknown> {
++        const modelVersion = this.resolveModelVersion(config.model)
++        const options: Record<string, unknown> = {
++            model_version: modelVersion
++        }
++
++        if (config.ocr) options.is_ocr = true
++        if (!config.formula) options.enable_formula = false
++        if (!config.table) options.enable_table = false
++        if (config.language) options.language = config.language
++        if (pageRange) options.page_ranges = pageRange
++
++        return options
++    }
++
++    private resolveModelVersion(model: PrecisionModel): string {
++        if (model === 'pipeline') return 'pipeline'
++        if (model === 'vlm') return 'vlm'
++        return 'MinerU-HTML'
++    }
++
++    private resolveModelLabel(nodeData: INodeData): string {
++        const inputModel = (nodeData.inputs?.model as string) || (nodeData.inputs?.accurateModel as string) || 'pipeline'
++        return this.resolveModelInput(inputModel)
++    }
++
++    private resolveMode(rawMode?: string): MinerUMode {
++        if (rawMode === 'precision' || rawMode === 'accurate') return 'precision'
++        return 'flash'
++    }
++
++    private resolveModelInput(rawModel?: string): PrecisionModel {
++        if (rawModel === 'vlm' || rawModel === 'pipeline' || rawModel === 'html') return rawModel
++        if (rawModel === 'MinerU-HTML') return 'html'
++        return 'pipeline'
++    }
++
++    private validateSourceTypeByMode(source: string, mode: MinerUMode): void {
++        const ext = this.getSourceExtension(source)
++        if (!ext) {
++            throw new Error(`Cannot detect file type from source: ${source}`)
++        }
++
++        const allowed = mode === 'flash' ? FLASH_ALLOWED_EXTENSIONS : PRECISION_ALLOWED_EXTENSIONS
++        if (allowed.includes(ext)) return
++
++        const allowedText = mode === 'flash' ? FLASH_ALLOWED_FORMATS_TEXT : PRECISION_ALLOWED_FORMATS_TEXT
++        throw new Error(`Unsupported file type ".${ext}" for ${mode} mode. Allowed: ${allowedText}. Source: ${source}`)
++    }
++
++    private getSourceExtension(source: string): string | undefined {
++        const cleaned = source.split('#')[0].split('?')[0]
++        const baseName = this.basename(cleaned)
++        const dotIndex = baseName.lastIndexOf('.')
++        if (dotIndex <= 0 || dotIndex === baseName.length - 1) return undefined
++        return baseName.slice(dotIndex + 1).toLowerCase()
++    }
++
++    private parsePageRange(pageRange: string): number[] {
++        const pages = new Set<number>()
++        const parts = pageRange
++            .split(',')
++            .map((part) => part.trim())
++            .filter(Boolean)
++
++        if (!parts.length) {
++            throw new Error('Page Range is empty')
++        }
++
++        for (const part of parts) {
++            const rangeMatch = part.match(/^(\d+)\s*-+\s*(\d+)$/)
++            if (rangeMatch) {
++                const start = Number(rangeMatch[1])
++                const end = Number(rangeMatch[2])
++                if (start <= 0 || end <= 0 || start > end) {
++                    throw new Error(`Invalid page range: ${part}`)
++                }
++                for (let page = start; page <= end; page += 1) {
++                    pages.add(page)
++                }
++                continue
++            }
++
++            const singleMatch = part.match(/^\d+$/)
++            if (singleMatch) {
++                const page = Number(part)
++                if (page <= 0) throw new Error(`Invalid page number: ${part}`)
++                pages.add(page)
++                continue
++            }
++
++            throw new Error(`Invalid page range expression: ${part}`)
++        }
++
++        return Array.from(pages).sort((a, b) => a - b)
++    }
++
++    private buildHeaders(token?: string): Record<string, string> {
++        const headers: Record<string, string> = {
++            'Content-Type': 'application/json',
++            source: DEFAULT_SOURCE_HEADER
++        }
++        if (token) {
++            headers.Authorization = `Bearer ${token}`
++        }
++        return headers
++    }
++
++    private getDataOrThrow(payload: unknown, errorPrefix: string): Record<string, unknown> {
++        if (!payload || typeof payload !== 'object') {
++            throw new Error(`${errorPrefix}: invalid response payload`)
++        }
++        const body = payload as Record<string, unknown>
++        const code = body.code
++        if (typeof code !== 'number' || code !== 0) {
++            throw new Error(`${errorPrefix}: ${(body.msg as string) || JSON.stringify(body)}`)
++        }
++        const data = body.data
++        if (!data || typeof data !== 'object') {
++            throw new Error(`${errorPrefix}: missing data`)
++        }
++        return data as Record<string, unknown>
++    }
++
++    private looksLikeUrl(value: string): boolean {
++        return value.startsWith('http://') || value.startsWith('https://')
++    }
++
++    private looksLikePdf(value: string): boolean {
++        const cleaned = value.split('#')[0].split('?')[0]
++        return cleaned.toLowerCase().endsWith('.pdf')
++    }
++
++    private basename(value: string): string {
++        const cleaned = value.split('#')[0].split('?')[0]
++        const segments = cleaned.split('/')
++        const name = segments[segments.length - 1]
++        return name || 'upload_file'
++    }
++
++    private asBoolean(value: unknown, defaultValue: boolean): boolean {
++        if (typeof value === 'boolean') return value
++        if (typeof value === 'string') return value.toLowerCase() === 'true'
++        if (typeof value === 'number') return value !== 0
++        return defaultValue
++    }
++
++    private resolveTimeoutSeconds(value: unknown): number {
++        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
++            return Math.floor(value)
++        }
++        if (typeof value === 'string') {
++            const parsed = Number(value)
++            if (Number.isFinite(parsed) && parsed > 0) {
++                return Math.floor(parsed)
++            }
++        }
++        return DEFAULT_TIMEOUT_SECONDS
++    }
++
++    private sleep(ms: number): Promise<void> {
++        return new Promise((resolve) => {
++            setTimeout(resolve, ms)
++        })
++    }
++}
++
++module.exports = { nodeClass: MinerU_DocumentLoaders }
+diff --git a/packages/components/nodes/documentloaders/MinerU/README.md b/packages/components/nodes/documentloaders/MinerU/README.md
+new file mode 100644
+index 00000000000..c4eaa6d0921
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/MinerU/README.md
+@@ -0,0 +1,253 @@
++# langchain-mineru
++
++LangChain document loader powered by [MinerU](https://mineru.net) — turn PDFs and documents into Markdown with one line of code.
++
++## What is langchain-mineru?
++
++`langchain-mineru` is a LangChain Document Loader deeply integrated into the LangChain ecosystem. It leverages MinerU's document parsing capabilities to convert diverse external data sources into LangChain-compatible `Document` objects, ready to plug into RAG pipelines. It supports both single-document and multi-document input, and integrates seamlessly with downstream Text Splitter, Embedding, and Vector Store workflows.
++
++-   ✅ `precision` mode supports: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html
++-   ✅ `flash` mode supports: .pdf, images, DOCX, PPTX, XLS, XLSX
++-   ✅ Supports single and multi-document input with `lazy_load` streaming
++-   ✅ Optional `split_pages` mode for PDFs — splits into one `Document` per page
++-   ✅ Two parsing modes: `flash` (no token) and `precision` (token required)
++-   ✅ Compatible with LangChain RAG Pipelines — ready for chunking, embedding, and retrieval
++
++### What is MinerU?
++
++[MinerU](https://github.com/opendatalab/MinerU) is an open-source tool that converts complex documents (PDFs, Word, PPT, images, etc.) into machine-readable formats like Markdown and JSON. It is designed to extract high-quality content for LLM pre-training, RAG, and agentic workflows.
++
++For more details, visit the [MinerU GitHub repository](https://github.com/opendatalab/MinerU).
++
++## Installation
++
++### Prerequisites
++
++-   Python >= 3.10
++
++### Installation Steps
++
++```bash
++pip install langchain-mineru
++```
++
++### Verify
++
++```bash
++python -c "from langchain_mineru import MinerULoader; print('OK')"
++```
++
++## Quick Start
++
++```python
++from langchain_mineru import MinerULoader
++
++loader = MinerULoader(source="demo.pdf")
++docs = loader.load()
++
++print(docs[0].page_content[:500])
++print(docs[0].metadata)
++```
++
++Default is `mode="flash"` and no API token is required.
++
++## Mode Selection
++
++-   `precision`: Calls MinerU standard `extract` API. Token required. Supported formats: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html.
++-   `flash`: Calls MinerU flash API, optimized for speed, no token required. Supported formats: .pdf, images, DOCX, PPTX, XLS, XLSX.
++
++Apply for a `precision` mode token here: [https://mineru.net/apiManage/token](https://mineru.net/apiManage/token).
++
++You can provide token in two ways:
++
++```bash
++# Option 1: environment variable (recommended)
++export MINERU_TOKEN="your-token"
++```
++
++```python
++# Option 2: pass token directly
++loader = MinerULoader(source="demo.pdf", mode="precision", token="your-token")
++```
++
++## Usage Examples
++
++### Basic Usage
++
++```python
++from langchain_mineru import MinerULoader
++
++loader = MinerULoader(
++    source="demo.pdf",
++    split_pages=True,
++)
++
++docs = loader.load()
++for doc in docs:
++    print(f"Page {doc.metadata['page']}: {doc.page_content[:200]}")
++```
++
++### With Parameters
++
++### Flash Mode (Token Free)
++
++```python
++from langchain_mineru import MinerULoader
++
++loader = MinerULoader(
++    source="/path/to/demo.pdf",
++    mode="flash",
++    language="en",
++    timeout=300,
++)
++
++docs = loader.load()
++print(docs[0].page_content[:500])
++```
++
++### Precision Mode (Token Required)
++
++```python
++from langchain_mineru import MinerULoader
++
++loader = MinerULoader(
++    source="/path/to/demo.pdf",
++    mode="precision",
++    token="your-token",  # or set MINERU_TOKEN
++    language="en",
++    split_pages=True,
++    pages="1-5",
++    timeout=300,
++    ocr=True,
++    formula=True,
++    table=True,
++)
++
++docs = loader.load()
++for doc in docs:
++    print("-"*100)
++    print(f"Page {doc.metadata['page']}: \n {doc.page_content[:200]}")
++```
++
++Or run the dedicated example script directly:
++
++```bash
++export MINERU_TOKEN="your-token"
++uv run python mineru_example/example_precision.py
++```
++
++### Multiple Sources
++
++```python
++from langchain_mineru import MinerULoader
++
++loader = MinerULoader(
++    source=[
++        "/path/to/demo_a.pdf",
++        "/path/to/demo_b.pdf",
++        "https://cdn-mineru.openxlab.org.cn/demo/example.pdf",
++    ],
++)
++
++docs = loader.load()
++for doc in docs:
++    print(doc.metadata["source"], "-", doc.page_content[:100])
++```
++
++### RAG Pipeline
++
++#### RAG (flash mode, no token)
++
++```python
++from langchain_mineru import MinerULoader
++from langchain_text_splitters import RecursiveCharacterTextSplitter
++from langchain_openai import OpenAIEmbeddings
++from langchain_community.vectorstores import FAISS
++
++loader = MinerULoader(source="demo.pdf", mode="flash")
++docs = loader.load()
++
++splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
++chunks = splitter.split_documents(docs)
++
++vs = FAISS.from_documents(chunks, OpenAIEmbeddings())
++results = vs.similarity_search("what are the core setup steps in this document?", k=3)
++for r in results:
++    print(r.page_content[:200])
++```
++
++#### RAG (precision mode, token required)
++
++```python
++from langchain_mineru import MinerULoader
++from langchain_text_splitters import RecursiveCharacterTextSplitter
++from langchain_openai import OpenAIEmbeddings
++from langchain_community.vectorstores import FAISS
++
++loader = MinerULoader(
++    source="manual.pdf",
++    mode="precision",
++    token="your-token",  # or set MINERU_TOKEN
++    ocr=True,
++    formula=True,
++    table=True,
++)
++docs = loader.load()
++
++splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
++chunks = splitter.split_documents(docs)
++
++vs = FAISS.from_documents(chunks, OpenAIEmbeddings())
++results = vs.similarity_search("what are the core setup steps in this document?", k=3)
++for r in results:
++    print(r.page_content[:200])
++```
++
++## Parameters
++
++| Parameter     | Type               | Default    | Description                                                                                                                                                                                                                                                    |
++| ------------- | ------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| `source`      | `str \| list[str]` | _required_ | Local file path(s) or URL(s). Supported formats depend on `mode`: `precision` supports .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html; `flash` supports .pdf, images, DOCX, PPTX, XLS, XLSX.                                                                     |
++| `mode`        | `str`              | `"flash"`  | Parsing mode. `"flash"` is speed-first and token-free; `"precision"` uses standard API and requires token.                                                                                                                                                     |
++| `token`       | `str \| None`      | `None`     | MinerU API token. Required for `mode="precision"`. Apply at [https://mineru.net/apiManage/token](https://mineru.net/apiManage/token). If omitted, `MINERU_TOKEN` environment variable is used.                                                                 |
++| `language`    | `str`              | `"ch"`     | Document language code for OCR. Common values: `"ch"` (Chinese), `"en"` (English). For the complete list, refer to the [standard API documentation](https://mineru.net/apiManage/docs).                                                                        |
++| `pages`       | `str \| None`      | `None`     | Page range to extract, e.g. `"1-5"` or `"3"`. Only applies to PDF files. When `split_pages=False`, the range is forwarded to the API. When `split_pages=True`, only the specified pages are split and parsed locally — reducing API calls and processing time. |
++| `timeout`     | `int`              | `1200`     | Maximum seconds to wait for extraction per file.                                                                                                                                                                                                               |
++| `split_pages` | `bool`             | `False`    | PDF only. When `True`, splits the PDF into one `Document` per page. Each page is parsed independently, so `metadata["page"]` is available. Non-PDF files are unaffected — they always produce one `Document`.                                                  |
++| `ocr`         | `bool`             | `False`    | Effective when `mode="precision"`. In `mode="flash"`, OCR is built in and this parameter is ignored.                                                                                                                                                           |
++| `formula`     | `bool`             | `True`     | Effective only when `mode="precision"`. Enables formula recognition. Passing non-default value in `mode="flash"` raises an error.                                                                                                                              |
++| `table`       | `bool`             | `True`     | Effective only when `mode="precision"`. Enables table recognition. Passing non-default value in `mode="flash"` raises an error.                                                                                                                                |
++
++## Document Metadata
++
++Each returned `Document` includes the following metadata:
++
++```python
++{
++    "source": "report.pdf",          # original source path or URL
++    "loader": "mineru",
++    "output_format": "markdown",
++    "mode": "flash",                  # flash / precision
++    "language": "ch",
++    "pages": None,
++    "split_pages": True,
++    "filename": "report.pdf",
++    "page": 1,                       # only present when split_pages=True
++    "page_source": "report.pdf",     # only present when split_pages=True
++}
++```
++
++## Supported File Formats
++
++-   `precision` mode: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html
++-   `flash` mode: .pdf, images, DOCX, PPTX, XLS, XLSX
++
++## Limitations
++
++-   Output format is Markdown only
++-   `flash` mode follows flash API limits (such as page/file constraints)
++-   `precision` mode requires a valid token and available account quota
++
++## License
++
++Apache-2.0
+diff --git a/packages/components/nodes/documentloaders/MinerU/mineru.svg b/packages/components/nodes/documentloaders/MinerU/mineru.svg
+new file mode 100644
+index 00000000000..65539780286
+--- /dev/null
++++ b/packages/components/nodes/documentloaders/MinerU/mineru.svg
+@@ -0,0 +1,22 @@
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path d="M19.7238 3.86898C19.7238 4.57597 19.1502 5.1491 18.4427 5.1491C17.7352 5.1491 17.1616 4.57597 17.1616 3.86898C17.1616 3.16199 17.7352 2.58887 18.4427 2.58887C19.1502 2.58887 19.7238 3.16199 19.7238 3.86898Z" fill="url(#paint0_linear_8609_1645)"/>
++<path d="M19.7238 3.86898C19.7238 4.57597 19.1502 5.1491 18.4427 5.1491C17.7352 5.1491 17.1616 4.57597 17.1616 3.86898C17.1616 3.16199 17.7352 2.58887 18.4427 2.58887C19.1502 2.58887 19.7238 3.16199 19.7238 3.86898Z" fill="#010101"/>
++<path d="M15.3681 5.1491C15.3681 5.85609 14.7945 6.42921 14.087 6.42921C13.3794 6.42921 12.8059 5.85609 12.8059 5.1491C12.8059 4.44211 13.3794 3.86898 14.087 3.86898C14.7945 3.86898 15.3681 4.44211 15.3681 5.1491Z" fill="url(#paint1_linear_8609_1645)"/>
++<path d="M15.3681 5.1491C15.3681 5.85609 14.7945 6.42921 14.087 6.42921C13.3794 6.42921 12.8059 5.85609 12.8059 5.1491C12.8059 4.44211 13.3794 3.86898 14.087 3.86898C14.7945 3.86898 15.3681 4.44211 15.3681 5.1491Z" fill="#010101"/>
++<path fill-rule="evenodd" clip-rule="evenodd" d="M8.05175 11.2368C8.05175 13.4605 9.14375 15.4293 10.8211 16.6371C11.8241 15.7389 12.4551 14.4345 12.4551 12.9828V9.39673C12.4551 8.85661 12.8197 8.38448 13.3426 8.24757L19.8924 6.53265C20.6459 6.33534 21.3826 6.90341 21.3826 7.6818L21.3826 12.0452C21.3826 17.2179 17.1861 21.4111 12.0095 21.4111L11.9942 21.4111C6.81758 21.4111 2.62109 17.2179 2.62109 12.0452V9.03388C2.62109 8.49175 2.9884 8.01839 3.51385 7.88336L6.56677 7.09882C7.31904 6.9055 8.05175 7.47318 8.05175 8.24934V11.2368ZM3.9798 12.0452C3.9798 13.8476 4.57565 15.5108 5.58124 16.849C6.04996 17.4728 6.7655 17.8884 7.54573 17.8884V17.8884C8.28848 17.8884 8.9927 17.7236 9.62376 17.4286C7.83439 15.9596 6.69304 13.7314 6.69304 11.2368V8.46821L3.9798 9.16546V12.0452Z" fill="url(#paint2_linear_8609_1645)"/>
++<path fill-rule="evenodd" clip-rule="evenodd" d="M8.05175 11.2368C8.05175 13.4605 9.14375 15.4293 10.8211 16.6371C11.8241 15.7389 12.4551 14.4345 12.4551 12.9828V9.39673C12.4551 8.85661 12.8197 8.38448 13.3426 8.24757L19.8924 6.53265C20.6459 6.33534 21.3826 6.90341 21.3826 7.6818L21.3826 12.0452C21.3826 17.2179 17.1861 21.4111 12.0095 21.4111L11.9942 21.4111C6.81758 21.4111 2.62109 17.2179 2.62109 12.0452V9.03388C2.62109 8.49175 2.9884 8.01839 3.51385 7.88336L6.56677 7.09882C7.31904 6.9055 8.05175 7.47318 8.05175 8.24934V11.2368ZM3.9798 12.0452C3.9798 13.8476 4.57565 15.5108 5.58124 16.849C6.04996 17.4728 6.7655 17.8884 7.54573 17.8884V17.8884C8.28848 17.8884 8.9927 17.7236 9.62376 17.4286C7.83439 15.9596 6.69304 13.7314 6.69304 11.2368V8.46821L3.9798 9.16546V12.0452Z" fill="#010101"/>
++<defs>
++<linearGradient id="paint0_linear_8609_1645" x1="14.3898" y1="8.36821" x2="13.1876" y2="19.4461" gradientUnits="userSpaceOnUse">
++<stop stop-color="white"/>
++<stop offset="1" stop-color="#2E2E2E"/>
++</linearGradient>
++<linearGradient id="paint1_linear_8609_1645" x1="14.3898" y1="8.36821" x2="13.1876" y2="19.4461" gradientUnits="userSpaceOnUse">
++<stop stop-color="white"/>
++<stop offset="1" stop-color="#2E2E2E"/>
++</linearGradient>
++<linearGradient id="paint2_linear_8609_1645" x1="14.3898" y1="8.36821" x2="13.1876" y2="19.4461" gradientUnits="userSpaceOnUse">
++<stop stop-color="white"/>
++<stop offset="1" stop-color="#2E2E2E"/>
++</linearGradient>
++</defs>
++</svg>
+
+From 7b6663dff7a45871ddb8f56ed2f15174923cfe44 Mon Sep 17 00:00:00 2001
+From: chaserRen <renzhifei1997@163.com>
+Date: Mon, 23 Mar 2026 14:52:46 +0800
+Subject: [PATCH 2/3] update
+
+---
+ .../documentloaders/MinerU/FIELD_MATRIX.md    |  50 ----
+ .../nodes/documentloaders/MinerU/README.md    | 253 ------------------
+ 2 files changed, 303 deletions(-)
+ delete mode 100644 packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
+ delete mode 100644 packages/components/nodes/documentloaders/MinerU/README.md
+
+diff --git a/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md b/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
+deleted file mode 100644
+index 018d2b6d4a3..00000000000
+--- a/packages/components/nodes/documentloaders/MinerU/FIELD_MATRIX.md
++++ /dev/null
+@@ -1,50 +0,0 @@
+-# MinerU Node Field List and Display Validation Matrix
+-
+-## Final Field List
+-
+-1. `textSplitter`
+-2. `mode` (`fast` | `accurate`, default `fast`)
+-3. `inputMode` (`url` | `file`, default `file`)
+-4. `fileUrls` (shown when `inputMode=url`)
+-5. `fileUpload` (shown when `inputMode=file`)
+-6. `token` (shown when `mode=accurate`)
+-7. `accurateModel` (`auto` | `vlm` | `pipeline` | `html`, shown when `mode=accurate`)
+-8. `ocr` (shown when `mode=accurate`)
+-9. `formula` (shown when `mode=accurate`)
+-10. `table` (shown when `mode=accurate`)
+-11. `language` (default `ch`)
+-12. `pageRange` (optional, empty means all pages)
+-13. `splitPages` (optional advanced)
+-14. `timeoutSeconds` (default `300`)
+-15. `metadata` (optional advanced)
+-
+-## Display and Validation Matrix
+-
+-| Field            | Type         | Default                 | Show Condition   | Required             | Validation Rule                                    | API Mapping                                    |
+-| ---------------- | ------------ | ----------------------- | ---------------- | -------------------- | -------------------------------------------------- | ---------------------------------------------- |
+-| `mode`           | options      | `fast`                  | always           | yes                  | must be `fast` or `accurate`                       | routing only                                   |
+-| `inputMode`      | options      | `file`                  | always           | yes                  | must be `url` or `file`                            | routing only                                   |
+-| `fileUrls`       | string       | none                    | `inputMode=url`  | yes in URL mode      | split by newline/comma, at least one non-empty URL | `url` source                                   |
+-| `fileUpload`     | file         | none                    | `inputMode=file` | yes in file mode     | at least one uploaded file                         | file upload source                             |
+-| `token`          | password     | `MINERU_TOKEN` fallback | `mode=accurate`  | yes in accurate mode | non-empty after env fallback                       | `Authorization: Bearer <token>`                |
+-| `accurateModel`  | options      | `auto`                  | `mode=accurate`  | no                   | enum only                                          | `model_version`                                |
+-| `ocr`            | boolean      | `false`                 | `mode=accurate`  | no                   | boolean                                            | `is_ocr`                                       |
+-| `formula`        | boolean      | `true`                  | `mode=accurate`  | no                   | boolean                                            | `enable_formula` (false only when disabled)    |
+-| `table`          | boolean      | `true`                  | `mode=accurate`  | no                   | boolean                                            | `enable_table` (false only when disabled)      |
+-| `language`       | string       | `ch`                    | always           | no                   | trimmed string                                     | `language`                                     |
+-| `pageRange`      | string       | empty                   | always           | no                   | if provided must match page expression parser      | `page_range` (fast) / `page_ranges` (accurate) |
+-| `splitPages`     | boolean      | `false`                 | always           | no                   | if true and PDF, current node requires `pageRange` | internal task split only                       |
+-| `timeoutSeconds` | number       | `300`                   | always           | no                   | positive integer, fallback to `300`                | polling timeout                                |
+-| `metadata`       | json         | empty                   | always           | no                   | valid JSON object/string                           | output metadata merge                          |
+-| `textSplitter`   | TextSplitter | none                    | always           | no                   | valid Flowise splitter instance                    | post-processing                                |
+-
+-## Behavior Notes
+-
+-1. `pageRange` empty: node does not send page range field, so MinerU processes all pages by default.
+-2. `splitPages=true`: this node currently requires `pageRange` for deterministic per-page tasks.
+-3. Default UX after drag-and-drop:
+-    - `mode=fast`
+-    - accurate-only fields remain hidden until user switches to `accurate`.
+-4. Recommended inline help placement:
+-    - `mode` description includes API docs link.
+-    - `token` description includes token apply link and API docs link.
+diff --git a/packages/components/nodes/documentloaders/MinerU/README.md b/packages/components/nodes/documentloaders/MinerU/README.md
+deleted file mode 100644
+index c4eaa6d0921..00000000000
+--- a/packages/components/nodes/documentloaders/MinerU/README.md
++++ /dev/null
+@@ -1,253 +0,0 @@
+-# langchain-mineru
+-
+-LangChain document loader powered by [MinerU](https://mineru.net) — turn PDFs and documents into Markdown with one line of code.
+-
+-## What is langchain-mineru?
+-
+-`langchain-mineru` is a LangChain Document Loader deeply integrated into the LangChain ecosystem. It leverages MinerU's document parsing capabilities to convert diverse external data sources into LangChain-compatible `Document` objects, ready to plug into RAG pipelines. It supports both single-document and multi-document input, and integrates seamlessly with downstream Text Splitter, Embedding, and Vector Store workflows.
+-
+--   ✅ `precision` mode supports: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html
+--   ✅ `flash` mode supports: .pdf, images, DOCX, PPTX, XLS, XLSX
+--   ✅ Supports single and multi-document input with `lazy_load` streaming
+--   ✅ Optional `split_pages` mode for PDFs — splits into one `Document` per page
+--   ✅ Two parsing modes: `flash` (no token) and `precision` (token required)
+--   ✅ Compatible with LangChain RAG Pipelines — ready for chunking, embedding, and retrieval
+-
+-### What is MinerU?
+-
+-[MinerU](https://github.com/opendatalab/MinerU) is an open-source tool that converts complex documents (PDFs, Word, PPT, images, etc.) into machine-readable formats like Markdown and JSON. It is designed to extract high-quality content for LLM pre-training, RAG, and agentic workflows.
+-
+-For more details, visit the [MinerU GitHub repository](https://github.com/opendatalab/MinerU).
+-
+-## Installation
+-
+-### Prerequisites
+-
+--   Python >= 3.10
+-
+-### Installation Steps
+-
+-```bash
+-pip install langchain-mineru
+-```
+-
+-### Verify
+-
+-```bash
+-python -c "from langchain_mineru import MinerULoader; print('OK')"
+-```
+-
+-## Quick Start
+-
+-```python
+-from langchain_mineru import MinerULoader
+-
+-loader = MinerULoader(source="demo.pdf")
+-docs = loader.load()
+-
+-print(docs[0].page_content[:500])
+-print(docs[0].metadata)
+-```
+-
+-Default is `mode="flash"` and no API token is required.
+-
+-## Mode Selection
+-
+--   `precision`: Calls MinerU standard `extract` API. Token required. Supported formats: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html.
+--   `flash`: Calls MinerU flash API, optimized for speed, no token required. Supported formats: .pdf, images, DOCX, PPTX, XLS, XLSX.
+-
+-Apply for a `precision` mode token here: [https://mineru.net/apiManage/token](https://mineru.net/apiManage/token).
+-
+-You can provide token in two ways:
+-
+-```bash
+-# Option 1: environment variable (recommended)
+-export MINERU_TOKEN="your-token"
+-```
+-
+-```python
+-# Option 2: pass token directly
+-loader = MinerULoader(source="demo.pdf", mode="precision", token="your-token")
+-```
+-
+-## Usage Examples
+-
+-### Basic Usage
+-
+-```python
+-from langchain_mineru import MinerULoader
+-
+-loader = MinerULoader(
+-    source="demo.pdf",
+-    split_pages=True,
+-)
+-
+-docs = loader.load()
+-for doc in docs:
+-    print(f"Page {doc.metadata['page']}: {doc.page_content[:200]}")
+-```
+-
+-### With Parameters
+-
+-### Flash Mode (Token Free)
+-
+-```python
+-from langchain_mineru import MinerULoader
+-
+-loader = MinerULoader(
+-    source="/path/to/demo.pdf",
+-    mode="flash",
+-    language="en",
+-    timeout=300,
+-)
+-
+-docs = loader.load()
+-print(docs[0].page_content[:500])
+-```
+-
+-### Precision Mode (Token Required)
+-
+-```python
+-from langchain_mineru import MinerULoader
+-
+-loader = MinerULoader(
+-    source="/path/to/demo.pdf",
+-    mode="precision",
+-    token="your-token",  # or set MINERU_TOKEN
+-    language="en",
+-    split_pages=True,
+-    pages="1-5",
+-    timeout=300,
+-    ocr=True,
+-    formula=True,
+-    table=True,
+-)
+-
+-docs = loader.load()
+-for doc in docs:
+-    print("-"*100)
+-    print(f"Page {doc.metadata['page']}: \n {doc.page_content[:200]}")
+-```
+-
+-Or run the dedicated example script directly:
+-
+-```bash
+-export MINERU_TOKEN="your-token"
+-uv run python mineru_example/example_precision.py
+-```
+-
+-### Multiple Sources
+-
+-```python
+-from langchain_mineru import MinerULoader
+-
+-loader = MinerULoader(
+-    source=[
+-        "/path/to/demo_a.pdf",
+-        "/path/to/demo_b.pdf",
+-        "https://cdn-mineru.openxlab.org.cn/demo/example.pdf",
+-    ],
+-)
+-
+-docs = loader.load()
+-for doc in docs:
+-    print(doc.metadata["source"], "-", doc.page_content[:100])
+-```
+-
+-### RAG Pipeline
+-
+-#### RAG (flash mode, no token)
+-
+-```python
+-from langchain_mineru import MinerULoader
+-from langchain_text_splitters import RecursiveCharacterTextSplitter
+-from langchain_openai import OpenAIEmbeddings
+-from langchain_community.vectorstores import FAISS
+-
+-loader = MinerULoader(source="demo.pdf", mode="flash")
+-docs = loader.load()
+-
+-splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+-chunks = splitter.split_documents(docs)
+-
+-vs = FAISS.from_documents(chunks, OpenAIEmbeddings())
+-results = vs.similarity_search("what are the core setup steps in this document?", k=3)
+-for r in results:
+-    print(r.page_content[:200])
+-```
+-
+-#### RAG (precision mode, token required)
+-
+-```python
+-from langchain_mineru import MinerULoader
+-from langchain_text_splitters import RecursiveCharacterTextSplitter
+-from langchain_openai import OpenAIEmbeddings
+-from langchain_community.vectorstores import FAISS
+-
+-loader = MinerULoader(
+-    source="manual.pdf",
+-    mode="precision",
+-    token="your-token",  # or set MINERU_TOKEN
+-    ocr=True,
+-    formula=True,
+-    table=True,
+-)
+-docs = loader.load()
+-
+-splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+-chunks = splitter.split_documents(docs)
+-
+-vs = FAISS.from_documents(chunks, OpenAIEmbeddings())
+-results = vs.similarity_search("what are the core setup steps in this document?", k=3)
+-for r in results:
+-    print(r.page_content[:200])
+-```
+-
+-## Parameters
+-
+-| Parameter     | Type               | Default    | Description                                                                                                                                                                                                                                                    |
+-| ------------- | ------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+-| `source`      | `str \| list[str]` | _required_ | Local file path(s) or URL(s). Supported formats depend on `mode`: `precision` supports .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html; `flash` supports .pdf, images, DOCX, PPTX, XLS, XLSX.                                                                     |
+-| `mode`        | `str`              | `"flash"`  | Parsing mode. `"flash"` is speed-first and token-free; `"precision"` uses standard API and requires token.                                                                                                                                                     |
+-| `token`       | `str \| None`      | `None`     | MinerU API token. Required for `mode="precision"`. Apply at [https://mineru.net/apiManage/token](https://mineru.net/apiManage/token). If omitted, `MINERU_TOKEN` environment variable is used.                                                                 |
+-| `language`    | `str`              | `"ch"`     | Document language code for OCR. Common values: `"ch"` (Chinese), `"en"` (English). For the complete list, refer to the [standard API documentation](https://mineru.net/apiManage/docs).                                                                        |
+-| `pages`       | `str \| None`      | `None`     | Page range to extract, e.g. `"1-5"` or `"3"`. Only applies to PDF files. When `split_pages=False`, the range is forwarded to the API. When `split_pages=True`, only the specified pages are split and parsed locally — reducing API calls and processing time. |
+-| `timeout`     | `int`              | `1200`     | Maximum seconds to wait for extraction per file.                                                                                                                                                                                                               |
+-| `split_pages` | `bool`             | `False`    | PDF only. When `True`, splits the PDF into one `Document` per page. Each page is parsed independently, so `metadata["page"]` is available. Non-PDF files are unaffected — they always produce one `Document`.                                                  |
+-| `ocr`         | `bool`             | `False`    | Effective when `mode="precision"`. In `mode="flash"`, OCR is built in and this parameter is ignored.                                                                                                                                                           |
+-| `formula`     | `bool`             | `True`     | Effective only when `mode="precision"`. Enables formula recognition. Passing non-default value in `mode="flash"` raises an error.                                                                                                                              |
+-| `table`       | `bool`             | `True`     | Effective only when `mode="precision"`. Enables table recognition. Passing non-default value in `mode="flash"` raises an error.                                                                                                                                |
+-
+-## Document Metadata
+-
+-Each returned `Document` includes the following metadata:
+-
+-```python
+-{
+-    "source": "report.pdf",          # original source path or URL
+-    "loader": "mineru",
+-    "output_format": "markdown",
+-    "mode": "flash",                  # flash / precision
+-    "language": "ch",
+-    "pages": None,
+-    "split_pages": True,
+-    "filename": "report.pdf",
+-    "page": 1,                       # only present when split_pages=True
+-    "page_source": "report.pdf",     # only present when split_pages=True
+-}
+-```
+-
+-## Supported File Formats
+-
+--   `precision` mode: .pdf, images, .DOC, .DOCX, .PPT, .PPTX, html
+--   `flash` mode: .pdf, images, DOCX, PPTX, XLS, XLSX
+-
+-## Limitations
+-
+--   Output format is Markdown only
+--   `flash` mode follows flash API limits (such as page/file constraints)
+--   `precision` mode requires a valid token and available account quota
+-
+-## License
+-
+-Apache-2.0
+
+From 9bd02069959b610ea2ba5d827c58254a5375aa38 Mon Sep 17 00:00:00 2001
+From: chaserRen <renzhifei1997@163.com>
+Date: Thu, 26 Mar 2026 12:00:09 +0800
+Subject: [PATCH 3/3] fix:fix code review
+
+---
+ .../nodes/documentloaders/MinerU/MinerU.ts    | 250 +++++++++++++-----
+ packages/components/package.json              |   2 +
+ 2 files changed, 179 insertions(+), 73 deletions(-)
+
+diff --git a/packages/components/nodes/documentloaders/MinerU/MinerU.ts b/packages/components/nodes/documentloaders/MinerU/MinerU.ts
+index e501c880d49..2ecf7a7ba5f 100644
+--- a/packages/components/nodes/documentloaders/MinerU/MinerU.ts
++++ b/packages/components/nodes/documentloaders/MinerU/MinerU.ts
+@@ -1,6 +1,7 @@
+ import axios from 'axios'
+-import { inflateRawSync } from 'node:zlib'
++import { createHash } from 'node:crypto'
+ import { TextSplitter } from '@langchain/textsplitters'
++import * as yauzl from 'yauzl'
+ import { getFileFromStorage, handleEscapeCharacters, INodeOutputsValue } from '../../../src'
+ import { ICommonObject, IDocument, INode, INodeData, INodeParams } from '../../../src/Interface'
+ 
+@@ -65,6 +66,9 @@ const PRECISION_ALLOWED_FORMATS_TEXT = '.pdf, images, .DOC, .DOCX, .PPT, .PPTX,
+ 
+ const POLL_MIN_INTERVAL_MS = 2000
+ const POLL_MAX_INTERVAL_MS = 30000
++const DEFAULT_TASK_CONCURRENCY = 3
++const MAX_ZIP_BUFFER_BYTES = 100 * 1024 * 1024
++const MAX_MARKDOWN_BYTES = 20 * 1024 * 1024
+ 
+ const MIME_EXTENSION_MAP: Record<string, string> = {
+     'application/pdf': 'pdf',
+@@ -318,11 +322,7 @@ class MinerU_DocumentLoaders implements INode {
+                 ? await this.buildFileTasks(nodeData, options, mode, pageRange, splitPages)
+                 : this.buildUrlTasks(nodeData, mode, pageRange, splitPages)
+ 
+-        const results: MinerUTaskResult[] = []
+-        for (const task of tasks) {
+-            const result = await this.runTask(task, config)
+-            results.push(result)
+-        }
++        const results = await this.runTasksWithConcurrency(tasks, config, DEFAULT_TASK_CONCURRENCY)
+ 
+         let docs: IDocument[] = results
+             .filter((r) => r.markdown)
+@@ -397,6 +397,21 @@ class MinerU_DocumentLoaders implements INode {
+         }
+     }
+ 
++    private async runTasksWithConcurrency(tasks: SourceTask[], config: MinerUConfig, concurrency: number): Promise<MinerUTaskResult[]> {
++        if (!tasks.length) return []
++
++        const safeConcurrency = Number.isFinite(concurrency) && concurrency > 0 ? Math.floor(concurrency) : 1
++        const results: MinerUTaskResult[] = []
++
++        for (let i = 0; i < tasks.length; i += safeConcurrency) {
++            const batch = tasks.slice(i, i + safeConcurrency)
++            const batchResults = await Promise.all(batch.map((task) => this.runTask(task, config)))
++            results.push(...batchResults)
++        }
++
++        return results
++    }
++
+     private buildUrlTasks(nodeData: INodeData, mode: MinerUMode, pageRange: string, splitPages: boolean): SourceTask[] {
+         const fileUrls = nodeData.inputs?.fileUrls as string
+         if (!fileUrls) throw new Error('File URLs are required in URL mode')
+@@ -520,7 +535,7 @@ class MinerU_DocumentLoaders implements INode {
+ 
+         const mimeMatch = contentPart.match(/^data:([^;]+);base64,/i)
+         const ext = mimeMatch?.[1] ? MIME_EXTENSION_MAP[mimeMatch[1].toLowerCase()] || 'bin' : 'bin'
+-        const guessedName = fileNameFromPayload || `upload_${Date.now()}_${index}.${ext}`
++        const guessedName = fileNameFromPayload || this.buildDeterministicUploadName(buffer, index, ext)
+ 
+         return {
+             fileName: guessedName,
+@@ -528,6 +543,12 @@ class MinerU_DocumentLoaders implements INode {
+         }
+     }
+ 
++    private buildDeterministicUploadName(buffer: Buffer, index: number, ext: string): string {
++        const digest = createHash('sha256').update(buffer).digest('hex').slice(0, 16)
++        const safeExt = ext || 'bin'
++        return `upload_${digest}_${index}.${safeExt}`
++    }
++
+     private async runTask(task: SourceTask, config: MinerUConfig): Promise<MinerUTaskResult> {
+         this.validateSourceTypeByMode(task.source, config.mode)
+ 
+@@ -807,84 +828,167 @@ class MinerU_DocumentLoaders implements INode {
+         return this.extractMarkdownFromZip(zipBuffer, source)
+     }
+ 
+-    private extractMarkdownFromZip(zipBuffer: Buffer, source: string): string {
+-        const eocdOffset = this.findEndOfCentralDirectory(zipBuffer)
+-        const centralDirectorySize = zipBuffer.readUInt32LE(eocdOffset + 12)
+-        const centralDirectoryOffset = zipBuffer.readUInt32LE(eocdOffset + 16)
+-        const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize
+-
+-        let cursor = centralDirectoryOffset
+-        while (cursor + 46 <= centralDirectoryEnd && cursor + 46 <= zipBuffer.length) {
+-            const centralSignature = zipBuffer.readUInt32LE(cursor)
+-            if (centralSignature !== 0x02014b50) break
+-
+-            const compressionMethod = zipBuffer.readUInt16LE(cursor + 10)
+-            const compressedSize = zipBuffer.readUInt32LE(cursor + 20)
+-            const fileNameLength = zipBuffer.readUInt16LE(cursor + 28)
+-            const extraFieldLength = zipBuffer.readUInt16LE(cursor + 30)
+-            const fileCommentLength = zipBuffer.readUInt16LE(cursor + 32)
+-            const localHeaderOffset = zipBuffer.readUInt32LE(cursor + 42)
+-
+-            const fileNameStart = cursor + 46
+-            const fileNameEnd = fileNameStart + fileNameLength
+-            if (fileNameEnd > zipBuffer.length) {
+-                throw new Error(`MinerU precision mode zip is invalid for ${source}`)
++    private async extractMarkdownFromZip(zipBuffer: Buffer, source: string): Promise<string> {
++        if (zipBuffer.length > MAX_ZIP_BUFFER_BYTES) {
++            throw new Error(`MinerU precision mode zip is too large for ${source} (limit: ${MAX_ZIP_BUFFER_BYTES} bytes)`)
++        }
++
++        const zipFile = await this.openZipFromBuffer(zipBuffer, source)
++        try {
++            return await this.readFirstMarkdownEntry(zipFile, source)
++        } finally {
++            zipFile.close()
++        }
++    }
++
++    private openZipFromBuffer(zipBuffer: Buffer, source: string): Promise<yauzl.ZipFile> {
++        return new Promise((resolve, reject) => {
++            yauzl.fromBuffer(zipBuffer, { lazyEntries: true, decodeStrings: true, validateEntrySizes: true }, (err, zipFile) => {
++                if (err || !zipFile) {
++                    reject(new Error(`MinerU precision mode zip parse failed for ${source}: ${err?.message || 'unknown error'}`))
++                    return
++                }
++                resolve(zipFile)
++            })
++        })
++    }
++
++    private readFirstMarkdownEntry(zipFile: yauzl.ZipFile, source: string): Promise<string> {
++        return new Promise((resolve, reject) => {
++            let isSettled = false
++
++            const fail = (err: Error): void => {
++                if (isSettled) return
++                isSettled = true
++                cleanup()
++                reject(err)
+             }
+-            const fileName = zipBuffer.subarray(fileNameStart, fileNameEnd).toString('utf-8')
+ 
+-            if (fileName.toLowerCase().endsWith('.md')) {
+-                const markdownBuffer = this.readZipEntry(zipBuffer, localHeaderOffset, compressedSize, compressionMethod, source)
+-                return markdownBuffer.toString('utf-8')
++            const succeed = (markdown: string): void => {
++                if (isSettled) return
++                isSettled = true
++                cleanup()
++                resolve(markdown)
+             }
+ 
+-            cursor = fileNameEnd + extraFieldLength + fileCommentLength
+-        }
++            const cleanup = (): void => {
++                zipFile.removeListener('entry', onEntry)
++                zipFile.removeListener('error', onError)
++                zipFile.removeListener('end', onEnd)
++            }
+ 
+-        throw new Error(`MinerU precision mode zip has no markdown file for ${source}`)
+-    }
++            const onError = (err: Error): void => {
++                fail(new Error(`MinerU precision mode zip parse failed for ${source}: ${err.message}`))
++            }
+ 
+-    private findEndOfCentralDirectory(zipBuffer: Buffer): number {
+-        const minOffset = Math.max(0, zipBuffer.length - 65557)
+-        for (let i = zipBuffer.length - 22; i >= minOffset; i -= 1) {
+-            if (zipBuffer.readUInt32LE(i) === 0x06054b50) {
+-                return i
++            const onEnd = (): void => {
++                fail(new Error(`MinerU precision mode zip has no markdown file for ${source}`))
+             }
+-        }
+-        throw new Error('MinerU precision mode zip parse failed: EOCD not found')
++
++            const onEntry = (entry: yauzl.Entry): void => {
++                const fileName = entry.fileName || ''
++
++                if (/\/$/.test(fileName) || !this.isMarkdownEntry(fileName)) {
++                    zipFile.readEntry()
++                    return
++                }
++
++                if (entry.uncompressedSize > MAX_MARKDOWN_BYTES) {
++                    fail(
++                        new Error(
++                            `MinerU precision mode markdown entry exceeds size limit for ${source} (limit: ${MAX_MARKDOWN_BYTES} bytes)`
++                        )
++                    )
++                    return
++                }
++
++                zipFile.openReadStream(entry, (err, stream) => {
++                    if (err || !stream) {
++                        fail(
++                            new Error(
++                                `MinerU precision mode failed to read markdown entry for ${source}: ${err?.message || 'unknown error'}`
++                            )
++                        )
++                        return
++                    }
++
++                    this.readEntryBufferWithLimit(stream, MAX_MARKDOWN_BYTES, source)
++                        .then((buffer) => {
++                            succeed(buffer.toString('utf-8'))
++                        })
++                        .catch((readErr: Error) => {
++                            fail(readErr)
++                        })
++                })
++            }
++
++            zipFile.on('entry', onEntry)
++            zipFile.on('error', onError)
++            zipFile.on('end', onEnd)
++            zipFile.readEntry()
++        })
+     }
+ 
+-    private readZipEntry(
+-        zipBuffer: Buffer,
+-        localHeaderOffset: number,
+-        compressedSize: number,
+-        compressionMethod: number,
+-        source: string
+-    ): Buffer {
+-        if (localHeaderOffset + 30 > zipBuffer.length) {
+-            throw new Error(`MinerU precision mode zip local header out of range for ${source}`)
+-        }
++    private readEntryBufferWithLimit(stream: NodeJS.ReadableStream, maxBytes: number, source: string): Promise<Buffer> {
++        return new Promise((resolve, reject) => {
++            const chunks: Buffer[] = []
++            let totalBytes = 0
++            let isSettled = false
++
++            const fail = (err: Error): void => {
++                if (isSettled) return
++                isSettled = true
++                cleanup()
++                reject(err)
++            }
+ 
+-        const localSignature = zipBuffer.readUInt32LE(localHeaderOffset)
+-        if (localSignature !== 0x04034b50) {
+-            throw new Error(`MinerU precision mode invalid local header signature for ${source}`)
+-        }
++            const succeed = (buffer: Buffer): void => {
++                if (isSettled) return
++                isSettled = true
++                cleanup()
++                resolve(buffer)
++            }
+ 
+-        const fileNameLength = zipBuffer.readUInt16LE(localHeaderOffset + 26)
+-        const extraFieldLength = zipBuffer.readUInt16LE(localHeaderOffset + 28)
+-        const dataStart = localHeaderOffset + 30 + fileNameLength + extraFieldLength
+-        const dataEnd = dataStart + compressedSize
+-        if (dataEnd > zipBuffer.length) {
+-            throw new Error(`MinerU precision mode zip entry out of range for ${source}`)
+-        }
++            const cleanup = (): void => {
++                stream.removeListener('data', onData)
++                stream.removeListener('error', onError)
++                stream.removeListener('end', onEnd)
++            }
+ 
+-        const compressedData: Buffer = Buffer.from(zipBuffer.subarray(dataStart, dataEnd))
+-        if (compressionMethod === 0) {
+-            return compressedData
+-        }
+-        if (compressionMethod === 8) {
+-            return inflateRawSync(compressedData)
+-        }
+-        throw new Error(`MinerU precision mode unsupported zip compression method: ${compressionMethod}`)
++            const onData = (chunk: Buffer | string): void => {
++                const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
++                totalBytes += chunkBuffer.length
++                if (totalBytes > maxBytes) {
++                    const overflowError = new Error(
++                        `MinerU precision mode markdown content too large for ${source} (limit: ${maxBytes} bytes)`
++                    )
++                    const streamWithDestroy = stream as NodeJS.ReadableStream & { destroy?: (error?: Error) => void }
++                    if (typeof streamWithDestroy.destroy === 'function') {
++                        streamWithDestroy.destroy(overflowError)
++                    } else {
++                        fail(overflowError)
++                    }
++                    return
++                }
++                chunks.push(chunkBuffer)
++            }
++
++            const onError = (err: Error): void => {
++                fail(err)
++            }
++
++            const onEnd = (): void => {
++                succeed(Buffer.concat(chunks, totalBytes))
++            }
++
++            stream.on('data', onData)
++            stream.on('error', onError)
++            stream.on('end', onEnd)
++        })
++    }
++
++    private isMarkdownEntry(fileName: string): boolean {
++        return fileName.toLowerCase().endsWith('.md')
+     }
+ 
+     private buildAccurateOptions(config: MinerUPrecisionConfig, pageRange?: string): Record<string, unknown> {
+diff --git a/packages/components/package.json b/packages/components/package.json
+index 2c970f7d2fb..f3bfa40dbae 100644
+--- a/packages/components/package.json
++++ b/packages/components/package.json
+@@ -175,6 +175,7 @@
+         "winston": "^3.9.0",
+         "ws": "^8.18.0",
+         "xlsx": "0.18.5",
++        "yauzl": "^3.2.0",
+         "zod": "^3.25.76 || ^4",
+         "zod-to-json-schema": "^3.24.6"
+     },
+@@ -188,6 +189,7 @@
+         "@types/object-hash": "^3.0.2",
+         "@types/papaparse": "^5.3.15",
+         "@types/pg": "^8.10.2",
++        "@types/yauzl": "^2.10.3",
+         "@types/ws": "^8.5.3",
+         "gulp": "^4.0.2",
+         "jest": "^29.7.0",

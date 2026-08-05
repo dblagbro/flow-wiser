@@ -1,0 +1,281 @@
+From 8e67a89bd48d057edbaa35ec7757cdc29758ad5c Mon Sep 17 00:00:00 2001
+From: cuidong233 <cuidong111@gmail.com>
+Date: Thu, 11 Jun 2026 18:08:20 +0800
+Subject: [PATCH] fix(ui): prevent duplicate chatflow saves
+
+---
+ .../ui-component/dialog/SaveChatflowDialog.jsx | 18 +++++++++++-------
+ packages/ui/src/views/agentflowsv2/Canvas.jsx  | 11 +++++++++++
+ packages/ui/src/views/canvas/CanvasHeader.jsx  | 13 +++++++++----
+ packages/ui/src/views/canvas/index.jsx         | 15 +++++++++++++++
+ 4 files changed, 46 insertions(+), 11 deletions(-)
+
+diff --git a/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx b/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
+index e567132899f..dc63e45dfd3 100644
+--- a/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
++++ b/packages/ui/src/ui-component/dialog/SaveChatflowDialog.jsx
+@@ -5,7 +5,7 @@ import PropTypes from 'prop-types'
+ import { Button, Dialog, DialogActions, DialogContent, OutlinedInput, DialogTitle } from '@mui/material'
+ import { StyledButton } from '@/ui-component/button/StyledButton'
+ 
+-const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
++const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm, isSubmitting }) => {
+     const portalElement = document.getElementById('portal')
+ 
+     const [chatflowName, setChatflowName] = useState('')
+@@ -21,9 +21,10 @@ const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
+             open={show}
+             fullWidth
+             maxWidth='xs'
+-            onClose={onCancel}
++            onClose={isSubmitting ? undefined : onCancel}
+             aria-labelledby='alert-dialog-title'
+             aria-describedby='alert-dialog-description'
++            disableEscapeKeyDown={isSubmitting}
+             disableRestoreFocus // needed due to StrictMode
+         >
+             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
+@@ -41,14 +42,16 @@ const SaveChatflowDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
+                     value={chatflowName}
+                     onChange={(e) => setChatflowName(e.target.value)}
+                     onKeyDown={(e) => {
+-                        if (isReadyToSave && e.key === 'Enter') onConfirm(e.target.value)
++                        if (!isSubmitting && isReadyToSave && e.key === 'Enter') onConfirm(e.target.value)
+                     }}
+                 />
+             </DialogContent>
+             <DialogActions>
+-                <Button onClick={onCancel}>{dialogProps.cancelButtonName}</Button>
+-                <StyledButton disabled={!isReadyToSave} variant='contained' onClick={() => onConfirm(chatflowName)}>
+-                    {dialogProps.confirmButtonName}
++                <Button disabled={isSubmitting} onClick={onCancel}>
++                    {dialogProps.cancelButtonName}
++                </Button>
++                <StyledButton disabled={!isReadyToSave || isSubmitting} variant='contained' onClick={() => onConfirm(chatflowName)}>
++                    {isSubmitting ? 'Saving...' : dialogProps.confirmButtonName}
+                 </StyledButton>
+             </DialogActions>
+         </Dialog>
+@@ -61,7 +64,8 @@ SaveChatflowDialog.propTypes = {
+     show: PropTypes.bool,
+     dialogProps: PropTypes.object,
+     onCancel: PropTypes.func,
+-    onConfirm: PropTypes.func
++    onConfirm: PropTypes.func,
++    isSubmitting: PropTypes.bool
+ }
+ 
+ export default SaveChatflowDialog
+diff --git a/packages/ui/src/views/agentflowsv2/Canvas.jsx b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+index 962562c28c2..c500bd78fff 100644
+--- a/packages/ui/src/views/agentflowsv2/Canvas.jsx
++++ b/packages/ui/src/views/agentflowsv2/Canvas.jsx
+@@ -125,6 +125,7 @@ const AgentflowCanvas = () => {
+     const createNewChatflowApi = useApi(chatflowsApi.createNewChatflow)
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+     const getSpecificChatflowApi = useApi(chatflowsApi.getSpecificChatflow)
++    const saveInProgressRef = useRef(false)
+ 
+     // ==============================|| Events & Actions ||============================== //
+ 
+@@ -217,6 +218,9 @@ const AgentflowCanvas = () => {
+     }
+ 
+     const handleSaveFlow = (chatflowName) => {
++        if (saveInProgressRef.current || createNewChatflowApi.loading || updateChatflowApi.loading) return
++        saveInProgressRef.current = true
++
+         if (reactFlowInstance) {
+             const nodes = reactFlowInstance.getNodes().map((node) => {
+                 const nodeData = cloneDeep(node.data)
+@@ -252,6 +256,8 @@ const AgentflowCanvas = () => {
+                 }
+                 updateChatflowApi.request(chatflow.id, updateBody)
+             }
++        } else {
++            saveInProgressRef.current = false
+         }
+     }
+ 
+@@ -555,11 +561,13 @@ const AgentflowCanvas = () => {
+     // Create new chatflow successful
+     useEffect(() => {
+         if (createNewChatflowApi.data) {
++            saveInProgressRef.current = false
+             const chatflow = createNewChatflowApi.data
+             dispatch({ type: SET_CHATFLOW, chatflow })
+             saveChatflowSuccess()
+             window.history.replaceState(state, null, `/v2/agentcanvas/${chatflow.id}`)
+         } else if (createNewChatflowApi.error) {
++            saveInProgressRef.current = false
+             errorFailed(`Failed to save ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
+         }
+ 
+@@ -569,9 +577,11 @@ const AgentflowCanvas = () => {
+     // Update chatflow successful
+     useEffect(() => {
+         if (updateChatflowApi.data) {
++            saveInProgressRef.current = false
+             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
+             saveChatflowSuccess()
+         } else if (updateChatflowApi.error) {
++            saveInProgressRef.current = false
+             errorFailed(`Failed to save ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
+         }
+ 
+@@ -711,6 +721,7 @@ const AgentflowCanvas = () => {
+                             handleLoadFlow={handleLoadFlow}
+                             isAgentCanvas={true}
+                             isAgentflowV2={true}
++                            isSaveLoading={createNewChatflowApi.loading || updateChatflowApi.loading}
+                         />
+                     </Toolbar>
+                 </AppBar>
+diff --git a/packages/ui/src/views/canvas/CanvasHeader.jsx b/packages/ui/src/views/canvas/CanvasHeader.jsx
+index ea455f41c2e..b6a35cac955 100644
+--- a/packages/ui/src/views/canvas/CanvasHeader.jsx
++++ b/packages/ui/src/views/canvas/CanvasHeader.jsx
+@@ -120,7 +120,7 @@ const LockedScheduleSwitch = styled(ScheduleSwitch, { shouldForwardProp: (prop)
+ 
+ // ==============================|| CANVAS HEADER ||============================== //
+ 
+-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
++const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, isSaveLoading, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
+     const theme = useTheme()
+     const dispatch = useDispatch()
+     const navigate = useNavigate()
+@@ -319,11 +319,13 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+     }
+ 
+     const onSaveChatflowClick = () => {
++        if (isSaveLoading) return
+         if (chatflow.id) handleSaveFlow(flowName)
+         else setFlowDialogOpen(true)
+     }
+ 
+     const onConfirmSaveName = (flowName) => {
++        if (isSaveLoading) return
+         setFlowDialogOpen(false)
+         setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
+         handleSaveFlow(flowName)
+@@ -593,7 +595,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+                         </ButtonBase>
+                     )}
+                     <Available permission={savePermission}>
+-                        <ButtonBase title={`Save ${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
++                        <ButtonBase disabled={isSaveLoading} title={`Save ${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
+                             <Avatar
+                                 variant='rounded'
+                                 sx={{
+@@ -605,7 +607,8 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+                                     '&:hover': {
+                                         background: theme.palette.canvasHeader.saveDark,
+                                         color: theme.palette.canvasHeader.saveLight
+-                                    }
++                                    },
++                                    opacity: isSaveLoading ? 0.6 : 1
+                                 }}
+                                 color='inherit'
+                                 onClick={onSaveChatflowClick}
+@@ -653,6 +656,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow,
+                 }}
+                 onCancel={() => setFlowDialogOpen(false)}
+                 onConfirm={onConfirmSaveName}
++                isSubmitting={isSaveLoading}
+             />
+             {apiDialogOpen && <APICodeDialog show={apiDialogOpen} dialogProps={apiDialogProps} onCancel={() => setAPIDialogOpen(false)} />}
+             <ViewMessagesDialog
+@@ -690,7 +694,8 @@ CanvasHeader.propTypes = {
+     handleDeleteFlow: PropTypes.func,
+     handleLoadFlow: PropTypes.func,
+     isAgentCanvas: PropTypes.bool,
+-    isAgentflowV2: PropTypes.bool
++    isAgentflowV2: PropTypes.bool,
++    isSaveLoading: PropTypes.bool
+ }
+ 
+ export default CanvasHeader
+diff --git a/packages/ui/src/views/canvas/index.jsx b/packages/ui/src/views/canvas/index.jsx
+index 8835706ecf3..aa3d8112595 100644
+--- a/packages/ui/src/views/canvas/index.jsx
++++ b/packages/ui/src/views/canvas/index.jsx
+@@ -113,6 +113,7 @@ const Canvas = () => {
+     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
+     const getSpecificChatflowApi = useApi(chatflowsApi.getSpecificChatflow)
+     const getHasChatflowChangedApi = useApi(chatflowsApi.getHasChatflowChanged)
++    const saveInProgressRef = useRef(false)
+ 
+     // ==============================|| Events & Actions ||============================== //
+ 
+@@ -209,6 +210,10 @@ const Canvas = () => {
+     }
+ 
+     const handleSaveFlow = async (chatflowName) => {
++        if (saveInProgressRef.current || createNewChatflowApi.loading || updateChatflowApi.loading || getHasChatflowChangedApi.loading)
++            return
++        saveInProgressRef.current = true
++
+         if (reactFlowInstance) {
+             const nodes = reactFlowInstance.getNodes().map((node) => {
+                 const nodeData = cloneDeep(node.data)
+@@ -241,6 +246,8 @@ const Canvas = () => {
+                 setFlowData(flowData)
+                 getHasChatflowChangedApi.request(chatflow.id, lastUpdatedDateTime)
+             }
++        } else {
++            saveInProgressRef.current = false
+         }
+     }
+ 
+@@ -429,11 +436,13 @@ const Canvas = () => {
+     // Create new chatflow successful
+     useEffect(() => {
+         if (createNewChatflowApi.data) {
++            saveInProgressRef.current = false
+             const chatflow = createNewChatflowApi.data
+             dispatch({ type: SET_CHATFLOW, chatflow })
+             saveChatflowSuccess()
+             window.history.replaceState(state, null, `/${isAgentCanvas ? 'agentcanvas' : 'canvas'}/${chatflow.id}`)
+         } else if (createNewChatflowApi.error) {
++            saveInProgressRef.current = false
+             errorFailed(`Failed to retrieve ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
+         }
+ 
+@@ -443,10 +452,12 @@ const Canvas = () => {
+     // Update chatflow successful
+     useEffect(() => {
+         if (updateChatflowApi.data) {
++            saveInProgressRef.current = false
+             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
+             setLasUpdatedDateTime(updateChatflowApi.data.updatedDate)
+             saveChatflowSuccess()
+         } else if (updateChatflowApi.error) {
++            saveInProgressRef.current = false
+             errorFailed(`Failed to retrieve ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
+         }
+ 
+@@ -466,6 +477,7 @@ const Canvas = () => {
+                 const isConfirmed = await confirm(confirmPayload)
+ 
+                 if (!isConfirmed) {
++                    saveInProgressRef.current = false
+                     return
+                 }
+             }
+@@ -478,6 +490,8 @@ const Canvas = () => {
+ 
+         if (getHasChatflowChangedApi.data) {
+             checkIfHasChanged()
++        } else if (getHasChatflowChangedApi.error) {
++            saveInProgressRef.current = false
+         }
+ 
+         // eslint-disable-next-line react-hooks/exhaustive-deps
+@@ -577,6 +591,7 @@ const Canvas = () => {
+                             handleDeleteFlow={handleDeleteFlow}
+                             handleLoadFlow={handleLoadFlow}
+                             isAgentCanvas={isAgentCanvas}
++                            isSaveLoading={createNewChatflowApi.loading || updateChatflowApi.loading || getHasChatflowChangedApi.loading}
+                         />
+                     </Toolbar>
+                 </AppBar>

@@ -1,0 +1,117 @@
+From 270db439a46bdf5589b8413084cda2a7a4fe7357 Mon Sep 17 00:00:00 2001
+From: Dexterity104 <hatanokanjiro@gmail.com>
+Date: Fri, 3 Apr 2026 10:35:23 +0000
+Subject: [PATCH 1/2] feat(agentflow): add output structure options for
+ iteration results
+
+---
+ .../nodes/agentflow/Iteration/Iteration.ts    | 23 ++++++++++++++++++-
+ packages/server/src/utils/buildAgentflow.ts   |  8 +++++--
+ 2 files changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/packages/components/nodes/agentflow/Iteration/Iteration.ts b/packages/components/nodes/agentflow/Iteration/Iteration.ts
+index 145602b93e7..92119fa7ba6 100644
+--- a/packages/components/nodes/agentflow/Iteration/Iteration.ts
++++ b/packages/components/nodes/agentflow/Iteration/Iteration.ts
+@@ -32,6 +32,25 @@ class Iteration_Agentflow implements INode {
+                 description: 'The input array to iterate over',
+                 acceptVariable: true,
+                 rows: 4
++            },
++            {
++                label: 'Output Structure',
++                name: 'iterationOutputStructure',
++                type: 'options',
++                description: 'How to structure the output from all iterations',
++                options: [
++                    {
++                        label: 'Aggregated Text',
++                        name: 'aggregatedText',
++                        description: 'Join all iteration outputs into a single text separated by newlines'
++                    },
++                    {
++                        label: 'JSON Array',
++                        name: 'jsonArray',
++                        description: 'Preserve the input array structure — output[i] corresponds to the result of processing input[i]'
++                    }
++                ],
++                default: 'aggregatedText'
+             }
+         ]
+     }
+@@ -56,13 +75,15 @@ class Iteration_Agentflow implements INode {
+             throw new Error('Invalid input array')
+         }
+ 
++        const iterationOutputStructure = nodeData.inputs?.iterationOutputStructure ?? 'aggregatedText'
+         const state = options.agentflowRuntime?.state as ICommonObject
+ 
+         const returnOutput = {
+             id: nodeData.id,
+             name: this.name,
+             input: {
+-                iterationInput: iterationInputArray
++                iterationInput: iterationInputArray,
++                iterationOutputStructure
+             },
+             output: {},
+             state
+diff --git a/packages/server/src/utils/buildAgentflow.ts b/packages/server/src/utils/buildAgentflow.ts
+index c6c91caf80f..ad4336418bc 100644
+--- a/packages/server/src/utils/buildAgentflow.ts
++++ b/packages/server/src/utils/buildAgentflow.ts
+@@ -1243,6 +1243,7 @@ const executeNode = async ({
+                 }
+ 
+                 // Initialize array to collect results from iterations
++                const outputStructure = results.input?.iterationOutputStructure ?? 'aggregatedText'
+                 const iterationResults: string[] = []
+ 
+                 // Execute sub-flow for each item in the iteration array
+@@ -1289,9 +1290,12 @@ const executeNode = async ({
+                             productId
+                         })
+ 
+-                        // Store the result
++                        // Store the result.
++                        // In jsonArray mode, always push to maintain 1:1 mapping with the input array.
+                         if (subFlowResult?.text) {
+                             iterationResults.push(subFlowResult.text)
++                        } else if (outputStructure === 'jsonArray') {
++                            iterationResults.push('')
+                         }
+ 
+                         // Add executed data from sub-flow to main execution data with appropriate iteration context
+@@ -1351,7 +1355,7 @@ const executeNode = async ({
+                 results.output = {
+                     ...(results.output || {}),
+                     iterationResults,
+-                    content: iterationResults.join('\n')
++                    content: outputStructure === 'jsonArray' ? JSON.stringify(iterationResults) : iterationResults.join('\n')
+                 }
+ 
+                 logger.debug(`  📊 Completed all iterations. Total results: ${iterationResults.length}`)
+
+From 60d784b5aed462781c80080f1edfec1139d7bafe Mon Sep 17 00:00:00 2001
+From: Dexterity104 <hatanokanjiro@gmail.com>
+Date: Wed, 8 Apr 2026 17:23:17 +0000
+Subject: [PATCH 2/2] chore(agentflow): update version number to 1.1 for
+ Iteration component
+
+---
+ packages/components/nodes/agentflow/Iteration/Iteration.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/components/nodes/agentflow/Iteration/Iteration.ts b/packages/components/nodes/agentflow/Iteration/Iteration.ts
+index 92119fa7ba6..fc11b55e994 100644
+--- a/packages/components/nodes/agentflow/Iteration/Iteration.ts
++++ b/packages/components/nodes/agentflow/Iteration/Iteration.ts
+@@ -18,7 +18,7 @@ class Iteration_Agentflow implements INode {
+     constructor() {
+         this.label = 'Iteration'
+         this.name = 'iterationAgentflow'
+-        this.version = 1.0
++        this.version = 1.1
+         this.type = 'Iteration'
+         this.category = 'Agent Flows'
+         this.description = 'Execute the nodes within the iteration block through N iterations'

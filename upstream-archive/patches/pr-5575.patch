@@ -1,0 +1,729 @@
+From 1e71f7e290a60fa44bdb52f6d124994b6dc62077 Mon Sep 17 00:00:00 2001
+From: Atharva Domale <115187316+AtharvaDomale@users.noreply.github.com>
+Date: Fri, 12 Dec 2025 18:50:57 +0000
+Subject: [PATCH 1/2] Added Marathi translation for ReCONTRIBUTING.md
+
+---
+ CONTRIBUTING.md | 284 ++++++++++++++++++++++++++++--------------------
+ README.md       | 228 ++++++++++++++++++--------------------
+ 2 files changed, 270 insertions(+), 242 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index c939d1a2264..d9ad3d3a753 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -1,180 +1,228 @@
+ <!-- markdownlint-disable MD030 -->
+ 
+-# Contributing to Flowise
++# Flowise मध्ये योगदान देणे
+ 
+ English | [中文](./i18n/CONTRIBUTING-ZH.md)
+ 
+-We appreciate any form of contributions.
++आम्ही कोणत्याही स्वरूपातील योगदानांचे स्वागत करतो.
+ 
+-## ⭐ Star
++## ⭐ स्टार द्या
+ 
+-Star and share the [Github Repo](https://github.com/FlowiseAI/Flowise).
++GitHub वरील Flowise रिपॉझिटरीला स्टार द्या आणि शेअर करा:  
++https://github.com/FlowiseAI/Flowise
+ 
+-## 🙋 Q&A
++## 🙋 प्रश्न व उत्तरे
+ 
+-Search up for any questions in [Q&A section](https://github.com/FlowiseAI/Flowise/discussions/categories/q-a), if you can't find one, don't hesitate to create one. It might helps others that have similar question.
++प्रश्न असल्यास सर्वप्रथम येथे शोधा:  
++https://github.com/FlowiseAI/Flowise/discussions/categories/q-a
+ 
+-## 🙌 Share Chatflow
++उत्तर न मिळाल्यास नवीन प्रश्न तयार करा — यामुळे इतरांनाही मदत होऊ शकते.
+ 
+-Yes! Sharing how you use Flowise is a way of contribution. Export your chatflow as JSON, attach a screenshot and share it in [Show and Tell section](https://github.com/FlowiseAI/Flowise/discussions/categories/show-and-tell).
++## 🙌 तुमचा Chatflow शेअर करा
+ 
+-## 💡 Ideas
++होय! Flowise वापरण्याचा तुमचा मार्ग शेअर करणे म्हणजे एक महत्त्वाचे योगदान आहे.
+ 
+-Ideas are welcome such as new feature, apps integration, and blockchain networks. Submit in [Ideas section](https://github.com/FlowiseAI/Flowise/discussions/categories/ideas).
++- तुमचा Chatflow JSON म्हणून एक्सपोर्ट करा  
++- स्क्रीनशॉट जोडा  
++- “Show and Tell” मध्ये शेअर करा  
+ 
+-## 🐞 Report Bugs
++👉 https://github.com/FlowiseAI/Flowise/discussions/categories/show-and-tell
+ 
+-Found an issue? [Report it](https://github.com/FlowiseAI/Flowise/issues/new/choose).
++## 💡 नवीन कल्पना
+ 
+-## 👨‍💻 Contribute to Code
++नवीन फीचर्स, ऍप इंटिग्रेशन, ब्लॉकचेन नेटवर्क इत्यादी सर्व कल्पना स्वागतार्ह आहेत.
+ 
+-Not sure what to contribute? Some ideas:
++कल्पना सबमिट करा:  
++👉 https://github.com/FlowiseAI/Flowise/discussions/categories/ideas
+ 
+--   Create new components from `packages/components`
+--   Update existing components such as extending functionality, fixing bugs
+--   Add new chatflow ideas
++## 🐞 बग रिपोर्ट करा
+ 
+-### Developers
++एखादी समस्या आढळली? येथे रिपोर्ट करा:  
++👉 https://github.com/FlowiseAI/Flowise/issues/new/choose
+ 
+-Flowise has 3 different modules in a single mono repository.
++## 👨‍💻 कोडमध्ये योगदान
+ 
+--   `server`: Node backend to serve API logics
+--   `ui`: React frontend
+--   `components`: Third-party nodes integrations
++कशात योगदान द्यावे हे ठरत नसेल तर काही कल्पना:
+ 
+-#### Prerequisite
++- `packages/components` मध्ये नवीन कॉम्पोनंट्स तयार करा  
++- विद्यमान कॉम्पोनंट्स अपडेट करा / फीचर्स वाढवा / बग दुरुस्त करा  
++- नवीन chatflow templates जोडा  
+ 
+--   Install [PNPM](https://pnpm.io/installation). The project is configured to use pnpm v9.
+-    ```bash
+-    npm i -g pnpm
+-    ```
++---
+ 
+-#### Step by step
++## 👨‍💻 डेव्हलपर्स
+ 
+-1. Fork the official [Flowise Github Repository](https://github.com/FlowiseAI/Flowise).
++Flowise एक Mono-Repo आहे ज्यामध्ये तीन मुख्य मॉड्यूल्स आहेत:
+ 
+-2. Clone your forked repository.
++- `server`: API लॉजिकसाठी Node backend  
++- `ui`: React फ्रंटएंड  
++- `components`: तृतीय-पक्ष इंटिग्रेशन नोड्स  
+ 
+-3. Create a new branch, see [guide](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-and-deleting-branches-within-your-repository). Naming conventions:
++### पूर्वअट
+ 
+-    - For feature branch: `feature/<Your New Feature>`
+-    - For bug fix branch: `bugfix/<Your New Bugfix>`.
++PNPM इन्स्टॉल करा (प्रकल्प PNPM v9 वापरतो)
+ 
+-4. Switch to the newly created branch.
++```bash
++npm i -g pnpm
++```
+ 
+-5. Go into repository folder
++---
+ 
+-    ```bash
+-    cd Flowise
+-    ```
++## 🔧 Step-by-Step योगदान प्रक्रिया
+ 
+-6. Install all dependencies of all modules:
++### 1. Flowise ची अधिकृत GitHub रिपॉझिटरी Fork करा  
++👉 https://github.com/FlowiseAI/Flowise
+ 
+-    ```bash
+-    pnpm install
+-    ```
++### 2. तुमची Fork केलेली रिपॉझिटरी Clone करा
+ 
+-7. Build all the code:
++### 3. नवीन Branch तयार करा  
++नाव देण्याचे नियम:
+ 
+-    ```bash
+-    pnpm build
+-    ```
++- फीचर साठी: `feature/<feature-name>`
++- बग फिक्ससाठी: `bugfix/<bug-name>`
+ 
+-8. Start the app on [http://localhost:3000](http://localhost:3000)
++### 4. नवीन branch वर स्विच करा
+ 
+-    ```bash
+-    pnpm start
+-    ```
++### 5. प्रोजेक्ट फोल्डरमध्ये जा:
+ 
+-9. For development:
++```bash
++cd Flowise
++```
+ 
+-    - Create `.env` file and specify the `VITE_PORT` (refer to `.env.example`) in `packages/ui`
+-    - Create `.env` file and specify the `PORT` (refer to `.env.example`) in `packages/server`
+-    - Run
++### 6. सर्व dependencies इन्स्टॉल करा:
+ 
+-    ```bash
+-    pnpm dev
+-    ```
++```bash
++pnpm install
++```
+ 
+-    Any changes made in `packages/ui` or `packages/server` will be reflected on [http://localhost:8080](http://localhost:8080)
++### 7. प्रोजेक्ट build करा:
++
++```bash
++pnpm build
++```
+ 
+-    For changes made in `packages/components`, run `pnpm build` again to pickup the changes.
++### 8. अॅप सुरू करा (production मोड)
+ 
+-10. After making all the changes, run
++```bash
++pnpm start
++```
+ 
+-    ```bash
+-    pnpm build
+-    ```
++भेट द्या: http://localhost:3000
+ 
+-    and
++---
+ 
+-    ```bash
+-    pnpm start
+-    ```
++## 🧑‍💻 Development चालवणे
+ 
+-    to make sure everything works fine in production.
++- `packages/ui` मध्ये `.env` तयार करा आणि `VITE_PORT` सेट करा  
++- `packages/server` मध्ये `.env` तयार करा आणि `PORT` सेट करा  
+ 
+-11. Commit code and submit Pull Request from forked branch pointing to [Flowise main](https://github.com/FlowiseAI/Flowise/tree/main).
++डेव्ह मोड:
+ 
+-## 🌱 Env Variables
++```bash
++pnpm dev
++```
+ 
+-Flowise support different environment variables to configure your instance. You can specify the following variables in the `.env` file inside `packages/server` folder. Read [more](https://docs.flowiseai.com/environment-variables)
++UI किंवा Server मधील बदल येथे दिसतील:  
++👉 http://localhost:8080
+ 
+-| Variable                           | Description                                                                                                                                                                                                                                                                       | Type                                             | Default                             |
+-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------- |
+-| PORT                               | The HTTP port Flowise runs on                                                                                                                                                                                                                                                     | Number                                           | 3000                                |
+-| CORS_ORIGINS                       | The allowed origins for all cross-origin HTTP calls                                                                                                                                                                                                                               | String                                           |                                     |
+-| IFRAME_ORIGINS                     | The allowed origins for iframe src embedding                                                                                                                                                                                                                                      | String                                           |                                     |
+-| FLOWISE_FILE_SIZE_LIMIT            | Upload File Size Limit                                                                                                                                                                                                                                                            | String                                           | 50mb                                |
+-| DEBUG                              | Print logs from components                                                                                                                                                                                                                                                        | Boolean                                          |                                     |
+-| LOG_PATH                           | Location where log files are stored                                                                                                                                                                                                                                               | String                                           | `your-path/Flowise/logs`            |
+-| LOG_LEVEL                          | Different levels of logs                                                                                                                                                                                                                                                          | Enum String: `error`, `info`, `verbose`, `debug` | `info`                              |
+-| LOG_JSON_SPACES                    | Spaces to beautify JSON logs                                                                                                                                                                                                                                                      |                                                  | 2                                   |
+-| TOOL_FUNCTION_BUILTIN_DEP          | NodeJS built-in modules to be used for Custom Tool or Function                                                                                                                                                                                                                    | String                                           |                                     |
+-| TOOL_FUNCTION_EXTERNAL_DEP         | External modules to be used for Custom Tool or Function                                                                                                                                                                                                                           | String                                           |                                     |
+-| ALLOW_BUILTIN_DEP                  | Allow project dependencies to be used for Custom Tool or Function                                                                                                                                                                                                                 | Boolean                                          | false                               |
+-| DATABASE_TYPE                      | Type of database to store the flowise data                                                                                                                                                                                                                                        | Enum String: `sqlite`, `mysql`, `postgres`       | `sqlite`                            |
+-| DATABASE_PATH                      | Location where database is saved (When DATABASE_TYPE is sqlite)                                                                                                                                                                                                                   | String                                           | `your-home-dir/.flowise`            |
+-| DATABASE_HOST                      | Host URL or IP address (When DATABASE_TYPE is not sqlite)                                                                                                                                                                                                                         | String                                           |                                     |
+-| DATABASE_PORT                      | Database port (When DATABASE_TYPE is not sqlite)                                                                                                                                                                                                                                  | String                                           |                                     |
+-| DATABASE_USER                      | Database username (When DATABASE_TYPE is not sqlite)                                                                                                                                                                                                                              | String                                           |                                     |
+-| DATABASE_PASSWORD                  | Database password (When DATABASE_TYPE is not sqlite)                                                                                                                                                                                                                              | String                                           |                                     |
+-| DATABASE_NAME                      | Database name (When DATABASE_TYPE is not sqlite)                                                                                                                                                                                                                                  | String                                           |                                     |
+-| DATABASE_SSL_KEY_BASE64            | Database SSL client cert in base64 (takes priority over DATABASE_SSL)                                                                                                                                                                                                             | Boolean                                          | false                               |
+-| DATABASE_SSL                       | Database connection overssl (When DATABASE_TYPE is postgre)                                                                                                                                                                                                                       | Boolean                                          | false                               |
+-| SECRETKEY_PATH                     | Location where encryption key (used to encrypt/decrypt credentials) is saved                                                                                                                                                                                                      | String                                           | `your-path/Flowise/packages/server` |
+-| FLOWISE_SECRETKEY_OVERWRITE        | Encryption key to be used instead of the key stored in SECRETKEY_PATH                                                                                                                                                                                                             | String                                           |                                     |
+-| MODEL_LIST_CONFIG_JSON             | File path to load list of models from your local config file                                                                                                                                                                                                                      | String                                           | `/your_model_list_config_file_path` |
+-| STORAGE_TYPE                       | Type of storage for uploaded files. default is `local`                                                                                                                                                                                                                            | Enum String: `s3`, `local`, `gcs`                | `local`                             |
+-| BLOB_STORAGE_PATH                  | Local folder path where uploaded files are stored when `STORAGE_TYPE` is `local`                                                                                                                                                                                                  | String                                           | `your-home-dir/.flowise/storage`    |
+-| S3_STORAGE_BUCKET_NAME             | Bucket name to hold the uploaded files when `STORAGE_TYPE` is `s3`                                                                                                                                                                                                                | String                                           |                                     |
+-| S3_STORAGE_ACCESS_KEY_ID           | AWS Access Key                                                                                                                                                                                                                                                                    | String                                           |                                     |
+-| S3_STORAGE_SECRET_ACCESS_KEY       | AWS Secret Key                                                                                                                                                                                                                                                                    | String                                           |                                     |
+-| S3_STORAGE_REGION                  | Region for S3 bucket                                                                                                                                                                                                                                                              | String                                           |                                     |
+-| S3_ENDPOINT_URL                    | Custom Endpoint for S3                                                                                                                                                                                                                                                            | String                                           |                                     |
+-| S3_FORCE_PATH_STYLE                | Set this to true to force the request to use path-style addressing                                                                                                                                                                                                                | Boolean                                          | false                               |
+-| GOOGLE_CLOUD_STORAGE_PROJ_ID       | The GCP project id for cloud storage & logging when `STORAGE_TYPE` is `gcs`                                                                                                                                                                                                       | String                                           |                                     |
+-| GOOGLE_CLOUD_STORAGE_CREDENTIAL    | The credential key file path when `STORAGE_TYPE` is `gcs`                                                                                                                                                                                                                         | String                                           |                                     |
+-| GOOGLE_CLOUD_STORAGE_BUCKET_NAME   | Bucket name to hold the uploaded files when `STORAGE_TYPE` is `gcs`                                                                                                                                                                                                               | String                                           |                                     |
+-| GOOGLE_CLOUD_UNIFORM_BUCKET_ACCESS | Enable uniform bucket level access when `STORAGE_TYPE` is `gcs`                                                                                                                                                                                                                   | Boolean                                          | true                                |
+-| SHOW_COMMUNITY_NODES               | Show nodes created by community                                                                                                                                                                                                                                                   | Boolean                                          |                                     |
+-| DISABLED_NODES                     | Hide nodes from UI (comma separated list of node names)                                                                                                                                                                                                                           | String                                           |                                     |
+-| TRUST_PROXY                        | Configure proxy trust settings for proper IP detection. Values: 'true' (trust all), 'false' (disable), number (hop count), or Express proxy values (e.g., 'loopback', 'linklocal', 'uniquelocal', IP addresses). [Learn More](https://expressjs.com/en/guide/behind-proxies.html) | Boolean/String/Number                            | true                                |
+-
+-You can also specify the env variables when using `npx`. For example:
++Components मधील बदल लागू करण्यासाठी:
++
++```bash
++pnpm build
++```
++
++---
++
++## 🧪 बदल केल्यानंतर तपासा
++
++```bash
++pnpm build
++pnpm start
++```
++
++हे production मध्ये सर्व काही योग्य चालते याची खात्री करते.
++
++---
++
++## 🔁 Pull Request सबमिट करा
++
++तुमच्या Fork मधून PR तयार करा आणि Flowise मुख्य शाखेकडे पाठवा:  
++👉 https://github.com/FlowiseAI/Flowise/tree/main
++
++Flowise टीममधील एखाद्या सदस्याला आपोआप Assign केले जाईल.  
++मदतीसाठी Discord वर संपर्क करा:  
++👉 https://discord.gg/jbaHfsRVBW
++
++---
++
++# 🌱 Env Variables
++
++Flowise इंस्टन्स कॉन्फिगर करण्यासाठी `.env` फाइल वापरली जाते  
++(स्थान: `packages/server`)
++
++अधिक माहिती: https://docs.flowiseai.com/environment-variables
++
++| Variable | Description | Type | Default |
++|---------|-------------|-------|---------|
++| PORT | Flowise HTTP पोर्ट | Number | 3000 |
++| CORS_ORIGINS | Cross-origin विनंत्यांसाठी परवानगी दिलेले Origins | String | — |
++| IFRAME_ORIGINS | iframe embedding origins | String | — |
++| FLOWISE_FILE_SIZE_LIMIT | File upload size limit | String | 50mb |
++| DEBUG | Components चे log print करा | Boolean | — |
++| LOG_PATH | Logs ज्या ठिकाणी सेव्ह होतात | String | `your-path/Flowise/logs` |
++| LOG_LEVEL | Log level (`error`/`info`/`verbose`/`debug`) | String | `info` |
++| TOOL_FUNCTION_BUILTIN_DEP | Custom tool/function साठी NodeJS built-ins | String | — |
++| TOOL_FUNCTION_EXTERNAL_DEP | Custom tool/function साठी बाह्य modules | String | — |
++| ALLOW_BUILTIN_DEP | Project dependencies वापरण्यास परवानगी द्या | Boolean | false |
++| DATABASE_TYPE | Database प्रकार (`sqlite`, `mysql`, `postgres`) | String | sqlite |
++| DATABASE_PATH | SQLite database location | String | `~/.flowise` |
++| DATABASE_HOST | Host (sqlite नसल्यास) | String | — |
++| DATABASE_PORT | Database पोर्ट | String | — |
++| DATABASE_USER | DB User | String | — |
++| DATABASE_PASSWORD | DB Password | String | — |
++| DATABASE_NAME | DB Name | String | — |
++| DATABASE_SSL | PostgreSQL SSL | Boolean | false |
++| SECRETKEY_PATH | Encryption key जतन केलेली जागा | String | Flowise/server |
++| FLOWISE_SECRETKEY_OVERWRITE | Custom encryption key | String | — |
++| MODEL_LIST_CONFIG_JSON | Local model list config JSON | String | /path/to/file |
++| STORAGE_TYPE | Storage प्रकार (`local`, `s3`, `gcs`) | String | local |
++| BLOB_STORAGE_PATH | Local uploads path | String | ~/.flowise/storage |
++| S3_STORAGE_BUCKET_NAME | S3 bucket name | String | — |
++| S3_STORAGE_ACCESS_KEY_ID | Access key | String | — |
++| S3_STORAGE_SECRET_ACCESS_KEY | Secret key | String | — |
++| S3_STORAGE_REGION | AWS region | String | — |
++| S3_ENDPOINT_URL | Custom S3 endpoint | String | — |
++| GOOGLE_CLOUD_STORAGE_PROJ_ID | Google project ID | String | — |
++| GOOGLE_CLOUD_STORAGE_CREDENTIAL | Credentials path | String | — |
++| GOOGLE_CLOUD_STORAGE_BUCKET_NAME | GCS bucket name | String | — |
++
++### npx वापरताना variables सेट करू शकता:
+ 
+ ```
+ npx flowise start --PORT=3000 --DEBUG=true
+ ```
+ 
+-## 📖 Contribute to Docs
++---
++
++## 📖 Docs मध्ये योगदान
+ 
+-[Flowise Docs](https://github.com/FlowiseAI/FlowiseDocs)
++Docs रिपॉझिटरी:  
++👉 https://github.com/FlowiseAI/FlowiseDocs
+ 
+-## 🏷️ Pull Request process
++---
+ 
+-A member of the FlowiseAI team will automatically be notified/assigned when you open a pull request. You can also reach out to us on [Discord](https://discord.gg/jbaHfsRVBW).
++## 🏷️ Pull Request प्रक्रिया
++
++PR उघडताच Flowise टीममधील सदस्य आपोआप Assign होईल.  
++प्रश्न असल्यास Discord वर संपर्क साधा.
++
++---
+ 
+ ## 📜 Code of Conduct
+ 
+-This project and everyone participating in it are governed by the Code of Conduct which can be found in the [file](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to hello@flowiseai.com.
++सर्व contributors यांनी Code of Conduct पाळणे गरजेचे आहे.
++
++हे येथे उपलब्ध आहे:  
++👉 CODE_OF_CONDUCT.md
++
++अस्वीकार्य वर्तनाबद्दल रिपोर्ट करण्यासाठी: **hello@flowiseai.com**
+diff --git a/README.md b/README.md
+index 79f4f147e61..14f4d290af6 100644
+--- a/README.md
++++ b/README.md
+@@ -17,225 +17,205 @@ English | [繁體中文](./i18n/README-TW.md) | [简体中文](./i18n/README-ZH.
+ 
+ </div>
+ 
+-<h3>Build AI Agents, Visually</h3>
++<h3>AI Agents चे व्हिज्युअल बिल्डिंग</h3>
+ <a href="https://github.com/FlowiseAI/Flowise">
+ <img width="100%" src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_agentflow.gif?raw=true"></a>
+ 
+-## 📚 Table of Contents
++## 📚 विषय सूची
+ 
+--   [⚡ Quick Start](#-quick-start)
+--   [🐳 Docker](#-docker)
+--   [👨‍💻 Developers](#-developers)
+--   [🌱 Env Variables](#-env-variables)
+--   [📖 Documentation](#-documentation)
+--   [🌐 Self Host](#-self-host)
+--   [☁️ Flowise Cloud](#️-flowise-cloud)
+--   [🙋 Support](#-support)
+--   [🙌 Contributing](#-contributing)
+--   [📄 License](#-license)
++- [⚡ जलद सुरुवात](#-जलद-सुरुवात)
++- [🐳 Docker](#-docker)
++- [👨‍💻 डेव्हलपर्स](#-डेव्हलपर्स)
++- [🌱 Env Variables](#-env-variables)
++- [📖 दस्तऐवजीकरण](#-दस्तऐवजीकरण)
++- [🌐 स्वयं-होस्ट](#-स्वयं-होस्ट)
++- [☁️ Flowise Cloud](#️-flowise-cloud)
++- [🙋 मदत](#-मदत)
++- [🙌 योगदान](#-योगदान)
++- [📄 परवाना](#-परवाना)
+ 
+-## ⚡Quick Start
++## ⚡ जलद सुरुवात
+ 
+-Download and Install [NodeJS](https://nodejs.org/en/download) >= 18.15.0
++[NodeJS](https://nodejs.org/en/download) >= 18.15.0 डाउनलोड आणि इन्स्टॉल करा.
+ 
+-1. Install Flowise
++1. **Flowise इन्स्टॉल करा**
+     ```bash
+     npm install -g flowise
+     ```
+-2. Start Flowise
+ 
++2. **Flowise सुरू करा**
+     ```bash
+     npx flowise start
+     ```
+ 
+-3. Open [http://localhost:3000](http://localhost:3000)
++3. **ब्राऊझर उघडा:**  
++   [http://localhost:3000](http://localhost:3000)
++
++---
+ 
+ ## 🐳 Docker
+ 
+ ### Docker Compose
+ 
+-1. Clone the Flowise project
+-2. Go to `docker` folder at the root of the project
+-3. Copy `.env.example` file, paste it into the same location, and rename to `.env` file
+-4. `docker compose up -d`
+-5. Open [http://localhost:3000](http://localhost:3000)
+-6. You can bring the containers down by `docker compose stop`
++1. Flowise प्रोजेक्ट क्लोन करा  
++2. root मधील `docker` फोल्डरमध्ये जा  
++3. `.env.example` कॉपी करून `.env` नाव द्या  
++4. कंटेनर सुरू करा:
++    ```bash
++    docker compose up -d
++    ```
++5. उघडा: [http://localhost:3000](http://localhost:3000)  
++6. थांबवण्यासाठी:
++    ```bash
++    docker compose stop
++    ```
+ 
+ ### Docker Image
+ 
+-1. Build the image locally:
+-
++1. इमेज तयार करा:
+     ```bash
+     docker build --no-cache -t flowise .
+     ```
+ 
+-2. Run image:
+-
++2. Run:
+     ```bash
+     docker run -d --name flowise -p 3000:3000 flowise
+     ```
+ 
+-3. Stop image:
+-
++3. Stop:
+     ```bash
+     docker stop flowise
+     ```
+ 
+-## 👨‍💻 Developers
++---
+ 
+-Flowise has 3 different modules in a single mono repository.
++## 👨‍💻 डेव्हलपर्स
+ 
+--   `server`: Node backend to serve API logics
+--   `ui`: React frontend
+--   `components`: Third-party nodes integrations
+--   `api-documentation`: Auto-generated swagger-ui API docs from express
++Flowise मोनो रिपॉझिटरीमध्ये 4 मॉड्यूल आहेत:
+ 
+-### Prerequisite
++- `server`: Node.js backend  
++- `ui`: React frontend  
++- `components`: तृतीय-पक्ष इंटिग्रेशन नोड्स  
++- `api-documentation`: swagger API docs  
+ 
+--   Install [PNPM](https://pnpm.io/installation)
+-    ```bash
+-    npm i -g pnpm
+-    ```
++### पूर्वअट
++
++PNPM इन्स्टॉल करा:
++```bash
++npm i -g pnpm
++```
+ 
+-### Setup
++### सेटअप
+ 
+-1.  Clone the repository:
++1. रिपॉझिटरी क्लोन करा:
+ 
+     ```bash
+     git clone https://github.com/FlowiseAI/Flowise.git
+     ```
+ 
+-2.  Go into repository folder:
++2. डिरेक्टरीमध्ये जा:
+ 
+     ```bash
+     cd Flowise
+     ```
+ 
+-3.  Install all dependencies of all modules:
+-
++3. सर्व dependencies इन्स्टॉल:
+     ```bash
+     pnpm install
+     ```
+ 
+-4.  Build all the code:
+-
++4. Build:
+     ```bash
+     pnpm build
+     ```
+ 
+-    <details>
+-    <summary>Exit code 134 (JavaScript heap out of memory)</summary>  
+-    If you get this error when running the above `build` script, try increasing the Node.js heap size and run the script again:
+-
++    #### ❗ Exit code 134 (JS heap out of memory)
+     ```bash
+-    # macOS / Linux / Git Bash
+     export NODE_OPTIONS="--max-old-space-size=4096"
+-
+-    # Windows PowerShell
+-    $env:NODE_OPTIONS="--max-old-space-size=4096"
+-
+-    # Windows CMD
+-    set NODE_OPTIONS=--max-old-space-size=4096
+-    ```
+-
+-    Then run:
+-
+-    ```bash
+     pnpm build
+     ```
+ 
+-    </details>
+-
+-5.  Start the app:
+-
++5. अॅप सुरू करा:
+     ```bash
+     pnpm start
+     ```
+ 
+-    You can now access the app on [http://localhost:3000](http://localhost:3000)
++6. Development मोड:
+ 
+-6.  For development build:
++    - `packages/ui` मध्ये `.env` तयार करा ⇒ `VITE_PORT`
++    - `packages/server` मध्ये `.env` ⇒ `PORT`
+ 
+-    -   Create `.env` file and specify the `VITE_PORT` (refer to `.env.example`) in `packages/ui`
+-    -   Create `.env` file and specify the `PORT` (refer to `.env.example`) in `packages/server`
+-    -   Run:
++    Run:
++    ```bash
++    pnpm dev
++    ```
+ 
+-        ```bash
+-        pnpm dev
+-        ```
++Dev मोड ऍक्सेस:  
++**http://localhost:8080**
+ 
+-    Any code changes will reload the app automatically on [http://localhost:8080](http://localhost:8080)
++---
+ 
+ ## 🌱 Env Variables
+ 
+-Flowise supports different environment variables to configure your instance. You can specify the following variables in the `.env` file inside `packages/server` folder. Read [more](https://github.com/FlowiseAI/Flowise/blob/main/CONTRIBUTING.md#-env-variables)
+-
+-## 📖 Documentation
+-
+-You can view the Flowise Docs [here](https://docs.flowiseai.com/)
++Flowise instance configure करण्यासाठी `.env` मध्ये environment variables वापरा.  
++पूर्ण यादीसाठी “CONTRIBUTING.md” पहा.
+ 
+-## 🌐 Self Host
++---
+ 
+-Deploy Flowise self-hosted in your existing infrastructure, we support various [deployments](https://docs.flowiseai.com/configuration/deployment)
++## 📖 दस्तऐवजीकरण
+ 
+--   [AWS](https://docs.flowiseai.com/configuration/deployment/aws)
+--   [Azure](https://docs.flowiseai.com/configuration/deployment/azure)
+--   [Digital Ocean](https://docs.flowiseai.com/configuration/deployment/digital-ocean)
+--   [GCP](https://docs.flowiseai.com/configuration/deployment/gcp)
+--   [Alibaba Cloud](https://computenest.console.aliyun.com/service/instance/create/default?type=user&ServiceName=Flowise社区版)
+--   <details>
+-      <summary>Others</summary>
++Flowise Docs येथे उपलब्ध:  
++👉 **https://docs.flowiseai.com/**
+ 
+-    -   [Railway](https://docs.flowiseai.com/configuration/deployment/railway)
++---
+ 
+-        [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/pn4G8S?referralCode=WVNPD9)
++## 🌐 स्वयं-होस्ट
+ 
+-    -   [Northflank](https://northflank.com/stacks/deploy-flowiseai)
++Flowise तुमच्या स्वतःच्या सर्व्हर किंवा क्लाऊडवर सहज होस्ट करता येतो.  
++आम्ही खालील डिप्लॉयमेंट्स सपोर्ट करतो:
+ 
+-        [![Deploy to Northflank](https://assets.northflank.com/deploy_to_northflank_smm_36700fb050.svg)](https://northflank.com/stacks/deploy-flowiseai)
++- AWS  
++- Azure  
++- Digital Ocean  
++- GCP  
++- Alibaba Cloud  
+ 
+-    -   [Render](https://docs.flowiseai.com/configuration/deployment/render)
++अतिरिक्त:
+ 
+-        [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://docs.flowiseai.com/configuration/deployment/render)
++- Railway  
++- Northflank  
++- Render  
++- HuggingFace Spaces  
++- Elestio  
++- Sealos  
++- RepoCloud  
+ 
+-    -   [HuggingFace Spaces](https://docs.flowiseai.com/deployment/hugging-face)
++---
+ 
+-        <a href="https://huggingface.co/spaces/FlowiseAI/Flowise"><img src="https://huggingface.co/datasets/huggingface/badges/raw/main/open-in-hf-spaces-sm.svg" alt="HuggingFace Spaces"></a>
+-
+-    -   [Elestio](https://elest.io/open-source/flowiseai)
+-
+-        [![Deploy on Elestio](https://elest.io/images/logos/deploy-to-elestio-btn.png)](https://elest.io/open-source/flowiseai)
+-
+-    -   [Sealos](https://template.sealos.io/deploy?templateName=flowise)
+-
+-        [![Deploy on Sealos](https://sealos.io/Deploy-on-Sealos.svg)](https://template.sealos.io/deploy?templateName=flowise)
+-
+-    -   [RepoCloud](https://repocloud.io/details/?app_id=29)
+-
+-        [![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploy.png)](https://repocloud.io/details/?app_id=29)
++## ☁️ Flowise Cloud
+ 
+-      </details>
++Flowise Cloud वर सुरू करा:  
++👉 https://flowiseai.com/
+ 
+-## ☁️ Flowise Cloud
++---
+ 
+-Get Started with [Flowise Cloud](https://flowiseai.com/).
++## 🙋 मदत
+ 
+-## 🙋 Support
++प्रश्न, समस्या किंवा फिचर विनंत्यांसाठी Discussions वापरा:  
++👉 https://github.com/FlowiseAI/Flowise/discussions
+ 
+-Feel free to ask any questions, raise problems, and request new features in [Discussion](https://github.com/FlowiseAI/Flowise/discussions).
++---
+ 
+-## 🙌 Contributing
++## 🙌 योगदान
+ 
+-Thanks go to these awesome contributors
++Flowise contributors चे मनापासून आभार!
+ 
+-<a href="https://github.com/FlowiseAI/Flowise/graphs/contributors">
+-<img src="https://contrib.rocks/image?repo=FlowiseAI/Flowise" />
+-</a><br><br>
++Contributing Guide: `CONTRIBUTING.md`  
++Discord: https://discord.gg/jbaHfsRVBW
+ 
+-See [Contributing Guide](CONTRIBUTING.md). Reach out to us at [Discord](https://discord.gg/jbaHfsRVBW) if you have any questions or issues.
++---
+ 
+-[![Star History Chart](https://api.star-history.com/svg?repos=FlowiseAI/Flowise&type=Timeline)](https://star-history.com/#FlowiseAI/Flowise&Date)
++## 📄 परवाना
+ 
+-## 📄 License
++Flowise हा **Apache License 2.0** अंतर्गत उपलब्ध आहे.
+ 
+-Source code in this repository is made available under the [Apache License Version 2.0](LICENSE.md).
+
+From 800ca290d260e2b42201e40223b4dae6e7417fa1 Mon Sep 17 00:00:00 2001
+From: Atharva Domale <115187316+AtharvaDomale@users.noreply.github.com>
+Date: Fri, 12 Dec 2025 19:05:18 +0000
+Subject: [PATCH 2/2] Added Marathi translation for README.md & CONTRIBUTING.md
+
+---
+ CONTRIBUTING.md | 2 +-
+ README.md       | 3 +--
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index d9ad3d3a753..df31d6334d1 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -225,4 +225,4 @@ PR उघडताच Flowise टीममधील सदस्य आपोआ
+ हे येथे उपलब्ध आहे:  
+ 👉 CODE_OF_CONDUCT.md
+ 
+-अस्वीकार्य वर्तनाबद्दल रिपोर्ट करण्यासाठी: **hello@flowiseai.com**
++अस्वीकार्य वर्तनाबद्दल रिपोर्ट करण्यासाठी: **hello@flowiseai.com**
+\ No newline at end of file
+diff --git a/README.md b/README.md
+index 14f4d290af6..58415d576ac 100644
+--- a/README.md
++++ b/README.md
+@@ -217,5 +217,4 @@ Discord: https://discord.gg/jbaHfsRVBW
+ 
+ ## 📄 परवाना
+ 
+-Flowise हा **Apache License 2.0** अंतर्गत उपलब्ध आहे.
+-
++Flowise हा **Apache License 2.0** अंतर्गत उपलब्ध आहे.
+\ No newline at end of file

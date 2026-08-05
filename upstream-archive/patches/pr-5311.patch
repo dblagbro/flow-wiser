@@ -1,0 +1,471 @@
+From b39f1daf0416acf7b9bd88547ece0f19463ae919 Mon Sep 17 00:00:00 2001
+From: balaraj74 <balarajr483@gmail.com>
+Date: Sat, 11 Oct 2025 00:47:59 +0530
+Subject: [PATCH] feat: Add Azure Foundry Code Interpreter integration
+
+This commit adds support for Azure Foundry Code Interpreter to Flowise, enabling users to execute Python code directly within their flows using Azure's secure sandbox environment.
+
+Features:
+- New CodeInterpreterAzureFoundry node that integrates with Azure Foundry API
+- Supports executing Python code blocks in a secure sandbox environment
+- Handles code execution outputs including text, images, and files
+- Automatic session management with configurable timeouts
+- File download support for generated outputs (images, data files, etc.)
+- Full integration with Flowise's artifact system for displaying results
+- Utilizes existing Azure Foundry API credentials
+
+Implementation Details:
+- Created new tool node in packages/components/nodes/tools/CodeInterpreterAzureFoundry/
+- Implements session-based execution for persistent environments across multiple code runs
+- Supports all standard Python packages (numpy, pandas, matplotlib, scipy, etc.)
+- Error handling with automatic session cleanup
+- Image output support (PNG, JPEG) with automatic storage
+- Generic file output support for downloads
+
+Usage:
+Users can now add the 'Code Interpreter by Azure Foundry' node to their flows and execute Python code for data analysis, visualization, and automation tasks using their Azure infrastructure.
+
+Closes #5302
+---
+ .../credentials/AzureFoundryApi.credential.ts |  33 ++
+ .../CodeInterpreterAzureFoundry.ts            | 369 ++++++++++++++++++
+ .../azurefoundry.svg                          |   1 +
+ .../ui/src/assets/images/azurefoundry.svg     |   3 +
+ 4 files changed, 406 insertions(+)
+ create mode 100644 packages/components/credentials/AzureFoundryApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/CodeInterpreterAzureFoundry/CodeInterpreterAzureFoundry.ts
+ create mode 100644 packages/components/nodes/tools/CodeInterpreterAzureFoundry/azurefoundry.svg
+ create mode 100644 packages/ui/src/assets/images/azurefoundry.svg
+
+diff --git a/packages/components/credentials/AzureFoundryApi.credential.ts b/packages/components/credentials/AzureFoundryApi.credential.ts
+new file mode 100644
+index 00000000000..92be102c426
+--- /dev/null
++++ b/packages/components/credentials/AzureFoundryApi.credential.ts
+@@ -0,0 +1,33 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class AzureFoundryApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Azure Foundry API'
++        this.name = 'azureFoundryApi'
++        this.version = 1.0
++        this.description = 'Refer to <a target="_blank" href="https://docs.microsoft.com/en-us/azure/ai-foundry/">Azure AI Foundry documentation</a> for setup instructions'
++        this.inputs = [
++            {
++                label: 'Azure Foundry API Key',
++                name: 'azureFoundryApiKey',
++                type: 'password',
++                description: 'Your Azure AI Foundry API key'
++            },
++            {
++                label: 'Azure Foundry Endpoint',
++                name: 'azureFoundryEndpoint',
++                type: 'string',
++                placeholder: 'https://your-foundry-instance.azure.com',
++                description: 'Your Azure AI Foundry endpoint URL'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: AzureFoundryApi }
+diff --git a/packages/components/nodes/tools/CodeInterpreterAzureFoundry/CodeInterpreterAzureFoundry.ts b/packages/components/nodes/tools/CodeInterpreterAzureFoundry/CodeInterpreterAzureFoundry.ts
+new file mode 100644
+index 00000000000..014cec59db5
+--- /dev/null
++++ b/packages/components/nodes/tools/CodeInterpreterAzureFoundry/CodeInterpreterAzureFoundry.ts
+@@ -0,0 +1,369 @@
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
++import { StructuredTool, ToolInputParsingException, ToolParams } from '@langchain/core/tools'
++import { z } from 'zod'
++import { addSingleFileToStorage } from '../../../src/storageUtils'
++import { CallbackManager, CallbackManagerForToolRun, Callbacks, parseCallbackConfigArg } from '@langchain/core/callbacks/manager'
++import { RunnableConfig } from '@langchain/core/runnables'
++import { ARTIFACTS_PREFIX } from '../../../src/agents'
++import axios from 'axios'
++
++const DESC = `Evaluates python code in a secure Azure Foundry sandbox environment. \
++The environment is long running and exists across multiple executions. \
++You must send the whole script every time and print your outputs. \
++Script should be pure python code that can be evaluated. \
++It should be in python format NOT markdown. \
++The code should NOT be wrapped in backticks. \
++All python packages including requests, matplotlib, scipy, numpy, pandas, \
++etc are available. Create and display charts using "plt.show()".`
++const NAME = 'azure_foundry_code_interpreter'
++
++class Code_Interpreter_AzureFoundry implements INode {
++    label: string
++    name: string
++    version: number
++    description: string
++    type: string
++    icon: string
++    category: string
++    baseClasses: string[]
++    inputs: INodeParams[]
++    badge: string
++    credential: INodeParams
++
++    constructor() {
++        this.label = 'Code Interpreter by Azure Foundry'
++        this.name = 'codeInterpreterAzureFoundry'
++        this.version = 1.0
++        this.type = 'CodeInterpreter'
++        this.icon = 'azurefoundry.svg'
++        this.category = 'Tools'
++        this.description = 'Execute Python code in an Azure Foundry sandbox environment with support for data analysis and visualization'
++        this.baseClasses = [this.type, 'Tool', ...getBaseClasses(AzureFoundryTool)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['azureFoundryApi'],
++            optional: false
++        }
++        this.inputs = [
++            {
++                label: 'Tool Name',
++                name: 'toolName',
++                type: 'string',
++                description: 'Specify the name of the tool',
++                default: 'azure_foundry_code_interpreter'
++            },
++            {
++                label: 'Tool Description',
++                name: 'toolDesc',
++                type: 'string',
++                rows: 4,
++                description: 'Specify the description of the tool',
++                default: DESC
++            },
++            {
++                label: 'Session Timeout (seconds)',
++                name: 'sessionTimeout',
++                type: 'number',
++                description: 'Timeout for the code execution session',
++                default: 300,
++                optional: true
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const toolDesc = nodeData.inputs?.toolDesc as string
++        const toolName = nodeData.inputs?.toolName as string
++        const sessionTimeout = nodeData.inputs?.sessionTimeout as number
++
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const azureFoundryApiKey = getCredentialParam('azureFoundryApiKey', credentialData, nodeData)
++        const azureFoundryEndpoint = getCredentialParam('azureFoundryEndpoint', credentialData, nodeData)
++
++        return await AzureFoundryTool.initialize({
++            description: toolDesc ?? DESC,
++            name: toolName ?? NAME,
++            apiKey: azureFoundryApiKey,
++            endpoint: azureFoundryEndpoint,
++            schema: z.object({
++                input: z.string().describe('Python code to be executed in the Azure Foundry sandbox environment')
++            }),
++            chatflowid: options.chatflowid,
++            orgId: options.orgId,
++            sessionTimeout: sessionTimeout || 300
++        })
++    }
++}
++
++type AzureFoundryToolParams = ToolParams
++type AzureFoundryToolInput = {
++    name: string
++    description: string
++    apiKey: string
++    endpoint: string
++    schema: any
++    chatflowid: string
++    orgId: string
++    sessionTimeout?: number
++}
++
++export class AzureFoundryTool extends StructuredTool {
++    static lc_name() {
++        return 'AzureFoundryTool'
++    }
++
++    name = NAME
++
++    description = DESC
++
++    apiKey: string
++
++    endpoint: string
++
++    schema
++
++    chatflowid: string
++
++    orgId: string
++
++    flowObj: ICommonObject
++
++    sessionTimeout: number
++
++    sessionId?: string
++
++    constructor(options: AzureFoundryToolParams & AzureFoundryToolInput) {
++        super(options)
++        this.description = options.description
++        this.name = options.name
++        this.apiKey = options.apiKey
++        this.endpoint = options.endpoint
++        this.schema = options.schema
++        this.chatflowid = options.chatflowid
++        this.orgId = options.orgId
++        this.sessionTimeout = options.sessionTimeout || 300
++    }
++
++    static async initialize(options: Partial<AzureFoundryToolParams> & AzureFoundryToolInput) {
++        return new this({
++            name: options.name,
++            description: options.description,
++            apiKey: options.apiKey,
++            endpoint: options.endpoint,
++            schema: options.schema,
++            chatflowid: options.chatflowid,
++            orgId: options.orgId,
++            sessionTimeout: options.sessionTimeout
++        })
++    }
++
++    async call(
++        arg: z.infer<typeof this.schema>,
++        configArg?: RunnableConfig | Callbacks,
++        tags?: string[],
++        flowConfig?: { sessionId?: string; chatId?: string; input?: string; state?: ICommonObject }
++    ): Promise<string> {
++        const config = parseCallbackConfigArg(configArg)
++        if (config.runName === undefined) {
++            config.runName = this.name
++        }
++        let parsed
++        try {
++            parsed = await this.schema.parseAsync(arg)
++        } catch (e) {
++            throw new ToolInputParsingException(`Received tool input did not match expected schema`, JSON.stringify(arg))
++        }
++        const callbackManager_ = await CallbackManager.configure(
++            config.callbacks,
++            this.callbacks,
++            config.tags || tags,
++            this.tags,
++            config.metadata,
++            this.metadata,
++            { verbose: this.verbose }
++        )
++        const runManager = await callbackManager_?.handleToolStart(
++            this.toJSON(),
++            typeof parsed === 'string' ? parsed : JSON.stringify(parsed),
++            undefined,
++            undefined,
++            undefined,
++            undefined,
++            config.runName
++        )
++        let result
++        try {
++            result = await this._call(parsed, runManager, flowConfig)
++        } catch (e) {
++            await runManager?.handleToolError(e)
++            throw e
++        }
++        if (result && typeof result !== 'string') {
++            result = JSON.stringify(result)
++        }
++        await runManager?.handleToolEnd(result)
++        return result
++    }
++
++    // @ts-ignore
++    protected async _call(
++        arg: z.infer<typeof this.schema>,
++        _?: CallbackManagerForToolRun,
++        flowConfig?: { sessionId?: string; chatId?: string; input?: string }
++    ): Promise<string> {
++        flowConfig = { ...this.flowObj, ...flowConfig }
++        try {
++            if ('input' in arg) {
++                const code = arg?.input
++
++                // Create or reuse session
++                if (!this.sessionId) {
++                    this.sessionId = await this.createSession()
++                }
++
++                // Execute code in Azure Foundry
++                const execution = await this.executeCode(code)
++
++                const artifacts = []
++
++                // Process outputs
++                if (execution.outputs && Array.isArray(execution.outputs)) {
++                    for (const output of execution.outputs) {
++                        if (output.type === 'image' && output.data) {
++                            // Handle image outputs (PNG, JPEG, etc.)
++                            const imageFormat = output.format || 'png'
++                            const imageData = Buffer.from(output.data, 'base64')
++                            const filename = `artifact_${Date.now()}.${imageFormat}`
++                            const mimeType = `image/${imageFormat}`
++
++                            const { path } = await addSingleFileToStorage(
++                                mimeType,
++                                imageData,
++                                filename,
++                                this.orgId,
++                                this.chatflowid,
++                                flowConfig!.chatId as string
++                            )
++
++                            artifacts.push({ type: imageFormat, data: path })
++                        } else if (output.type === 'file' && output.data) {
++                            // Handle file outputs for download
++                            const fileData = Buffer.from(output.data, 'base64')
++                            const filename = output.filename || `file_${Date.now()}.txt`
++                            const mimeType = output.mimeType || 'application/octet-stream'
++
++                            const { path } = await addSingleFileToStorage(
++                                mimeType,
++                                fileData,
++                                filename,
++                                this.orgId,
++                                this.chatflowid,
++                                flowConfig!.chatId as string
++                            )
++
++                            artifacts.push({ type: 'file', data: path, filename: filename })
++                        } else if (output.type === 'html' || output.type === 'markdown' || output.type === 'json') {
++                            artifacts.push({ type: output.type, data: output.data })
++                        }
++                    }
++                }
++
++                let output = ''
++
++                // Get text output
++                if (execution.stdout) {
++                    output = execution.stdout
++                } else if (execution.result) {
++                    output = typeof execution.result === 'string' ? execution.result : JSON.stringify(execution.result)
++                }
++
++                // Handle errors
++                if (execution.error) {
++                    return `Error: ${execution.error.message || JSON.stringify(execution.error)}`
++                }
++
++                return artifacts.length > 0 ? output + ARTIFACTS_PREFIX + JSON.stringify(artifacts) : output
++            } else {
++                return 'No input provided'
++            }
++        } catch (e: any) {
++            // Clean up session on error
++            if (this.sessionId) {
++                await this.closeSession().catch(() => {})
++                this.sessionId = undefined
++            }
++            return `Error: ${e.message || JSON.stringify(e)}`
++        }
++    }
++
++    private async createSession(): Promise<string> {
++        try {
++            const response = await axios.post(
++                `${this.endpoint}/code-interpreter/sessions`,
++                {
++                    timeout: this.sessionTimeout
++                },
++                {
++                    headers: {
++                        'Authorization': `Bearer ${this.apiKey}`,
++                        'Content-Type': 'application/json'
++                    }
++                }
++            )
++            return response.data.sessionId || response.data.id
++        } catch (error: any) {
++            throw new Error(`Failed to create Azure Foundry session: ${error.message}`)
++        }
++    }
++
++    private async executeCode(code: string): Promise<any> {
++        try {
++            const response = await axios.post(
++                `${this.endpoint}/code-interpreter/sessions/${this.sessionId}/execute`,
++                {
++                    code: code,
++                    language: 'python'
++                },
++                {
++                    headers: {
++                        'Authorization': `Bearer ${this.apiKey}`,
++                        'Content-Type': 'application/json'
++                    }
++                }
++            )
++            return response.data
++        } catch (error: any) {
++            if (error.response?.data) {
++                return {
++                    error: {
++                        message: error.response.data.error || error.message
++                    }
++                }
++            }
++            throw new Error(`Failed to execute code: ${error.message}`)
++        }
++    }
++
++    private async closeSession(): Promise<void> {
++        if (!this.sessionId) return
++
++        try {
++            await axios.delete(`${this.endpoint}/code-interpreter/sessions/${this.sessionId}`, {
++                headers: {
++                    'Authorization': `Bearer ${this.apiKey}`
++                }
++            })
++        } catch (error) {
++            // Ignore errors when closing session
++        }
++    }
++
++    setFlowObject(flowObj: ICommonObject) {
++        this.flowObj = flowObj
++    }
++}
++
++module.exports = { nodeClass: Code_Interpreter_AzureFoundry }
+diff --git a/packages/components/nodes/tools/CodeInterpreterAzureFoundry/azurefoundry.svg b/packages/components/nodes/tools/CodeInterpreterAzureFoundry/azurefoundry.svg
+new file mode 100644
+index 00000000000..7b15081119e
+--- /dev/null
++++ b/packages/components/nodes/tools/CodeInterpreterAzureFoundry/azurefoundry.svg
+@@ -0,0 +1 @@
++<svg width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.946 5H19l-7.322 22.216a1.15 1.15 0 0 1-.41.568c-.19.14-.42.216-.656.216H5.123a1.11 1.11 0 0 1-.513-.127 1.132 1.132 0 0 1-.4-.352 1.165 1.165 0 0 1-.151-1.038l6.822-20.7a1.15 1.15 0 0 1 .41-.567c.19-.14.42-.216.655-.216Z" fill="#0A5FAB"/><path d="M22.334 20H11.502c-.1 0-.2.031-.282.09a.52.52 0 0 0-.185.241.545.545 0 0 0 .125.576l6.96 6.786c.203.197.47.307.747.307H25l-2.666-8Z" fill="#0078D4"/><path d="M21.035 5.782a1.149 1.149 0 0 0-.415-.566A1.128 1.128 0 0 0 19.957 5H12c.238 0 .47.076.663.216.193.14.338.338.414.566l6.906 20.7a1.16 1.16 0 0 1-.558 1.391 1.12 1.12 0 0 1-.52.127h7.959a1.127 1.127 0 0 0 .923-.48 1.159 1.159 0 0 0 .153-1.038l-6.905-20.7Z" fill="#2C9DE3"/></svg>
+\ No newline at end of file
+diff --git a/packages/ui/src/assets/images/azurefoundry.svg b/packages/ui/src/assets/images/azurefoundry.svg
+new file mode 100644
+index 00000000000..77b75221a31
+--- /dev/null
++++ b/packages/ui/src/assets/images/azurefoundry.svg
+@@ -0,0 +1,3 @@
++<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path d="M11.6973 2.84375L6.53344 15.1562H9.01219L14.176 2.84375H11.6973ZM5.36937 15.1562L0.205469 2.84375H2.68422L7.84812 15.1562H5.36937Z" fill="#0078D4"/>
++</svg>
+\ No newline at end of file
