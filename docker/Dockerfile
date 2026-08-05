@@ -43,6 +43,34 @@ RUN npm install -g "flowise@${FLOWISE_VERSION}" \
          echo "FATAL: requested flowise@${FLOWISE_VERSION} but installed ${INSTALLED}" >&2; exit 1; \
        fi
 
+# Pin connect-sqlite3.
+#
+# THIS IS THE ROOT CAUSE OF UPSTREAM ISSUE #6688 ("3.1.4 fails to start").
+# connect-sqlite3@0.9.17 changed its constructor so that `this.db.exec` is no
+# longer a function, which makes session-store setup throw during startup:
+#
+#   TypeError: this.db.exec is not a function
+#     at new SQLiteStore (connect-sqlite3/lib/connect-sqlite3.js:56:17)
+#     at initializeDBClientAndStore (dist/enterprise/middleware/passport/SessionPersistance.js:96)
+#
+# This is NOT specific to Flowise 3.1.4. Because the dependency is unpinned, ANY
+# Flowise image built after 0.9.17 was published crashes on boot -- including a
+# freshly built 3.1.3. Verified 2026-08-05:
+#   official flowiseai/flowise:3.1.3 (built earlier) -> connect-sqlite3 0.9.16 -> boots
+#   fresh build of the same flowise@3.1.3 today      -> connect-sqlite3 0.9.17 -> crashes
+#
+# 0.9.16 is the last version with the working constructor and is what every
+# functioning official image actually shipped. Upstream PR #6706 fixes this in
+# the TypeScript source; this pin fixes it for npm-installed container builds.
+ARG CONNECT_SQLITE3_VERSION=0.9.16
+RUN npm --prefix "$(npm root -g)/flowise" install --no-save \
+      "connect-sqlite3@${CONNECT_SQLITE3_VERSION}" \
+    && PINNED="$(node -p "require('/usr/local/lib/node_modules/flowise/node_modules/connect-sqlite3/package.json').version")" \
+    && echo "connect-sqlite3 pinned to ${PINNED}" \
+    && if [ "${PINNED}" != "${CONNECT_SQLITE3_VERSION}" ]; then \
+         echo "FATAL: connect-sqlite3 pin failed, got ${PINNED}" >&2; exit 1; \
+       fi
+
 # Stage 2: Runtime stage
 FROM node:${NODE_VERSION}-alpine
 
