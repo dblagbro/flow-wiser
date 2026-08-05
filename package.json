@@ -122,7 +122,10 @@
         "**/dist",
         "**/node_modules",
         "**/build",
-        "**/package-lock.json"
+        "**/package-lock.json",
+        "**/upstream-archive",
+        "**/upstream-archive/**",
+        "upstream-archive/**"
     ],
     "prettier": {
         "printWidth": 140,
