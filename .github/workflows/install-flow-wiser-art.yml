@@ -1,0 +1,141 @@
+name: Install Flow-wiser community artwork
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/install-flow-wiser-art.yml
+      - .github/flow-wiser-art-parts/**
+
+permissions:
+  contents: write
+
+jobs:
+  publish-artwork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      - name: Assemble and publish artwork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p community-art
+          cat .github/flow-wiser-art-parts/part-* \
+            | tr -d '\r\n' \
+            | base64 --decode \
+            > community-art/flow-wiser-open-source-meme.webp
+
+          echo "fc1d5e3d72a91425782904b749226df6f933b68565892d37aaac7527df47ca2a  community-art/flow-wiser-open-source-meme.webp" \
+            | sha256sum --check --strict
+
+          cat > community-art/README.md <<'EOF'
+          # Flow-wiser community artwork
+
+          ![Flow-wiser community open-source meme](flow-wiser-open-source-meme.webp)
+
+          This humorous community-recruitment artwork was created for the unofficial
+          `dblagbro/flowise-community` continuation fork.
+
+          ## Public-use permission
+
+          To the extent the repository maintainer owns copyright in this artwork, it is
+          made available under the [Creative Commons Attribution 4.0 International
+          License](https://creativecommons.org/licenses/by/4.0/).
+
+          Suggested attribution:
+
+          > Flow-wiser community artwork - Devin P. Blagbrough / dblagbro/flowise-community
+
+          You may share and adapt the artwork, including publicly and commercially, under
+          the CC BY 4.0 attribution terms. This artwork license is separate from the source
+          code licenses described in the repository's `LICENSE.md` and `FORK.md` files.
+
+          ## Parody and trademark notice
+
+          "Flow-wiser" is an unofficial humorous parody created as expressive commentary
+          and a request for volunteer participation in an open-source community project.
+          It is not product packaging, does not advertise or offer an alcoholic beverage,
+          and is not presented as a source identifier for beer or any other commercial
+          product.
+
+          This artwork and repository are not affiliated with, endorsed by, or sponsored
+          by FlowiseAI, Workday, Anheuser-Busch, Budweiser, GitHub, or any other third
+          party referenced or evoked by the parody. All third-party names, logos, mascots,
+          trade dress, and trademarks remain the property of their respective owners.
+          No trademark rights are granted by the CC BY 4.0 notice above.
+
+          This notice documents the intended expressive and community purpose. It is not
+          a guarantee regarding every possible jurisdiction or use and is not legal advice.
+          EOF
+
+          cat > FLOW-WISER.md <<'EOF'
+          # Flow-wiser - help keep the flow going
+
+          <p align="center">
+            <img width="700" src="community-art/flow-wiser-open-source-meme.webp" alt="Flow-wiser community open-source meme">
+          </p>
+
+          **When the project hits EOL, friends do not let open source go flat.**
+
+          The Flow-wiser image is a humorous invitation to help preserve, repair, document,
+          test, and improve this community continuation fork.
+
+          - Fork it
+          - Fix it
+          - Ship it
+          - Review issues and pull requests
+          - Help make the Apache-2.0-only continuation sustainable
+
+          Contributions are welcome through this repository's public issues and pull
+          requests. Start with [FORK.md](FORK.md) for project context and licensing boundaries.
+
+          ## Reusing the artwork
+
+          The image and its public-use, attribution, parody, and trademark notices are in
+          [community-art/README.md](community-art/README.md).
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          marker = (
+              "> 👉 **Read [FORK.md](FORK.md) before redistributing, and see "
+              "[NOTICE](NOTICE) for attribution.**"
+          )
+          art_marker = "<!-- flow-wiser-community-art -->"
+          snippet = """
+
+          <!-- flow-wiser-community-art -->
+          <p align="center">
+            <a href="FLOW-WISER.md">
+              <img width="450" src="community-art/flow-wiser-open-source-meme.webp" alt="Flow-wiser community open-source meme">
+            </a>
+          </p>
+          <p align="center"><strong>Help keep the flow going - fork it, fix it, ship it.</strong></p>
+          """
+
+          if art_marker not in text:
+              if marker not in text:
+                  raise SystemExit("README insertion marker was not found")
+              text = text.replace(marker, marker + snippet, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+
+          rm -rf .github/flow-wiser-art-parts
+          rm -f .github/workflows/install-flow-wiser-art.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish Flow-wiser community artwork"
+            git push
+          fi
