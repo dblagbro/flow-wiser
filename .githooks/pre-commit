@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Flow-Wiser clean-room guard. See docs/CLEANROOM-PROTOCOL.md
+#
+# Blocks MODIFICATIONS to the commercially-licensed paths. Editing them implies the
+# author has been reading them, which contaminates the clean-room record.
+# Deletions are allowed: removing these files is the goal.
+set -uo pipefail
+
+PROTECTED='^packages/server/src/(enterprise/|IdentityManager\.ts)'
+BAD=$(git diff --cached --name-status --diff-filter=ACMR | awk '{print $2}' | grep -E "$PROTECTED" || true)
+
+if [ -n "$BAD" ]; then
+  echo "" >&2
+  echo "  ✗ CLEAN-ROOM VIOLATION — commit rejected" >&2
+  echo "" >&2
+  echo "  These files are under FlowiseAI's Commercial License and must not be edited:" >&2
+  echo "$BAD" | sed 's/^/      /' >&2
+  echo "" >&2
+  echo "  Flow-Wiser replaces this layer with original work specified solely from" >&2
+  echo "  Apache-2.0 sources. Editing these files implies you read them, which" >&2
+  echo "  undermines the independent-creation record for the whole project." >&2
+  echo "" >&2
+  echo "  Deleting them is permitted and expected. See docs/CLEANROOM-PROTOCOL.md" >&2
+  echo "" >&2
+  exit 1
+fi
+exit 0

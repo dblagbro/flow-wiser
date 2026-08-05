@@ -1,0 +1,30 @@
+name: Clean-room guard
+on:
+    pull_request:
+    push:
+        branches: [main]
+permissions:
+    contents: read
+jobs:
+    guard:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+            - name: Reject modifications to commercially-licensed paths
+              run: |
+                  BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+                  if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+                    echo "No base ref to diff against; skipping."; exit 0
+                  fi
+                  BAD=$(git diff --name-status --diff-filter=ACMR "$BASE" "${{ github.sha }}" \
+                        | awk '{print $2}' \
+                        | grep -E '^packages/server/src/(enterprise/|IdentityManager\.ts)' || true)
+                  if [ -n "$BAD" ]; then
+                    echo "::error::Clean-room violation - commercially licensed files were modified"
+                    echo "$BAD"
+                    echo "See docs/CLEANROOM-PROTOCOL.md. Deletion is allowed; modification is not."
+                    exit 1
+                  fi
+                  echo "Clean-room guard passed."
