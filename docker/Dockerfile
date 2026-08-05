@@ -1,5 +1,11 @@
 # Node.js version (overridable via build-arg from CI)
-ARG NODE_VERSION=24
+#
+# Upstream defaulted this to 24, but that default does not build: better-sqlite3
+# fails to compile under node-gyp on Node 24 ("gyp ERR! not ok", node-gyp 8.4.1).
+# Every published flowiseai/flowise image (3.1.2, 3.1.3, 3.1.4) actually runs
+# Node v20.20.2, so upstream CI must have been overriding this. Defaulting to 20
+# makes a plain `docker build` reproduce the shipped runtime instead of failing.
+ARG NODE_VERSION=20
 
 # Stage 1: Build stage
 FROM node:${NODE_VERSION}-alpine AS build
