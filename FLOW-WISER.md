@@ -1,7 +1,11 @@
 # Flow-wiser - help keep the flow going
 
 <p align="center">
-  <img width="700" src="community-art/flow-wiser-open-source-meme.webp" alt="Flow-wiser community open-source meme">
+  <img width="700" src="community-art/flow-wiser-keep-it-going-900.webp" alt="Flow-wiser community open-source meme">
+</p>
+<p align="center">
+  <sub>Large-format original:
+  <a href="community-art/flow-wiser-keep-it-going.png">flow-wiser-keep-it-going.png</a> (1254x1254)</sub>
 </p>
 
 **When the project hits EOL, friends do not let open source go flat.**

@@ -30,7 +30,7 @@
 <!-- flow-wiser-community-art -->
 <p align="center">
   <a href="FLOW-WISER.md">
-    <img width="450" src="community-art/flow-wiser-open-source-meme.webp" alt="Flow-wiser community open-source meme">
+    <img width="600" src="community-art/flow-wiser-keep-it-going-900.webp" alt="Flow-wiser community open-source meme">
   </a>
 </p>
 <p align="center"><strong>Help keep the flow going - fork it, fix it, ship it.</strong></p>

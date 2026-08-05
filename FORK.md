@@ -1,4 +1,10 @@
-# Flowise Community Fork — Open Source Release Copy
+# Flow-Wiser — Open Source Release Copy
+
+<p align="center">
+  <a href="FLOW-WISER.md">
+    <img width="420" src="community-art/flow-wiser-keep-it-going-900.webp" alt="Flow-wiser — help keep the flow going">
+  </a>
+</p>
 
 > **This is an unofficial community fork of [FlowiseAI/Flowise](https://github.com/FlowiseAI/Flowise), preserved after the upstream project reached end of life in August 2026.**
 >
