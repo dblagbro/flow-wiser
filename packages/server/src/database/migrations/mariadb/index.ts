@@ -52,7 +52,7 @@ import { AddIdentitySessionTables1780000000001 } from './1780000000001-AddIdenti
 import { AddIdentityMfaAuditTables1780000000002 } from './1780000000002-AddIdentityMfaAuditTables'
 import { AddMustChangePasswordToIdentityUser1780000000010 } from './1780000000010-AddMustChangePasswordToIdentityUser'
 import { AddIdentityWorkspaceShared1780000000011 } from './1780000000011-AddIdentityWorkspaceShared'
-
+import { AddTenancyColumnsToCoreTables1780000000012 } from './1780000000012-AddTenancyColumnsToCoreTables'
 
 export const mariadbMigrations = [
     Init1693840429259,
@@ -108,5 +108,6 @@ export const mariadbMigrations = [
     AddIdentitySessionTables1780000000001,
     AddIdentityMfaAuditTables1780000000002,
     AddMustChangePasswordToIdentityUser1780000000010,
-    AddIdentityWorkspaceShared1780000000011
+    AddIdentityWorkspaceShared1780000000011,
+    AddTenancyColumnsToCoreTables1780000000012
 ]
