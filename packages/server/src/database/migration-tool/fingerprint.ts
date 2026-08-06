@@ -93,9 +93,9 @@ const rowDigest = (row: Record<string, unknown>, columns: readonly string[]): st
     const hash = createHash('sha256')
     for (const column of columns) {
         hash.update(column)
-        hash.update('')
+        hash.update(SEPARATOR)
         hash.update(canonical(row[column]))
-        hash.update('')
+        hash.update(SEPARATOR)
     }
     return hash.digest('hex')
 }

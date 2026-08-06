@@ -290,6 +290,15 @@ const asNullableTimestamp = (value: unknown): string | null => {
     return Number.isNaN(date.getTime()) ? null : date.toISOString().replace('T', ' ').replace('Z', '')
 }
 
+/**
+ * Key for the in-memory lookups that pair an organization with a role name, or a scope with a user.
+ *
+ * The separator is a byte no uuid, role name or table name can contain, so `("ab", "c")` and
+ * `("a", "bc")` cannot produce the same key — the collision that makes a composite-key map hand
+ * back the wrong row, silently, on exactly one deployment.
+ */
+const compositeKey = (...parts: string[]): string => parts.join('\u0000')
+
 const insert = async (db: Database, table: string, row: Record<string, unknown>): Promise<void> => {
     const columns = Object.keys(row)
     const values = columns.map((column) => row[column])
@@ -823,7 +832,7 @@ const applyOrganizations = async (context: ApplyContext, legacy: LegacyData): Pr
 const applyRoleSeeds = async (context: ApplyContext): Promise<void> => {
     const rolePermissions = context.options.rolePermissions ?? defaultRolePermissions
     for (const seed of context.plan.roleSeeds) {
-        const key = `${seed.organizationId} ${seed.name}`
+        const key = compositeKey(seed.organizationId, seed.name)
         const found = await context.db.query(
             `SELECT ${quote(context.db.engine, 'id')} FROM ${quote(context.db.engine, 'identity_role')} WHERE ${quote(
                 context.db.engine,
@@ -940,11 +949,11 @@ const applyWorkspaces = async (context: ApplyContext, legacy: LegacyData): Promi
 }
 
 const applyMemberships = async (context: ApplyContext, legacy: LegacyData): Promise<void> => {
-    const byKey = new Map(legacy.organizationUsers.map((row) => [`${row.organizationId} ${row.userId}`, row]))
+    const byKey = new Map(legacy.organizationUsers.map((row) => [compositeKey(String(row.organizationId), String(row.userId)), row]))
     for (const planned of context.plan.memberships) {
         if (await exists(context.db, 'identity_organization_user', { organizationId: planned.organizationId, userId: planned.userId }))
             continue
-        const source = byKey.get(`${planned.organizationId} ${planned.userId}`) ?? {}
+        const source = byKey.get(compositeKey(planned.organizationId, planned.userId)) ?? {}
         // §F-1: lastLogin belongs to the membership, and upstream stored it on workspace_user.
         // Take the most recent across the user's workspaces in this organization so the "Never"
         // that the users table would otherwise render is not a fresh lie.
@@ -979,12 +988,12 @@ const applyMemberships = async (context: ApplyContext, legacy: LegacyData): Prom
 }
 
 const applyWorkspaceMembers = async (context: ApplyContext, legacy: LegacyData): Promise<void> => {
-    const byKey = new Map(legacy.workspaceUsers.map((row) => [`${row.workspaceId} ${row.userId}`, row]))
+    const byKey = new Map(legacy.workspaceUsers.map((row) => [compositeKey(String(row.workspaceId), String(row.userId)), row]))
     const orgByWorkspace = new Map(context.plan.workspaces.map((workspace) => [workspace.id, workspace.organizationId]))
     for (const planned of context.plan.workspaceMembers) {
         if (await exists(context.db, 'identity_workspace_user', { workspaceId: planned.workspaceId, userId: planned.userId })) continue
         const organizationId = orgByWorkspace.get(planned.workspaceId) ?? ''
-        const roleId = context.roleIdByOrgAndName.get(`${organizationId} ${planned.target}`)
+        const roleId = context.roleIdByOrgAndName.get(compositeKey(organizationId, planned.target))
         if (!roleId) {
             throw new MigrationAbort(
                 `Role "${planned.target}" is not seeded for organization ${organizationId}, so the assignment for user ` +
@@ -992,7 +1001,7 @@ const applyWorkspaceMembers = async (context: ApplyContext, legacy: LegacyData):
                     'an unscoped membership (§3).'
             )
         }
-        const source = byKey.get(`${planned.workspaceId} ${planned.userId}`) ?? {}
+        const source = byKey.get(compositeKey(planned.workspaceId, planned.userId)) ?? {}
         await insert(context.db, 'identity_workspace_user', {
             workspaceId: planned.workspaceId,
             userId: planned.userId,
