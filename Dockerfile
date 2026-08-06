@@ -4,7 +4,12 @@
 # Run image
 # docker run -d -p 3000:3000 flowise
 
-FROM node:24-alpine
+# Node 20, not 24. better-sqlite3 fails to compile under node-gyp on Node 24
+# ("gyp ERR! not ok", node-gyp 8.4.1), and every published flowiseai/flowise image
+# actually runs v20.20.2 -- so the 24 here could never have produced a working build.
+# Same defect as docker/Dockerfile's ARG NODE_VERSION=24, fixed there in an earlier commit.
+ARG NODE_VERSION=20
+FROM node:${NODE_VERSION}-alpine
 
 # Install system dependencies and build tools
 RUN apk update && \
