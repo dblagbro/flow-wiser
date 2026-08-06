@@ -1,0 +1,241 @@
+/**
+ * Engine abstraction for the migration tool.
+ *
+ * ── Why this file does not import TypeORM ────────────────────────────────────────────────────
+ * The tool runs against a live deployment's DataSource, but it takes it STRUCTURALLY: the
+ * {@link TypeOrmDataSourceLike} interface below describes the handful of members it actually uses.
+ * Nothing here `import`s `typeorm`.
+ *
+ * Three reasons, in order of weight:
+ *  1. A migration tool must be able to run against a database whose ENTITY METADATA does not match
+ *     it. During cut-over the old `user`/`organization`/`workspace` tables are not mapped by any
+ *     entity any more (they were unregistered), so every read of them has to be raw SQL anyway.
+ *     Depending on the ORM would buy nothing and would tie the tool to whichever entity set happens
+ *     to be registered at the moment it runs.
+ *  2. It keeps the tool testable against a plain SQLite handle — see
+ *     `test/identity/migration-tool.test.ts`, which drives it through `node:sqlite` with no ORM
+ *     present at all. A migration tool whose tests cannot construct a database is a migration tool
+ *     that is never tested against a real one.
+ *  3. No new runtime dependency, which is a hard constraint on this work.
+ *
+ * ── Portability ──────────────────────────────────────────────────────────────────────────────
+ * Four engines are in scope (sqlite, postgres, mysql, mariadb). The differences that matter to this
+ * tool are small and all of them live in this file: parameter placeholders, identifier quoting,
+ * the catalog you ask "does this table exist", and whether DDL participates in a transaction.
+ */
+
+/** The engines Flowise supports, as `DataSource.options.type` reports them. */
+export type Engine = 'sqlite' | 'postgres' | 'mysql' | 'mariadb'
+
+export const ENGINES: readonly Engine[] = ['sqlite', 'postgres', 'mysql', 'mariadb']
+
+/**
+ * Whether the engine rolls DDL back with the rest of the transaction.
+ *
+ * REQUIREMENTS-MIGRATION.md §8.3: "SQLite and Postgres support transactional DDL … MySQL and
+ * MariaDB do not, so those paths rely on the backup and are documented as such rather than
+ * pretending otherwise." This constant is that documentation, in a form the code can read: the
+ * migration refuses to start on a non-transactional engine unless a verified backup exists, and the
+ * report says so in words.
+ *
+ * MySQL and MariaDB perform an implicit COMMIT before and after every DDL statement, so a failure
+ * halfway through leaves the schema changes applied and the data changes that preceded them
+ * committed. There is no way to make that atomic from the client side; the honest answer is the
+ * backup, plus additive-only DDL (§8.4) so that a half-applied schema is still a schema the old
+ * code can read.
+ */
+export const HAS_TRANSACTIONAL_DDL: Readonly<Record<Engine, boolean>> = {
+    sqlite: true,
+    postgres: true,
+    mysql: false,
+    mariadb: false
+}
+
+/** Normalise the many aliases `DataSource.options.type` can carry into one of the four engines. */
+export const normaliseEngine = (type: string): Engine => {
+    const value = String(type).toLowerCase()
+    if (value === 'sqlite' || value === 'better-sqlite3' || value === 'sqljs' || value === 'expo' || value === 'capacitor') return 'sqlite'
+    if (value === 'postgres' || value === 'cockroachdb' || value === 'aurora-postgres') return 'postgres'
+    if (value === 'mariadb') return 'mariadb'
+    if (value === 'mysql' || value === 'aurora-mysql') return 'mysql'
+    throw new Error(`Unsupported database engine for migration: ${type}`)
+}
+
+/**
+ * The minimal database handle the tool needs.
+ *
+ * `query` returns rows for a SELECT and is not required to return anything meaningful otherwise —
+ * which is exactly what every driver in scope already does.
+ */
+export interface Database {
+    readonly engine: Engine
+    query(sql: string, parameters?: readonly unknown[]): Promise<any[]>
+    /**
+     * Run `fn` inside one transaction on ONE connection, committing on return and rolling back on
+     * throw. Absent when the caller cannot supply a single-connection handle — the migration then
+     * refuses to run unless the engine is one whose DDL would not have rolled back anyway.
+     */
+    transaction?<T>(fn: (tx: Database) => Promise<T>): Promise<T>
+    /** SQLite only: the database file, needed by the backup step. Null for the other engines. */
+    readonly filePath?: string | null
+}
+
+/** The parts of a TypeORM `DataSource` this tool uses. Structural on purpose — see the file header. */
+export interface TypeOrmDataSourceLike {
+    readonly options: { readonly type: string; readonly database?: unknown }
+    query(sql: string, parameters?: unknown[]): Promise<any>
+    createQueryRunner(): TypeOrmQueryRunnerLike
+}
+
+export interface TypeOrmQueryRunnerLike {
+    connect(): Promise<unknown>
+    release(): Promise<unknown>
+    startTransaction(): Promise<unknown>
+    commitTransaction(): Promise<unknown>
+    rollbackTransaction(): Promise<unknown>
+    query(sql: string, parameters?: unknown[]): Promise<any>
+}
+
+/**
+ * Adapt a live TypeORM DataSource to {@link Database}.
+ *
+ * The transaction runs on a single pinned QueryRunner. That matters on Postgres and MySQL, where
+ * `dataSource.query()` takes an arbitrary connection from the pool — issuing a bare `BEGIN` through
+ * it and then the work through another connection produces a transaction that contains nothing,
+ * which is the failure mode this adapter exists to prevent.
+ */
+export const fromDataSource = (dataSource: TypeOrmDataSourceLike): Database => {
+    const engine = normaliseEngine(dataSource.options.type)
+    const database = dataSource.options.database
+    return {
+        engine,
+        filePath: engine === 'sqlite' && typeof database === 'string' ? database : null,
+        query: async (sql, parameters) => {
+            const result = await dataSource.query(sql, parameters ? [...parameters] : undefined)
+            return Array.isArray(result) ? result : []
+        },
+        transaction: async <T>(fn: (tx: Database) => Promise<T>): Promise<T> => {
+            const runner = dataSource.createQueryRunner()
+            await runner.connect()
+            await runner.startTransaction()
+            const scoped: Database = {
+                engine,
+                filePath: engine === 'sqlite' && typeof database === 'string' ? database : null,
+                query: async (sql, parameters) => {
+                    const result = await runner.query(sql, parameters ? [...parameters] : undefined)
+                    return Array.isArray(result) ? result : []
+                }
+            }
+            try {
+                const value = await fn(scoped)
+                await runner.commitTransaction()
+                return value
+            } catch (error) {
+                // A rollback that itself fails must not mask the original error — that is how a
+                // failed upgrade ends up reported as "cannot rollback" with no cause attached.
+                try {
+                    await runner.rollbackTransaction()
+                } catch {
+                    /* deliberately swallowed; the original error is the one that matters */
+                }
+                throw error
+            } finally {
+                await runner.release()
+            }
+        }
+    }
+}
+
+/**
+ * Quote an identifier for `engine`. Backticks on MySQL/MariaDB, double quotes everywhere else.
+ *
+ * Identifiers are WHITELISTED rather than escaped. Every table, column and index name this tool
+ * quotes is one it chose itself or one it read back out of the catalog, so a whitelist costs
+ * nothing here; and quoting is the single place where a name that arrived as DATA could become
+ * SQL. A blacklist of dangerous characters is the version of this function that eventually lets
+ * one through.
+ */
+const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*$/
+
+export const quote = (engine: Engine, identifier: string): string => {
+    if (!SAFE_IDENTIFIER.test(identifier)) throw new Error(`Refusing to quote an unsafe identifier: ${JSON.stringify(identifier)}`)
+    return engine === 'mysql' || engine === 'mariadb' ? `\`${identifier}\`` : `"${identifier}"`
+}
+
+/**
+ * Render bind parameters for `engine`: `$1, $2, …` on Postgres, `?, ?, …` on the rest.
+ *
+ * `start` lets a caller build a statement whose placeholders continue an existing sequence, which
+ * Postgres needs and the others ignore.
+ */
+export const placeholders = (engine: Engine, count: number, start = 1): string =>
+    Array.from({ length: count }, (_, index) => (engine === 'postgres' ? `$${start + index}` : '?')).join(', ')
+
+/** One placeholder. */
+export const placeholder = (engine: Engine, position: number): string => (engine === 'postgres' ? `$${position}` : '?')
+
+/**
+ * Names of every base table in the current schema, lower-cased for comparison but returned as the
+ * catalog spells them.
+ *
+ * Views are excluded deliberately: `identity_login_activity` is a VIEW over the audit trail, and a
+ * detector that counted it as a table would report a schema state that does not exist.
+ */
+export const listTables = async (db: Database): Promise<string[]> => {
+    if (db.engine === 'sqlite') {
+        const rows = await db.query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+        return rows.map((row) => String(row.name))
+    }
+    if (db.engine === 'postgres') {
+        const rows = await db.query(
+            `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'`
+        )
+        return rows.map((row) => String(row.name))
+    }
+    const rows = await db.query(
+        `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'`
+    )
+    // MySQL's information_schema returns the column as TABLE_NAME on some versions and table_name
+    // on others depending on `lower_case_table_names`; accept both rather than guess.
+    return rows.map((row) => String(row.name ?? row.NAME ?? row.table_name ?? row.TABLE_NAME))
+}
+
+/** Column names of `table`, in catalog order. Empty when the table does not exist. */
+export const listColumns = async (db: Database, table: string): Promise<string[]> => {
+    if (db.engine === 'sqlite') {
+        const rows = await db.query(`PRAGMA table_info(${quote(db.engine, table)})`)
+        return rows.map((row) => String(row.name))
+    }
+    const scope = db.engine === 'postgres' ? 'current_schema()' : 'DATABASE()'
+    const rows = await db.query(
+        `SELECT column_name AS name FROM information_schema.columns WHERE table_schema = ${scope} AND table_name = ${placeholder(
+            db.engine,
+            1
+        )} ORDER BY ordinal_position`,
+        [table]
+    )
+    return rows.map((row) => String(row.name ?? row.NAME ?? row.column_name ?? row.COLUMN_NAME))
+}
+
+export const tableExists = async (db: Database, table: string): Promise<boolean> => {
+    const tables = await listTables(db)
+    const wanted = table.toLowerCase()
+    return tables.some((name) => name.toLowerCase() === wanted)
+}
+
+export const columnExists = async (db: Database, table: string, column: string): Promise<boolean> => {
+    const columns = await listColumns(db, table)
+    const wanted = column.toLowerCase()
+    return columns.some((name) => name.toLowerCase() === wanted)
+}
+
+/** `SELECT COUNT(*)`, normalised across drivers that return the count as a string. */
+export const countRows = async (db: Database, table: string): Promise<number> => {
+    const rows = await db.query(`SELECT COUNT(*) AS c FROM ${quote(db.engine, table)}`)
+    const value = rows[0] ? rows[0].c ?? rows[0].C ?? rows[0].count : 0
+    return Number(value ?? 0)
+}
+
+/** The type to give a denormalised tenant-key column on `engine`. Matches how ids are already stored. */
+export const uuidColumnType = (engine: Engine): string =>
+    engine === 'sqlite' ? 'varchar' : engine === 'postgres' ? 'varchar' : 'varchar(36)'

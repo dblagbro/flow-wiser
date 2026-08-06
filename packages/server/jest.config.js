@@ -4,8 +4,10 @@ module.exports = {
     // Set the test environment to Node.js
     testEnvironment: 'node',
 
-    // Define the root directory for tests and modules
-    roots: ['<rootDir>/src'],
+    // Define the root directories for tests and modules. `test/` holds the suites that verify a
+    // subsystem end to end rather than a single module — they live outside src/ because they are
+    // not shipped, and they must be discovered or they are decorative.
+    roots: ['<rootDir>/src', '<rootDir>/test'],
 
     // Use ts-jest to transform TypeScript files
     transform: {
