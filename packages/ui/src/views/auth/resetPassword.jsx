@@ -62,10 +62,30 @@ const ResetPasswordPage = () => {
         type: 'text'
     }
 
+    const currentPasswordInput = {
+        label: 'Current Password',
+        name: 'currentPassword',
+        type: 'password',
+        placeholder: '********'
+    }
+
     const [params] = useSearchParams()
     const token = params.get('token')
 
+    // Two flows arrive on this one screen.
+    //
+    // With a token in the URL this is the FORGOTTEN-password flow: the user is not signed in, and the
+    // mailed token is the proof. Unchanged below.
+    //
+    // Without one, the user got here because a protected route answered 403 must_change_password and
+    // redirected them (see the server's identity/middleware/session.ts). They ARE signed in, they
+    // have no token and no way to obtain one, and the form used to demand one — so the screen they
+    // were sent to could not be submitted at all. In that case the proof is the CURRENT password,
+    // which is what POST /account/reset-password accepts over a live session.
+    const isForcedChange = !token
+
     const [emailVal, setEmailVal] = useState('')
+    const [currentPasswordVal, setCurrentPasswordVal] = useState('')
     const [newPasswordVal, setNewPasswordVal] = useState('')
     const [confirmPasswordVal, setConfirmPasswordVal] = useState('')
     const [tokenVal, setTokenVal] = useState(token ?? '')
@@ -84,7 +104,11 @@ const ResetPasswordPage = () => {
         const validationErrors = []
         setAuthErrors([])
         setAuthRateLimitError(null)
-        if (!tokenVal) {
+        if (isForcedChange) {
+            if (!currentPasswordVal) {
+                validationErrors.push('Current Password cannot be left blank!')
+            }
+        } else if (!tokenVal) {
             validationErrors.push('Token cannot be left blank!')
         }
         if (newPasswordVal !== confirmPasswordVal) {
@@ -94,6 +118,12 @@ const ResetPasswordPage = () => {
         if (passwordErrors.length > 0) {
             validationErrors.push(...passwordErrors)
         }
+        // The current password is not run through validatePassword: it is an existing credential and
+        // may predate the policy the new one has to satisfy. The server is the judge of whether it is
+        // right, and answers 401 if it is not.
+        if (isForcedChange && currentPasswordVal && currentPasswordVal === newPasswordVal) {
+            validationErrors.push('New Password must be different from Current Password.')
+        }
         if (validationErrors.length > 0) {
             setAuthErrors(validationErrors)
             return
@@ -101,7 +131,7 @@ const ResetPasswordPage = () => {
         const body = {
             user: {
                 email: emailVal,
-                tempToken: tokenVal,
+                ...(isForcedChange ? { currentPassword: currentPasswordVal } : { tempToken: tokenVal }),
                 password: newPasswordVal
             }
         }
@@ -125,6 +155,7 @@ const ResetPasswordPage = () => {
                 })
                 setEmailVal('')
                 setTokenVal('')
+                setCurrentPasswordVal('')
                 setNewPasswordVal('')
                 setConfirmPasswordVal('')
                 goLogin()
@@ -197,28 +228,49 @@ const ResetPasswordPage = () => {
                                     showDialog={false}
                                 />
                             </Box>
-                            <Box>
-                                <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                    <Typography>
-                                        Reset Token<span style={{ color: 'red' }}>&nbsp;*</span>
+                            {isForcedChange ? (
+                                <Box>
+                                    <div style={{ display: 'flex', flexDirection: 'row' }}>
+                                        <Typography>
+                                            Current Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        </Typography>
+                                        <Typography align='left'></Typography>
+                                        <div style={{ flexGrow: 1 }}></div>
+                                    </div>
+                                    <Input
+                                        inputParam={currentPasswordInput}
+                                        onChange={(newValue) => setCurrentPasswordVal(newValue)}
+                                        value={currentPasswordVal}
+                                        showDialog={false}
+                                    />
+                                    <Typography variant='caption'>
+                                        <i>Enter the password you signed in with. It is required to prove this is your account.</i>
                                     </Typography>
-                                    <div style={{ flexGrow: 1 }}></div>
-                                </div>
-                                <OutlinedInput
-                                    fullWidth
-                                    type='string'
-                                    placeholder='Paste in the reset token.'
-                                    multiline={true}
-                                    rows={3}
-                                    inputParam={resetPasswordInput}
-                                    onChange={(e) => setTokenVal(e.target.value)}
-                                    value={tokenVal}
-                                    sx={{ mt: '8px' }}
-                                />
-                                <Typography variant='caption'>
-                                    <i>Please copy the token you received in your email.</i>
-                                </Typography>
-                            </Box>
+                                </Box>
+                            ) : (
+                                <Box>
+                                    <div style={{ display: 'flex', flexDirection: 'row' }}>
+                                        <Typography>
+                                            Reset Token<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        </Typography>
+                                        <div style={{ flexGrow: 1 }}></div>
+                                    </div>
+                                    <OutlinedInput
+                                        fullWidth
+                                        type='string'
+                                        placeholder='Paste in the reset token.'
+                                        multiline={true}
+                                        rows={3}
+                                        inputParam={resetPasswordInput}
+                                        onChange={(e) => setTokenVal(e.target.value)}
+                                        value={tokenVal}
+                                        sx={{ mt: '8px' }}
+                                    />
+                                    <Typography variant='caption'>
+                                        <i>Please copy the token you received in your email.</i>
+                                    </Typography>
+                                </Box>
+                            )}
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>

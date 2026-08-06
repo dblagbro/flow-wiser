@@ -79,6 +79,17 @@ export const RecoveryAuditAction = {
     ADMIN_RESET_PASSWORD: 'identity.recovery.admin.reset_password',
     ADMIN_LIST: 'identity.recovery.admin.list',
     ADMIN_UNLOCK: 'identity.recovery.admin.unlock',
+    /**
+     * Its OWN action, not a reuse of `ADMIN_RESET_PASSWORD`.
+     *
+     * Reusing the reset action would make the trail say a credential was replaced when it was not —
+     * and an investigator reading "the recovery CLI reset this password" would go looking for who
+     * now knows it, which is exactly the wrong question. Reusing the HTTP-side
+     * `AuditAction.AUTH_PASSWORD_CHANGE` would be worse still: that action means "the account
+     * holder proved their current password", and this command by construction proves nothing.
+     * A distinct verb keeps both other actions honest.
+     */
+    ADMIN_CLEAR_PASSWORD_CHANGE: 'identity.recovery.admin.clear_password_change',
     MFA_DISABLE: 'identity.recovery.mfa.disable',
     SSO_DISABLE: 'identity.recovery.sso.disable',
     SESSION_REVOKE_ALL: 'identity.recovery.session.revoke_all',
