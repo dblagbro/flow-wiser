@@ -134,6 +134,10 @@ export const disableMfaForAccount = async (input: MfaDisableInput): Promise<MfaD
 }
 
 export default class MfaDisable extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Revoke every MFA factor and outstanding recovery code for an account (lost authenticator).'
 
     static examples = ['<%= config.bin %> mfa:disable --email ops@example.com']

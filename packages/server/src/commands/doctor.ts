@@ -159,27 +159,38 @@ export const runDoctor = async (context: RecoveryContext & { env?: NodeJS.Proces
         checks.push(await checkPasswordAndMfaState(queryRunner, dataSource, env))
         checks.push(await checkTenantKeys(queryRunner, dataSource))
         checks.push(await checkCredentialReferences(queryRunner, dataSource))
-        checks.push(checkAuditHealth())
     } finally {
         if (!queryRunner.isReleased) await queryRunner.release()
     }
 
-    const failures = checks.filter((check) => check.status === 'fail').length
-    const warnings = checks.filter((check) => check.status === 'warn').length
+    const preliminaryFailures = checks.filter((check) => check.status === 'fail').length
+    const preliminaryWarnings = checks.filter((check) => check.status === 'warn').length
 
+    // Written BEFORE the audit-health check, deliberately. §7 requires every recovery command to
+    // leave a record, and this is doctor's — but it is also the run's own live test of whether the
+    // trail can be written at all. On a database whose identity tables are missing this insert
+    // fails, `AuditService` counts the failure, and the check below then reports the hole. Running
+    // the check first would have reported a healthy sink one line before proving otherwise.
     await recordRecoveryEvent(audit, actor, {
         action: RecoveryAuditAction.DOCTOR,
         // The command SUCCEEDED even when the instance is broken — the outcome describes the run,
         // not the patient. A failed diagnosis is one that could not be performed.
         outcome: AuditOutcome.SUCCESS,
         targetType: 'instance',
-        message: `Recovery CLI ran doctor: ${failures} failure(s), ${warnings} warning(s) across ${checks.length} checks`,
+        message: `Recovery CLI ran doctor: ${preliminaryFailures} failure(s), ${preliminaryWarnings} warning(s) across ${
+            checks.length + 1
+        } checks`,
         detail: {
-            failures,
-            warnings,
+            failures: preliminaryFailures,
+            warnings: preliminaryWarnings,
             checks: checks.map((check) => ({ name: check.name, status: check.status, summary: check.summary }))
         }
     })
+
+    checks.push(checkAuditHealth())
+
+    const failures = checks.filter((check) => check.status === 'fail').length
+    const warnings = checks.filter((check) => check.status === 'warn').length
 
     return { target: context.target ?? 'unknown', checks, failures, warnings }
 }
@@ -674,13 +685,17 @@ const checkAuditHealth = (): DoctorCheck => {
     const name = 'Audit — sink health (this process)'
     const health = getAuditHealth()
     if (health.healthy) {
-        return { name, status: 'ok', summary: 'No audit write has failed in this process.', details: [] }
+        return { name, status: 'ok', summary: "Doctor's own audit record was written; the trail is accepting writes.", details: [] }
     }
     return {
         name,
         status: 'fail',
-        summary: `${health.failures} audit write(s) failed in this process — the trail has holes.`,
-        details: [`last failure ${health.lastFailureAt?.toISOString()}`, `last error   ${health.lastError}`]
+        summary: `${health.failures} audit write(s) failed in this process — the trail cannot be written.`,
+        details: [
+            `last failure ${health.lastFailureAt?.toISOString()}`,
+            `last error   ${health.lastError}`,
+            'Every recovery action taken against this database is going unrecorded (REQUIREMENTS-AUTH-RBAC §10).'
+        ]
     }
 }
 
@@ -709,6 +724,10 @@ export const formatDoctorReport = (report: DoctorReport, verbose: boolean): stri
 }
 
 export default class Doctor extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Diagnose schema and identity state: migrations, identity tables, tenant keys, and broken credential references.'
 
     static examples = ['<%= config.bin %> doctor', '<%= config.bin %> doctor --verbose', '<%= config.bin %> doctor --json']

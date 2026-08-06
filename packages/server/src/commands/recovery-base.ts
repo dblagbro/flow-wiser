@@ -440,6 +440,14 @@ export const buildRecoveryDataSource = (env: NodeJS.ProcessEnv = process.env): {
  * a non-zero status is returned on failure. `runRecovery()` is what subclasses write.
  */
 export abstract class RecoveryCommand extends BaseCommand {
+    /**
+     * oclif globs every file under `commands/` and lists whatever exports a `run`, so this abstract
+     * base would otherwise appear in `flowise --help` as a command called `recovery-base` that
+     * cannot be run. (`commands/base.ts` has the same problem and shows up as `base`; fixing that
+     * one belongs to whoever owns it.)
+     */
+    static hidden = true
+
     protected dataSource!: DataSource
     protected audit!: AuditService
     protected actor: RecoveryActor = describeActor()
@@ -447,6 +455,26 @@ export abstract class RecoveryCommand extends BaseCommand {
     protected exitWithFailure = false
 
     protected abstract runRecovery(): Promise<void>
+
+    /**
+     * Turn a flag error into one sentence instead of four stack traces.
+     *
+     * `BaseCommand.init()` parses the flags AND installs process-wide `uncaughtException` /
+     * `unhandledRejection` loggers. A rejected parse — `--role superadmin` against the six-role
+     * `options` list — therefore surfaces through oclif's handler and through both of those, so the
+     * operator gets the same message four times wrapped in `@oclif/core` internals. That is a poor
+     * way to tell somebody they made a typo, and this is a tool people use while an outage is
+     * running. Catching it here keeps oclif's actual message (it names the six valid roles) and
+     * drops everything around it.
+     */
+    async init(): Promise<void> {
+        try {
+            await super.init()
+        } catch (error) {
+            this.log(messageOf(error))
+            await this.failExit()
+        }
+    }
 
     async run(): Promise<void> {
         const built = buildRecoveryDataSource(process.env)

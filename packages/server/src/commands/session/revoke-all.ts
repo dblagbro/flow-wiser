@@ -100,6 +100,10 @@ export const revokeAllSessions = async (input: RevokeAllInput): Promise<RevokeAl
 }
 
 export default class SessionRevokeAll extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Revoke every live session, instance-wide or for one account.'
 
     static examples = ['<%= config.bin %> session:revoke-all', '<%= config.bin %> session:revoke-all --email ops@example.com']

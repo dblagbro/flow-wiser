@@ -135,6 +135,10 @@ export const unlockAdminAccount = async (input: UnlockInput): Promise<UnlockResu
 }
 
 export default class AdminUnlock extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Clear an account lockout and its failed-attempt count, and reactivate an inactive membership.'
 
     static examples = ['<%= config.bin %> admin:unlock --email ops@example.com']

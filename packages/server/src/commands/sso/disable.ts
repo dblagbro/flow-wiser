@@ -113,6 +113,10 @@ export const disableSso = async (input: SsoDisableInput): Promise<SsoDisableResu
 }
 
 export default class SsoDisable extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Disable SSO login methods so local password login is reachable during a provider outage.'
 
     static examples = ['<%= config.bin %> sso:disable', '<%= config.bin %> sso:disable --provider azure']

@@ -161,6 +161,10 @@ export const formatAdminList = (rows: AdminListRow[]): string[] => {
 }
 
 export default class AdminList extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'List every account, with the state that explains why it can or cannot log in.'
 
     static examples = ['<%= config.bin %> admin:list', '<%= config.bin %> admin:list --json']

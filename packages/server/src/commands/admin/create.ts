@@ -281,6 +281,10 @@ const resolveRole = async (
 }
 
 export default class AdminCreate extends RecoveryCommand {
+    /** `RecoveryCommand` is `hidden` so the abstract base does not appear in help; the concrete
+     *  commands opt back in, because static members are inherited. */
+    static hidden = false
+
     static description = 'Create an administrative account. The password is prompted, never passed as an argument.'
 
     static examples = [
