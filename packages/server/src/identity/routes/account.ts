@@ -164,8 +164,12 @@ export const createAccountRouter = (options: AccountRouterOptions = {}): Router 
                 return
             }
 
+            // `principal.session.userId` and NOT `principal.user.id`: the latter is optional on
+            // `AuthenticatedUser` because the API-key branch has no user (§C.2), whereas the session
+            // ROW always names its owner. Which account is being changed is the one fact this handler
+            // may not get wrong, so it is read from the column that cannot be absent.
             const result = await auth.changeOwnPassword(
-                { userId: principal.user.id, activeWorkspaceId: principal.user.activeWorkspaceId ?? null },
+                { userId: principal.session.userId, activeWorkspaceId: principal.user.activeWorkspaceId ?? null },
                 { email: fields.email, currentPassword: fields.currentPassword, newPassword: fields.password },
                 {
                     ip: req.ip ?? null,
