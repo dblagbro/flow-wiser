@@ -13,7 +13,7 @@ const AboutDialog = ({ show, onCancel }) => {
 
     useEffect(() => {
         if (show) {
-            const latestReleaseReq = axios.get('https://api.github.com/repos/FlowiseAI/Flowise/releases/latest')
+            const latestReleaseReq = axios.get('https://api.github.com/repos/dblagbro/flow-wiser/releases/latest')
             const currentVersionReq = axios.get(`${baseURL}/api/v1/version`, {
                 withCredentials: true,
                 headers: { 'Content-type': 'application/json', 'x-request-from': 'internal' }
