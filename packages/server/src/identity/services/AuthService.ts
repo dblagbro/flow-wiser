@@ -6,7 +6,7 @@ import { Session, SessionAuthMethod, SessionRevokeReason } from '../../database/
 import { User } from '../../database/entities/identity/User'
 import { WorkspaceUser } from '../../database/entities/identity/WorkspaceUser'
 import logger from '../../utils/logger'
-import { hash, needsRehash, UnsupportedHashError, verify, verifyDummy } from '../crypto/passwords'
+import { hash, needsRehash, UnsupportedHashError, validatePassword, verify, verifyDummy } from '../crypto/passwords'
 import { isKnownPermission, withImpliedViewPermissions } from '../rbac/Permissions'
 import { AuthenticatedUser, FeatureFlags } from '../rbac/types'
 import { AuditService } from './AuditService'
@@ -143,6 +143,11 @@ export type LoginResult =
            */
           redirectUrl?: string
       }
+
+/** Outcome of {@link AuthService.changeOwnPassword}. A failure carries the exact HTTP shape to send. */
+export type ChangePasswordResult =
+    | { ok: true; session: IssuedSession; body: Record<string, unknown> }
+    | { ok: false; status: number; body: Record<string, unknown> }
 
 export type RefreshResult = { ok: true; sessionId: string; issued: IssuedSession } | { ok: false; reason: SessionInvalidReason }
 
@@ -713,6 +718,146 @@ export class AuthService {
     /** `/login` — the resolver page, which re-runs `POST /auth/resolve` and bounces onward (AuthRoutes.jsx:23). */
     private signInResolverUrl(): string {
         return this.env.IDENTITY_LOGIN_RESOLVER_URL || '/login'
+    }
+
+    /**
+     * Change the password of an ALREADY-AUTHENTICATED user, and clear `mustChangePassword`.
+     *
+     * This is the only code path in the system that sets that flag back to false. Everything else —
+     * `admin:create`, `admin:reset-password`, the migration tool — sets it to true. Without this,
+     * a forced change was a trap door: the account signed in fine and every subsequent request
+     * answered 403 forever.
+     *
+     * ── Why the current password is required even though the session is valid ────────────────────
+     *
+     * `mustChangePassword` means this user authenticated moments ago, so asking again costs them
+     * nothing. What it buys is that a stolen session cookie is not by itself enough to seize the
+     * account: an attacker replaying the cookie still cannot change the password, and so cannot
+     * lock the owner out or survive the owner's own password change.
+     *
+     * ── Failure shape ────────────────────────────────────────────────────────────────────────────
+     *
+     * A wrong current password burns a real verification and returns the same generic message as a
+     * failed login. There is no oracle here worth protecting — the caller already knows the account
+     * exists, they are signed in as it — but the timing symmetry costs nothing to keep.
+     *
+     * Policy violations ARE reported specifically, by machine-readable code. That is not a leak: the
+     * rules are published in the client (`packages/ui/.../validatePassword`), and a user told only
+     * "invalid" cannot comply.
+     */
+    async changeOwnPassword(
+        userId: string,
+        currentPassword: unknown,
+        newPassword: unknown,
+        context: AuthContext = {}
+    ): Promise<ChangePasswordResult> {
+        const auditBase = {
+            route: context.route ?? null,
+            ipAddress: context.ip ?? null,
+            userAgent: context.userAgent ?? null
+        }
+        const deny = async (reason: string, status: number, body: Record<string, unknown>): Promise<ChangePasswordResult> => {
+            await this.audit
+                .record({
+                    action: AuditAction.AUTH_PASSWORD_CHANGE,
+                    outcome: AuditOutcome.FAILURE,
+                    subject: { type: AuditSubjectType.USER, id: userId },
+                    target: { type: 'user', id: userId },
+                    reason,
+                    message: `Password change refused for user ${userId}: ${reason}`,
+                    ...auditBase
+                })
+                .catch(() => undefined)
+            return { ok: false, status, body }
+        }
+
+        try {
+            const user = await this.getDataSource()
+                .getRepository(User)
+                .findOne({
+                    where: { id: userId },
+                    select: { id: true, email: true, credential: true, isSSO: true, mustChangePassword: true }
+                })
+
+            if (!user) return await deny('unknown_user', 401, { message: LoginErrorMessage.UNKNOWN_USER, error: 'invalid_credential' })
+
+            // An SSO account has no local password to change; its authority lives with the provider.
+            if (!user.credential) {
+                return await deny('no_local_credential', 400, {
+                    message: 'This account signs in through an identity provider and has no password to change',
+                    error: 'no_local_credential'
+                })
+            }
+
+            if (typeof currentPassword !== 'string' || !(await verify(currentPassword, user.credential))) {
+                return await deny('incorrect_credential', 401, {
+                    message: LoginErrorMessage.UNKNOWN_USER,
+                    error: 'invalid_credential'
+                })
+            }
+
+            const violations = validatePassword(newPassword)
+            if (violations.length > 0) {
+                return await deny('weak_password', 400, {
+                    message: 'The new password does not meet the password policy',
+                    error: 'weak_password',
+                    violations
+                })
+            }
+
+            // Refusing a no-op change: it would revoke every other session and rotate the
+            // credential timestamp while leaving the secret exactly as compromised as before, and
+            // it would let a user "satisfy" a forced change without changing anything.
+            if (await verify(newPassword as string, user.credential)) {
+                return await deny('unchanged_password', 400, {
+                    message: 'The new password must be different from the current one',
+                    error: 'unchanged_password'
+                })
+            }
+
+            const credential = await hash(newPassword as string)
+            const changedAt = new Date()
+
+            await this.getDataSource()
+                .getRepository(User)
+                .update({ id: user.id }, { credential, credentialUpdatedDate: changedAt, mustChangePassword: false })
+
+            // Revoke EVERY session, including this one, then issue a fresh pair. Any session an
+            // attacker holds dies here; the caller keeps working because they just proved the old
+            // password. Order matters: revoke first, so a session issued after this instant is not
+            // caught by the sweep.
+            const revoked = await this.sessions.revokeAllForUser(user.id, SessionRevokeReason.CREDENTIAL_CHANGED)
+            const session = await this.sessions.issue({
+                userId: user.id,
+                userAgent: context.userAgent ?? null,
+                ip: context.ip ?? null
+            })
+
+            await this.audit
+                .record({
+                    action: AuditAction.AUTH_PASSWORD_CHANGE,
+                    outcome: AuditOutcome.SUCCESS,
+                    subject: { type: AuditSubjectType.USER, id: user.id },
+                    target: { type: 'user', id: user.id },
+                    message: `User ${user.id} changed their own password; ${revoked} session(s) revoked`,
+                    // Neither hash appears, old or new (§9). `forcedChangeCleared` rather than
+                    // anything spelled with "password": the central redactor drops keys by NAME, so
+                    // the obvious spelling would store the string "[redacted]" instead of the fact.
+                    detail: { sessionsRevoked: revoked, forcedChangeCleared: user.mustChangePassword === true },
+                    ...auditBase
+                })
+                .catch(() => undefined)
+
+            return {
+                ok: true,
+                session,
+                body: { message: 'password_changed', mustChangePassword: false, sessionsRevoked: revoked }
+            }
+        } catch (error) {
+            // Fail closed, like every other path in this file.
+            logger.error(`[AuthService] password change failed for user ${userId}: ${message(error)}`)
+            return { ok: false, status: 500, body: { message: LoginErrorMessage.UNKNOWN_ERROR, error: 'unknown_error' } }
+        }
     }
 }
 
