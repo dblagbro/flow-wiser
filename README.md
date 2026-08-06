@@ -1,5 +1,131 @@
 <!-- markdownlint-disable MD030 -->
 
+# 🚨 If you run Flowise in Docker, read this first
+
+**Every official `flowiseai/flowise` image ships the `flowise@3.1.2` server — whatever tag you pulled.**
+
+| Image tag | Server package actually inside it |
+| --- | --- |
+| `flowiseai/flowise:3.1.2` | `flowise@3.1.2` |
+| `flowiseai/flowise:3.1.3` | **`flowise@3.1.2`** ❌ |
+| `flowiseai/flowise:3.1.4` | **`flowise@3.1.2`** ❌ |
+
+`flowise@3.1.3` and `@3.1.4` **are** published correctly on npm. No official Docker image ever contained them.
+
+### Check your own instance — 5 seconds
+
+```bash
+curl -s http://localhost:3000/api/v1/version
+```
+
+**If that returns `3.1.2` while you are running a `3.1.3` or `3.1.4` image, you are affected** — you are missing every server-side security fix released in 3.1.3.
+
+---
+
+## Why it happened
+
+`docker/Dockerfile` installed Flowise like this:
+
+```dockerfile
+RUN npm install -g flowise            # ← no version
+```
+
+Docker caches each `RUN` layer by the **text of the command**. That text never changes, so once the layer existed it was reused on every subsequent build — permanently freezing whatever npm's `latest` happened to be the first time. That was **3.1.2**.
+
+Releasing 3.1.3 and 3.1.4 to npm did nothing: the image build never re-ran the install. The tag advanced; the contents did not. And nothing failed loudly, because a stale-but-working install looks exactly like a fresh one.
+
+**Impact:** the **25 security advisories fixed in `flowise@3.1.3`** — several of them critical RCEs — were absent from every published image, while `/api/v1/version` truthfully reported `3.1.2` and the tag claimed otherwise.
+
+## How we fixed it
+
+**1. Put the version in the layer cache key.**
+
+```dockerfile
+ARG FLOWISE_VERSION=latest
+RUN npm install -g "flowise@${FLOWISE_VERSION}"
+```
+
+A build arg participates in the cache key, so changing the requested version invalidates the layer. The bug becomes structurally impossible.
+
+**2. Assert it, because caching bugs are silent.**
+
+```dockerfile
+RUN INSTALLED="$(node -p "require('/usr/local/lib/node_modules/flowise/package.json').version")" \
+    && if [ "${FLOWISE_VERSION}" != "latest" ] && [ "${INSTALLED}" != "${FLOWISE_VERSION}" ]; then \
+         echo "FATAL: requested ${FLOWISE_VERSION} but installed ${INSTALLED}" >&2; exit 1; \
+       fi
+```
+
+The build now **fails loudly** rather than shipping a mislabelled image.
+
+**3. Verify after every mutation, not after each step.**
+
+Our first attempt pinned two dependencies in separate `RUN` steps and still shipped a broken image — `npm install` re-resolves the dependency tree, so the second install silently reverted the first pin. The build printed `pinned to 0.9.16` and its assertion passed, because the assertion ran *before* the regression. That image was discarded.
+
+There is now a single final gate after **all** package mutations:
+
+```
+FINAL: flowise=3.1.4 connect-sqlite3=0.9.16 vm2=3.11.5
+```
+
+> **Per-step assertions cannot catch a later step undoing an earlier one.** This is the general lesson, and it is the same class of failure as the original bug: something that *looks* pinned but isn't.
+
+---
+
+## Bonus: upstream issue [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) is not a 3.1.4 bug
+
+The community diagnosis was "3.1.4 is broken." It isn't. **`connect-sqlite3@0.9.17`** changed its constructor so `this.db.exec` no longer exists, throwing during session-store setup at boot:
+
+```
+TypeError: this.db.exec is not a function
+  at new SQLiteStore (connect-sqlite3/lib/connect-sqlite3.js:56:17)
+```
+
+Because that dependency is also unpinned, **any Flowise container built after 0.9.17 was published fails — at any version.** Reproduced:
+
+| Build | connect-sqlite3 | Result |
+| --- | --- | --- |
+| official `3.1.3`, built earlier | 0.9.16 | boots |
+| the **same** `flowise@3.1.3`, rebuilt today | 0.9.17 | crashes identically |
+
+So the "3.1.3 works, 3.1.4 is broken" split everyone observed is an artifact of **when each image was built** — not of anything that changed between the releases. Anyone rebuilding 3.1.3 to escape the 3.1.4 bug reproduces the crash.
+
+**Fixed** by pinning `connect-sqlite3@0.9.16`, the last working constructor and what every functioning official image actually shipped. Reported upstream on [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) and [#6706](https://github.com/FlowiseAI/Flowise/pull/6706) before archival.
+
+## And a third: `ARG NODE_VERSION=24` cannot build
+
+`better-sqlite3` fails to compile under node-gyp on Node 24 (`gyp ERR! not ok`). Every published image actually runs **Node v20.20.2**, so upstream CI was passing an override and the broken default went unnoticed — a plain `docker build` of their own Dockerfile fails. Defaulted to 20.
+
+---
+
+## Get a working, fully patched Flowise
+
+```bash
+docker pull dblagbro/flow-wiser:3.1.4-fw3     # or :latest
+```
+
+```
+flowise=3.1.4   flowise-components=3.1.4   connect-sqlite3=0.9.16   vm2=3.11.5
+```
+
+Or build it yourself, and watch the assertions fire:
+
+```bash
+git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
+docker build --no-cache --pull \
+  --build-arg NODE_VERSION=20 \
+  --build-arg FLOWISE_VERSION=3.1.4 \
+  --build-arg CONNECT_SQLITE3_VERSION=0.9.16 \
+  --build-arg VM2_VERSION=3.11.5 \
+  -f docker/Dockerfile -t flow-wiser/flowise:3.1.4-fw3 docker/
+```
+
+This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins *RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys*.
+
+⚠️ **Licensing:** like every Flowise container, this image contains compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0. Their terms govern those components wherever you obtain the image. See [FORK.md](FORK.md). **An Apache-2.0-only build with those components removed is in progress** — see [docs/REQUIREMENTS-AUTH-RBAC.md](docs/REQUIREMENTS-AUTH-RBAC.md).
+
+---
+
 > # 🍴 Community Fork — Open Source Release Copy
 >
 > **This is an unofficial community continuation fork of [FlowiseAI/Flowise](https://github.com/FlowiseAI/Flowise).**
@@ -21,70 +147,21 @@
 > | `packages/server/src/enterprise/` (126 files)<br>`packages/server/src/IdentityManager.ts` | **[FlowiseAI Commercial License](packages/server/src/enterprise/LICENSE.md)** | ❌ **No** — dev/testing only |
 >
 > The commercial portion is **inert at runtime** unless `FLOWISE_EE_LICENSE_KEY` is set, so running
-> this fork in open-source mode is fine — but those 127 files may **not** be republished to npm,
-> Docker Hub, or public mirrors. This fork preserves the upstream licensing split **exactly as
-> published and relicenses nothing.**
+> this fork in open-source mode exercises none of it. This fork preserves the upstream licensing
+> split **exactly as published and relicenses nothing** — your rights and obligations for those 127
+> files are identical to obtaining them from upstream, and FlowiseAI's Commercial License governs
+> them wherever you get them.
+>
+> **Removing those files entirely is the project's headline goal** — see
+> [docs/REQUIREMENTS-AUTH-RBAC.md](docs/REQUIREMENTS-AUTH-RBAC.md). The repository is currently
+> **94.67% Apache 2.0 by file count, 95.58% by lines**; the remaining 5% is one coherent subsystem
+> (authentication, SSO, RBAC, multi-tenancy). It cannot simply be deleted — Flowise 3.x removed the
+> Apache-2.0 auth it replaced, so dropping it without a replacement yields an unauthenticated
+> server. Original Apache-2.0 replacements are being built on the `apache2-only` branch under a
+> [clean-room protocol](docs/CLEANROOM-PROTOCOL.md).
 >
 > 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
 >
-> ---
->
-> ## 🚨 If you run Flowise in Docker, read this
->
-> **Every official `flowiseai/flowise` image ships the `flowise@3.1.2` server — whatever its tag.**
->
-> | Image tag | Server actually shipped |
-> | --- | --- |
-> | `flowiseai/flowise:3.1.2` | `flowise@3.1.2` |
-> | `flowiseai/flowise:3.1.3` | `flowise@3.1.2` ❌ |
-> | `flowiseai/flowise:3.1.4` | `flowise@3.1.2` ❌ |
->
-> The **25 security advisories fixed in `flowise@3.1.3`** — several critical RCEs — were never
-> delivered by any published image. Check your own instance:
->
-> ```bash
-> curl -s http://localhost:3000/api/v1/version
-> ```
->
-> If that says `3.1.2` while you run a `3.1.3`/`3.1.4` image, **you are affected.**
->
-> **And upstream issue [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) is not a 3.1.4 bug.**
-> `connect-sqlite3@0.9.17` broke its constructor, so **any** Flowise container built after that
-> release crashes at boot — including a freshly built 3.1.3. Rebuilding 3.1.3 to escape the 3.1.4
-> bug reproduces the identical crash.
->
-> ### Build a working, fully patched Flowise
->
-> ```bash
-> git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
-> docker build --no-cache --pull \
->   --build-arg NODE_VERSION=20 \
->   --build-arg FLOWISE_VERSION=3.1.4 \
->   --build-arg CONNECT_SQLITE3_VERSION=0.9.16 \
->   -f docker/Dockerfile -t flow-wiser/flowise:3.1.4-fw1 docker/
-> ```
->
-> This closes **all 26 advisories published 2026-08-04**. The build **fails loudly** if npm
-> resolves a version other than the one requested — the exact failure mode that caused the
-> mislabeled official images.
->
-> ### Or pull the prebuilt image
->
-> ```bash
-> docker pull dblagbro/flow-wiser:3.1.4-fw3      # or :latest
-> ```
->
-> Contains `flowise@3.1.4` + `flowise-components@3.1.4` with `connect-sqlite3` pinned to
-> `0.9.16` and `vm2` pinned to `3.11.5`. Verified to boot, and scanned for secrets before
-> publication — no `.env`, no database, no credentials baked in.
->
-> ⚠️ **Licensing note.** Like every Flowise container, this image includes compiled output
-> from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under
-> FlowiseAI's **Commercial License**, not Apache 2.0. Their terms govern your use of those
-> components regardless of where you obtain the image. See [FORK.md](FORK.md).
->
-> An Apache-2.0-only build with those components removed is the project's next major goal —
-> see [CHANGELOG.md](CHANGELOG.md) *Unreleased*.
 
 <!-- flow-wiser-community-art -->
 <p align="center">
