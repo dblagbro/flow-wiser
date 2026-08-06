@@ -1,10 +1,23 @@
 Copyright (c) 2023-present FlowiseAI, Inc.
+Copyright (c) 2026-present the Flow-Wiser contributors
 
-Portions of this software are licensed as follows:
+**This software is licensed in its entirety under the Apache License 2.0, as
+defined below.**
 
--   All content that resides under https://github.com/FlowiseAI/Flowise/tree/main/packages/server/src/enterprise directory and files with explicit copyright notice such as [IdentityManager.ts](https://github.com/FlowiseAI/Flowise/tree/main/packages/server/src/IdentityManager.ts) are licensed under [Commercial License](https://github.com/FlowiseAI/Flowise/tree/main/packages/server/src/enterprise/LICENSE.md).
--   All third party components incorporated into the FlowiseAI Software are licensed under the original license provided by the owner of the applicable component.
--   Content outside of the above mentioned directories or restrictions above is available under the "Apache 2.0" license as defined below.
+Upstream Flowise was open core: 127 files were governed by a separate FlowiseAI
+Inc Commercial License rather than Apache 2.0. Those files —
+`packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts` —
+have been **deleted** from this fork and are not present in this repository or in
+any artifact built from it. Nothing was relicensed; no fork can relicense code it
+does not own.
+
+What they did — authentication, RBAC, SSO and multi-tenancy — was reimplemented
+independently under Apache 2.0 in `packages/server/src/identity/`, derived only
+from Apache-2.0 sources already in this repository. See `NOTICE`,
+`docs/CLEANROOM-PROTOCOL.md` and `docs/CLEANROOM-ATTESTATION.md`.
+
+All third party components incorporated into this software remain licensed under
+the original license provided by the owner of the applicable component.
 
                                   Apache License
                              Version 2.0, January 2004

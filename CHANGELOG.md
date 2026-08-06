@@ -141,6 +141,10 @@ components wherever you obtain the image. Flow-Wiser cannot relicense them — t
 copyright is FlowiseAI's — and an Apache-2.0-only build with them removed is the
 project's next major goal. See *Unreleased* below and [FORK.md](FORK.md).
 
+> **This note applies to the `3.1.4-fw3` image only, and is retained because it was
+> accurate when that image was published.** Those files have since been removed and
+> replaced; the repository is now 100% Apache 2.0. See the *Unreleased* section below.
+
 The image was scanned before publication: no `.env` files, no application database, and
 no credential-shaped strings are baked in.
 
@@ -162,14 +166,85 @@ See [FORK.md](FORK.md) for the full licensing breakdown.
 
 ## [Unreleased]
 
+### Changed — the repository is now 100% Apache 2.0
+
+Upstream Flowise was open core. **127 files were not Apache 2.0**:
+`packages/server/src/enterprise/` (126 files) plus
+`packages/server/src/IdentityManager.ts`, governed by a FlowiseAI Commercial License
+forbidding copying, publishing and distribution. They could not be relicensed — the
+copyright is FlowiseAI's — so no Flowise fork could be freely redistributed.
+
+Those files have been **deleted**, and the functionality they provided reimplemented
+independently under Apache 2.0.
+
+They could not simply be dropped. Flowise 3.0 removed the Apache-2.0 `FLOWISE_USERNAME` /
+`FLOWISE_PASSWORD` authentication when it introduced the commercial identity stack, so
+deleting the 127 files without replacing them yields an **unauthenticated server** — on a
+product carrying 116 published security advisories.
+
+**How the replacement was written.** The entire interface was already available under a
+licence permitting us to read it: `packages/ui/` contains no commercially licensed files
+and is the client that calls the server, and `packages/server/src/routes/` carries 120
+permission call sites. A specification was derived from those sources alone — 53 endpoints,
+82 permissions, 12 entities, 363 citations, and 15 explicitly recorded gaps where the
+interface did not determine behaviour — and implemented against it. **The commercially
+licensed files were never read.** A pre-commit hook and a CI job reject any commit that
+modifies a protected path.
+
+- `docs/CLEANROOM-PROTOCOL.md` — the binding process and its prohibitions
+- `docs/CLEANROOM-ATTESTATION.md` — evidence, with commands anyone can re-run. Includes a
+  disclosed incident in which a malformed command exposed roughly twelve lines of one
+  protected file, and the remediation applied
+- `docs/SPEC-AUTH-RBAC.md` — the specification and its citations
+- `docs/HOW-WE-DID-THIS.md` — the method, written to be reusable, including what went wrong
+
+### Added — identity, RBAC, tenancy and recovery
+
+- **Authentication** under `packages/server/src/identity/`: local password login (bcrypt,
+  cost 12, chosen so existing upstream hashes verify unchanged), sessions, and SSO login
+  methods.
+- **MFA**: TOTP with hashed recovery codes, verified against the published RFC 6238 test
+  vectors. Upstream had no MFA.
+- **RBAC**: 82 permissions across 19 categories, deny-by-default and validated at
+  route-mount time. Upstream shipped 21 permissions with no server-side check at all — the
+  client rendered the buttons as `null`, so the restriction was cosmetic.
+- **`credentials:reveal` split out of `credentials:manage`**, admin-only and audited, so one
+  compromised account no longer yields every stored API key.
+- **Audit trail**: one append-only record across all domains, replacing the sign-in-only
+  log. RBAC without a record answers "was this allowed?" but never "who did it?".
+- **Encryption at rest** with per-record key version, algorithm, nonce and salt, so key
+  rotation is resumable and auditable. The key may live off-host, and the server refuses to
+  start with the published example value that `.env.example` has been shipping.
+- **Multi-tenancy** with organisations, workspaces and a denormalised tenant key on the row,
+  so a query that forgets to join cannot cross tenants.
+- **Migration from an existing Flowise database**, preserving accounts and access: password
+  hashes carry over and still verify, non-user content is byte-identical before and after,
+  dry-run writes nothing, and rollback is byte-for-byte. Verified against a copy of a real
+  production database.
+- **Recovery CLI** — `admin:create`, `admin:reset-password`, `admin:list`, `admin:unlock`,
+  `mfa:disable`, `sso:disable`, `session:revoke-all`, and `doctor`. Passwords are read from
+  `/dev/tty` and cannot be supplied by flag, pipe or environment variable. `doctor` runs
+  nine checks and exits non-zero on failure, so a half-migrated database is a finding rather
+  than a mystery.
+
+### Known gaps
+
+Stated plainly rather than omitted:
+
+- Five identity-administration endpoints (`/user`, `/role`, `/organization`,
+  `/organizationuser`, `/audit`) return **501 with a reason**. They have no call site in the
+  Apache-2.0 client, so implementing them would mean inventing behaviour — exactly what this
+  method exists to prevent.
+- Chatflow version history is designed but not yet built.
+
 ### Planned
 
 - Resolve the two remaining non-fatal node-load failures
 - Sweep remaining critical dependency advisories, including the `vm2` sandbox escapes
 - Adopt the remaining security pull requests from `upstream-archive/`
 - Public product map and contribution queue
-- Apache-2.0-only build (auth replacement + RBAC), enabling unrestricted redistribution
 - Chatflow version history
+- An Apache-2.0-only published container image
 
 ---
 

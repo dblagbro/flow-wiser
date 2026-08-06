@@ -45,26 +45,52 @@ As required by Apache License 2.0 Section 4(b), modifications are recorded here.
               Added FORK.md, NOTICE, and a fork banner in README.md.
               No upstream source code was modified.
 
+  2026-08-06  Removed all commercially licensed files and replaced the
+              functionality they provided with an independent Apache-2.0
+              implementation. This repository is now wholly Apache 2.0.
+              See "LICENSING OF THIS FORK" below.
+
 ================================================================================
-PORTIONS NOT LICENSED UNDER APACHE 2.0
+LICENSING OF THIS FORK
 ================================================================================
 
-IMPORTANT: This repository is open core, not wholly open source. The Apache
-License 2.0 does NOT apply to the following paths, which are governed by the
-separate FlowiseAI Inc Commercial License found at
-packages/server/src/enterprise/LICENSE.md:
+This repository is licensed in its entirety under the Apache License 2.0.
+
+Upstream Flowise was open core. 127 files were NOT Apache 2.0 — they were
+governed by a separate FlowiseAI Inc Commercial License that forbids copying,
+publishing, distributing, sublicensing and selling:
 
     packages/server/src/enterprise/      (126 files)
     packages/server/src/IdentityManager.ts
 
-That Commercial License permits copying and modification for development and
-testing purposes only; production use requires a valid FlowiseAI Enterprise
-subscription, and it forbids copying, merging, publishing, distributing,
-sublicensing, and selling the covered software.
+Those files have been DELETED from this fork. They are not present in this
+repository, in any branch published from it, or in any artifact built from it.
+Nothing has been relicensed: no fork can relicense code it does not own, and no
+attempt to do so was made.
 
-This fork preserves that licensing structure exactly as published upstream and
-relicenses nothing. Your rights and obligations with respect to those files are
-identical to those you would have obtaining the code from upstream.
+The functionality they provided — authentication, RBAC, SSO and multi-tenancy —
+was reimplemented from scratch under Apache 2.0 in packages/server/src/identity/.
+That reimplementation was derived exclusively from Apache-2.0 licensed sources
+in this repository (principally packages/ui/, which contains no commercially
+licensed files, and the permission call sites in packages/server/src/routes/).
+The commercially licensed files were never read, decompiled, or otherwise
+examined during its development.
+
+The process, the prohibitions it operated under, and verifiable evidence for
+both are documented in:
+
+    docs/CLEANROOM-PROTOCOL.md      the binding process
+    docs/CLEANROOM-ATTESTATION.md   the evidence, with re-runnable commands
+    docs/SPEC-AUTH-RBAC.md          the interface specification and its citations
+
+The attestation records a disclosed incident in which a malformed command
+briefly exposed approximately twelve lines of one protected file, together with
+the remediation applied. It is published rather than omitted.
+
+Because upstream's Apache-2.0 authentication was deleted in Flowise 3.0 and
+replaced by the commercial stack, simply removing those 127 files would have
+produced an unauthenticated server. That is why they were replaced rather than
+dropped.
 
 See FORK.md for full details.
 
