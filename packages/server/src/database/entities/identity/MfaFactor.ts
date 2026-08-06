@@ -107,7 +107,10 @@ export class MfaFactor {
     createdDate: Date
 
     /** Set when the first correct code is presented; null while the enrolment is unfinished */
-    @Column({ nullable: true })
+    // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
+    // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
+    // whole identity DataSource fails to initialise. Every other date column here already says so.
+    @Column({ type: 'datetime', nullable: true })
     confirmedDate?: Date | null
 
     /**
@@ -115,7 +118,10 @@ export class MfaFactor {
      * actually in service, and rejecting a replayed code — the service also records the last
      * accepted time-step, but the coarse timestamp is what the account screen renders.
      */
-    @Column({ nullable: true })
+    // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
+    // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
+    // whole identity DataSource fails to initialise. Every other date column here already says so.
+    @Column({ type: 'datetime', nullable: true })
     lastUsedDate?: Date | null
 
     /**

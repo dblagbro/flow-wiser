@@ -59,7 +59,10 @@ export class MfaRecoveryCode {
      * Single-use marker (§8: "individually consumable"). Null = still redeemable. Set — never
      * deleted — so the audit trail can answer "which recovery code was burned, and when".
      */
-    @Column({ nullable: true })
+    // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
+    // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
+    // whole identity DataSource fails to initialise. Every other date column here already says so.
+    @Column({ type: 'datetime', nullable: true })
     consumedDate?: Date | null
 
     /** The session that redeemed it, so a suspicious redemption can be traced to its login */

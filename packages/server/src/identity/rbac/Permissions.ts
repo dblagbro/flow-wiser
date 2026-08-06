@@ -7,12 +7,17 @@
  * `routes` field on each entry records the route module the literal was found in, so the
  * provenance of every token is checkable with a grep.
  *
- * Counts (SPEC-AUTH-RBAC.md §B): 82 distinct permissions — 61 enforced by a route call site,
- * 21 appearing only in the client with no Apache-2.0 route enforcement (§B.3). The scrape
+ * Counts (SPEC-AUTH-RBAC.md §B): 82 distinct SCRAPED permissions — 61 enforced by a route call
+ * site, 21 appearing only in the client with no Apache-2.0 route enforcement (§B.3). The scrape
  * reproduces that split exactly. Unenforced entries are marked `enforcement: 'unenforced'`:
  * they are real permissions the role editor can grant, but nothing in the Apache-2.0 route
  * tree checks them, so an implementer must supply the enforcement when the corresponding
  * endpoints are written.
+ *
+ * On top of the 82 scraped tokens the catalog carries the NET-NEW permissions Flow-Wiser adds of
+ * its own accord — see {@link NET_NEW_PERMISSIONS}. They are kept separate from the scrape so the
+ * provenance claim above stays literally true and checkable: every token NOT in that set can still
+ * be traced to an Apache-2.0 call site.
  *
  * This catalog is the sole authority for what a permission string may be. Anything not in it
  * is denied — see PermissionCheck.ts and REQUIREMENTS-AUTH-RBAC.md §4 ("Deny-by-default:
@@ -120,7 +125,9 @@ const SEEDS: Readonly<Record<PermissionCategory, readonly PermissionSeed[]>> = {
         ['create', ['credentials']],
         ['update', ['credentials']],
         ['delete', ['credentials']],
-        ['share', []]
+        ['share', []],
+        // NET-NEW — not scraped, see NET_NEW_PERMISSIONS below.
+        ['reveal', []]
     ],
     tools: [
         ['view', ['tools', 'custom-mcp-servers']],
@@ -203,6 +210,23 @@ const SEEDS: Readonly<Record<PermissionCategory, readonly PermissionSeed[]>> = {
  */
 const ADMINISTRATIVE = new Set(['workspace:export', 'workspace:import'])
 
+/**
+ * Permissions Flow-Wiser adds that no Apache-2.0 source contains.
+ *
+ * `credentials:reveal` — REQUIREMENTS-MIGRATION.md §3 "The credential-value split — a distinction
+ * upstream does not make". Upstream conflates managing a credential with reading it, which is why
+ * one compromised account yields every API key at once. Splitting them needs a token that upstream
+ * has no equivalent of, so it cannot come from the scrape. Held by `admin` and `super-admin` only
+ * (REQUIREMENTS-TENANCY-ACCESS.md §2), never implied by any other grant, and every use is audited
+ * (`AuditService.credentialRevealed`).
+ *
+ * It is `unenforced` for now in the same sense as the other 21: no route gates it yet, because the
+ * reveal endpoint does not exist yet. It is in the catalog so that when that endpoint is written the
+ * gate is already a known token — an unknown one would be denied by deny-by-default, which fails
+ * closed but silently, and a permission the role editor cannot show is a permission nobody grants.
+ */
+export const NET_NEW_PERMISSIONS: ReadonlySet<string> = new Set(['credentials:reveal'])
+
 const buildCatalog = (): Record<PermissionCategory, readonly PermissionDefinition[]> => {
     const catalog = {} as Record<PermissionCategory, readonly PermissionDefinition[]>
     for (const category of PERMISSION_CATEGORIES) {
@@ -242,7 +266,7 @@ export const ROUTE_ENFORCED_PERMISSIONS: ReadonlySet<string> = new Set(
     PERMISSION_DEFINITIONS.filter((p) => p.enforcement === 'route').map((p) => p.name)
 )
 
-/** The 21 permissions with no Apache-2.0 route gate yet (§B.3). */
+/** Permissions with no Apache-2.0 route gate yet — the 21 of §B.3 plus the net-new tokens above. */
 export const UNENFORCED_PERMISSIONS: ReadonlySet<string> = new Set(
     PERMISSION_DEFINITIONS.filter((p) => p.enforcement === 'unenforced').map((p) => p.name)
 )

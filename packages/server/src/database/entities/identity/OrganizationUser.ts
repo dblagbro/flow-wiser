@@ -44,7 +44,10 @@ export class OrganizationUser {
     status: MemberStatus
 
     /** Owner of last-login (spec §F-1). Null renders as 'Never' in the users table */
-    @Column({ nullable: true })
+    // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
+    // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
+    // whole identity DataSource fails to initialise. Every other date column here already says so.
+    @Column({ type: 'datetime', nullable: true })
     lastLogin?: Date | null
 
     /**
