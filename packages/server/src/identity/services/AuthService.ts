@@ -856,7 +856,11 @@ export class AuthService {
                     PasswordChangeFailure.UNCHANGED,
                     'The new password must be different from the current one.',
                     user.email,
-                    { reusedCurrentCredential: true }
+                    // NOT `reusedCurrentCredential`, and not any spelling containing `password`
+                    // either: `crypto/redaction.ts` drops a key whose NAME contains `credential`
+                    // just as readily. Verified against a live trail — the first spelling of this
+                    // key arrived as the literal string "[redacted]".
+                    { submittedValueUnchanged: true }
                 )
             }
 
