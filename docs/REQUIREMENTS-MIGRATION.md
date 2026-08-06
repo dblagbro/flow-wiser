@@ -49,22 +49,96 @@ mismatch.
 
 ## 3. Role hierarchy
 
-Five levels, replacing the three stock roles:
+Five levels, replacing the three stock roles. Specified by the operator, 2026-08-05:
 
 | Role | Intent |
 | --- | --- |
-| **super-admin** | Full control including identity, SSO config, roles, and the recovery CLI. Break-glass. |
-| **admin** | Day-to-day administration — users, workspaces, credentials, all flows. No identity-provider or role-definition changes. |
-| **super-user** | Full authoring across all workspaces they belong to: create/edit/delete/deploy flows, manage credentials and tools. No user administration. |
-| **user** | Author within assigned workspaces: create and edit own flows, use existing credentials. Cannot manage other users or delete others' work. |
-| **read-only** | View and execute deployed flows. No create, edit, delete or credential access. |
+| **super-admin** | Everything, including identity, SSO configuration, role definitions, and the recovery CLI. Break-glass. |
+| **admin** | **Anything in all domains**, including **revealing stored credential values** in the UI. |
+| **super-user** | Manages users. Sees **all logs** and **credential names/metadata** — but **never a credential value** in the UI. |
+| **user** | Authors within assigned workspaces: creates and edits own flows, *uses* existing credentials. No user administration. |
+| **read-only** | Views and executes deployed flows. No create, edit, delete, or credential access. |
+
+### The credential-value split — a distinction upstream does not make
+
+Flowise treats credentials as one capability: manage them and you can read them. That
+conflates two very different powers, and it is why a compromised account yields every API
+key at once.
+
+Flow-Wiser separates them into distinct permissions:
+
+| Permission | Grants |
+| --- | --- |
+| `credentials:view` | See that a credential exists — its **name**, type, owner, dates, and which flows reference it. **No secret material.** |
+| `credentials:create` / `:update` / `:delete` | Manage the credential record, including **writing** a new secret |
+| **`credentials:reveal`** | **Decrypt and display the stored secret value.** Held by **admin and super-admin only** |
+
+`credentials:reveal` is the sharp one:
+
+- Every use is written to the audit trail — who, which credential, when, from where.
+  Reading a secret is an event, not a page view.
+- It is **never implied** by any other permission. Managing, rotating, or deleting a
+  credential does not require reading it.
+- Writing a new secret does not grant reading the old one.
+
+**A `super-user` can therefore administer people and audit the entire system without ever
+holding the keys** — which is exactly the property missing when a single compromised
+account led to a six-figure API bill.
+
+> Secret values remain reachable from the host via the recovery CLI (§7) and direct
+> database access. That is unavoidable and not a weakness in the model: whoever holds the
+> database and encryption key can already read everything. The control is about the
+> **UI and API surface**, where an account compromise actually happens — and about
+> ensuring that reading a secret leaves a record.
 
 Implemented as **seeded roles composed of explicit permission grants**, not hard-coded
-tiers — so a deployment can add or reshape roles without a code change, and the hierarchy
-is inspectable in the UI. Seeded roles are marked `isSystem` so accidental deletion is
-refused, but their grants remain editable.
+tiers — so a deployment can reshape them without a code change, and the hierarchy is
+inspectable in the UI. Seeded roles are marked `isSystem` to refuse accidental deletion
+while remaining editable.
 
 Deny-by-default still applies underneath: a role holds exactly the permissions granted.
+
+### Proposed hardening on top of `credentials:reveal`
+
+Not requested; proposed because the incident that motivated this project was credential
+exfiltration, and a permission alone only answers *who may*, never *how easily*.
+
+1. **Re-authentication (sudo mode).** Revealing requires re-entering the password — or
+   satisfying MFA — even for an admin already logged in, valid for a short window.
+   A hijacked *session* then cannot dump credentials; the attacker needs the *credential*.
+2. **Time-boxed unmask.** A revealed value displays for ~30 seconds, then re-masks.
+   Bounds shoulder-surfing and stops secrets sitting on an unattended screen.
+3. **Break-glass alerting.** `credentials:reveal` and every recovery-CLI invocation
+   optionally emit a webhook/email. One reveal is routine; twelve at 03:00 is a signal —
+   and nobody reads an audit log they are not pointed at.
+4. **Effective-permissions report.** A screen answering *"who can currently reveal
+   credentials?"* and *"what can this user actually do?"* Composed roles make that
+   genuinely hard to eyeball, and an access-control model nobody can audit drifts.
+5. **Reveal requires an MFA-satisfied session** where org policy enables MFA — using the
+   `Session.mfaSatisfied` flag already modelled.
+
+Flowise has none of these. (1), (2) and (5) are small; (3) and (4) are ordinary features.
+
+### New UI: audit log viewer
+
+Requested by the operator. `super-user` and above see **all logs**.
+
+Upstream ships only `views/auth/loginActivity.jsx` — sign-ins alone. The audit trail
+(`REQUIREMENTS-AUTH-RBAC.md` §10) covers far more: permission decisions, identity
+administration, credential use **including every reveal**, flow and prompt changes, and
+exports.
+
+Requirements:
+- Filter by actor, action, target, outcome, scope, and time range.
+- **Failures visually distinct** — denied permissions and failed logins are the
+  highest-value rows and should not have to be hunted for.
+- Credential events link to the credential record; flow events link to the **version
+  commit** (`REQUIREMENTS-VERSIONING.md`), so "who changed this prompt, when, and to what"
+  is one trail rather than two.
+- Export the current filter as JSON lines for external analysis.
+- Never renders secret values — the audit record holds references, never material.
+- Extends the existing `loginActivity` surface rather than replacing it; that screen keeps
+  working as a projection over the same data.
 
 ## 4. Bootstrap and back-door accounts
 
