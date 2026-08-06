@@ -51,13 +51,83 @@ mismatch.
 
 Five levels, replacing the three stock roles. Specified by the operator, 2026-08-05:
 
-| Role | Intent |
-| --- | --- |
-| **super-admin** | Everything, including identity, SSO configuration, role definitions, and the recovery CLI. Break-glass. |
-| **admin** | **Anything in all domains**, including **revealing stored credential values** in the UI. |
-| **super-user** | Manages users. Sees **all logs** and **credential names/metadata** — but **never a credential value** in the UI. |
-| **user** | Authors within assigned workspaces: creates and edits own flows, *uses* existing credentials. No user administration. |
-| **read-only** | Views and executes deployed flows. No create, edit, delete, or credential access. |
+| Role | Scope | Intent |
+| --- | --- | --- |
+| **super-admin** | Instance | Everything, including identity, SSO configuration, role definitions, and the recovery CLI. Break-glass. |
+| **admin** | Instance | **Anything in all domains**, including **revealing stored credential values** in the UI. |
+| **super-user** | **Instance** | Manages users across **every organization**. Sees **all logs** and credential names/metadata — but **never a credential value** in the UI. |
+| **org-admin** | **Single organization** | Full administration **within their own organization only** — its users, workspaces, flows and credential records. Cannot see or affect any other organization. |
+| **user** | Assigned workspaces | Authors: creates and edits own flows, *uses* existing credentials. No user administration. |
+| **read-only** | Assigned workspaces | Views and executes deployed flows. No create, edit, delete, or credential access. |
+
+The top three are **instance-wide**; `org-admin` and below are **tenant-bounded**. That
+boundary is the whole point of the next section.
+
+## 3a. Multi-tenancy — the organization is the tenant boundary
+
+Added 2026-08-05 at the operator's direction: the instance must be **tenantable**, with
+`org-admin` able to administer their own organization and nothing else.
+
+### What already exists
+
+The skeleton is present and does not need inventing. Every resource table already carries
+`workspaceId`, and `workspace` carries `organizationId`:
+
+```
+chat_flow, credential, tool, assistant, document_store,
+variable, apikey, dataset, evaluation, custom_template
+      └── workspaceId ──> workspace ──> organizationId ──> organization
+```
+
+So a chatflow's organization is **already derivable today**, via one join.
+
+### Why we denormalize the tenant key anyway
+
+Deriving the tenant through a join means **every single query must remember to join.**
+One that forgets does not fail — it silently returns another tenant's rows. That is the
+classic multi-tenancy breach, and it is a bug of omission, which is the kind reviewers
+miss.
+
+Requirements:
+
+- **`organizationId` is written directly onto every tenant-scoped resource row**
+  (`chat_flow` first, then the other nine), alongside the existing `workspaceId`.
+  Denormalized deliberately: the tenant boundary becomes visible on the row itself, and
+  a query that filters only by organization is still safe.
+- **A composite index `(organizationId, workspaceId)`** on each, so the common scoped
+  query needs no join at all.
+- **Consistency is enforced, not assumed.** `resource.organizationId` must always equal
+  `workspace.organizationId` for its workspace. Enforced at write time, and verified by
+  `flow-wiser doctor` (§7), which reports any row whose tenant key disagrees with its
+  workspace.
+- **Moving a workspace between organizations** is an explicit, audited operation that
+  re-stamps every resource in that workspace inside one transaction — never an
+  `UPDATE workspace SET organizationId`, which would leave every resource mis-tagged.
+
+### Enforcement — tenancy is applied centrally, never per handler
+
+The single most common multi-tenancy failure is one endpoint that forgot the filter.
+
+- Tenant scope is derived **server-side from the session**, never from a client-supplied
+  organization id. A request may *ask* for an organization; the server decides whether the
+  subject may see it.
+- Scoping is applied in a **shared repository/query layer**, so a route cannot opt out by
+  forgetting. Instance-wide roles (super-admin, admin, super-user) bypass it explicitly
+  and that bypass is audited.
+- **Cross-tenant access attempts are audited as failures**, not silently returned empty.
+  An `org-admin` requesting another organization's flow is a security event, and an empty
+  list looks identical to "no data" — which is how these go unnoticed.
+- Every audit record already carries `organizationId` and `workspaceId`
+  (`REQUIREMENTS-AUTH-RBAC.md` §10), so the trail is tenant-attributable by construction.
+
+### Acceptance for tenancy
+
+1. An `org-admin` in organization A cannot read, modify, list, or execute **any** resource
+   belonging to organization B — verified per resource type, not just chatflows.
+2. Direct object reference by id across tenants returns **404/403 and an audit record**,
+   never data.
+3. `flow-wiser doctor` reports zero tenant-key inconsistencies after migration.
+4. An instance-wide role sees across organizations, and each such bypass is audited.
 
 ### The credential-value split — a distinction upstream does not make
 
