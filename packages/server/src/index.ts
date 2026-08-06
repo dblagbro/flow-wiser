@@ -20,6 +20,7 @@ import { MODE, Platform } from './Interface'
 import { IMetricsProvider } from './Interface.Metrics'
 import { OpenTelemetry } from './metrics/OpenTelemetry'
 import { Prometheus } from './metrics/Prometheus'
+import { getErrorMessage } from './errors/utils'
 import errorHandlerMiddleware from './middlewares/errors'
 import { NodesPool } from './NodesPool'
 import { QueueManager } from './queue/QueueManager'
@@ -60,6 +61,37 @@ declare global {
     }
 }
 
+/**
+ * Postgres: create the `uuid-ossp` extension before migrations run.
+ *
+ * Nineteen postgres migrations default a primary key to `uuid_generate_v4()`, starting with
+ * the very first one (`Init1693891895163`). That function lives in the `uuid-ossp` extension,
+ * and nothing in the codebase has ever created it — so a brand-new Postgres database aborts
+ * on the first migration with `function uuid_generate_v4() does not exist`, and the server
+ * never starts. Existing deployments are unaffected: their extension was created by hand, or
+ * by a template database, years ago.
+ *
+ * This runs after `initialize()` and before `runMigrations()`, which is the only window where
+ * it is both possible and early enough — migrations execute in timestamp order, so no
+ * migration can be scheduled ahead of `Init1693891895163` to do it.
+ *
+ * A least-privilege database user may not hold CREATE on the database. That is a legitimate
+ * configuration, so a failure here is logged and swallowed rather than fatal: if the extension
+ * is already present the migrations succeed regardless, and if it is genuinely absent the
+ * migration that needs it fails immediately afterwards with a clearer error than this one.
+ */
+const ensurePostgresUuidExtension = async (dataSource: DataSource): Promise<void> => {
+    if (dataSource.options.type !== 'postgres') return
+    try {
+        await dataSource.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
+    } catch (error) {
+        logger.warn(
+            `⚠️ [server]: Could not ensure the uuid-ossp extension exists (${getErrorMessage(error)}). ` +
+                'If this is a new database, create it as a superuser: CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+        )
+    }
+}
+
 export class App {
     app: express.Application
     nodesPool: NodesPool
@@ -85,6 +117,8 @@ export class App {
         try {
             await this.AppDataSource.initialize()
             logger.info('📦 [server]: Data Source initialized successfully')
+
+            await ensurePostgresUuidExtension(this.AppDataSource)
 
             // Run Migrations Scripts
             await this.AppDataSource.runMigrations({ transaction: 'each' })
