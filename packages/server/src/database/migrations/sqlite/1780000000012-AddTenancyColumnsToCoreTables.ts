@@ -159,7 +159,11 @@ export class AddTenancyColumnsToCoreTables1780000000012 implements MigrationInte
         const columnDefinitions = columns.map((column) => {
             let sql = `"${column.name}" ${column.type}`
             if (column.notnull) sql += ' NOT NULL'
-            if (column.dflt_value !== null) sql += ` DEFAULT ${column.dflt_value}`
+            // `PRAGMA table_info` hands back the default with any wrapping parentheses stripped, so
+            // `DEFAULT (datetime('now'))` comes back as `datetime('now')` — which SQLite will not
+            // accept unparenthesised. Wrapping is safe for literals too: `DEFAULT ('CHATFLOW')` and
+            // `DEFAULT (FALSE)` are both valid.
+            if (column.dflt_value !== null) sql += ` DEFAULT (${column.dflt_value})`
             return sql
         })
         const primaryKey = columns
