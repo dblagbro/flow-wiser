@@ -140,7 +140,14 @@ export const createAccountRouter = (options: AccountRouterOptions = {}): Router 
             // A signed-in caller may only change their OWN password here. Changing someone else's
             // is administration, and administration is not implemented in this build — it must not
             // arrive through a self-service endpoint by passing a different address.
-            if (typeof payload.email === 'string' && payload.email.trim().toLowerCase() !== (principal.email ?? '').toLowerCase()) {
+            //
+            // The comparison is skipped when the principal carries no address rather than treated
+            // as a mismatch. Identity comes from `principal.id`, which is what the change is keyed
+            // on; the body's email is a cross-check, and a cross-check that cannot be performed
+            // must not become a denial. An earlier version failed closed here and rejected every
+            // caller — including the legitimate owner — because this path did not populate email.
+            const principalEmail = typeof principal.email === 'string' ? principal.email.trim().toLowerCase() : null
+            if (principalEmail && typeof payload.email === 'string' && payload.email.trim().toLowerCase() !== principalEmail) {
                 res.status(StatusCodes.FORBIDDEN).json({
                     message: 'You can only change your own password here',
                     error: 'forbidden'

@@ -603,6 +603,12 @@ export class AuthService {
                 mustChangePassword: user.mustChangePassword === true,
                 user: {
                     id: user.id,
+                    // `LoggedInUser` has always declared `email`, and `login` returns it, but this
+                    // path never populated it — so on every authenticated request `req.user.email`
+                    // was undefined. Any handler comparing it against an address in the body
+                    // silently failed closed for the legitimate owner. Populated here so the
+                    // principal a request carries matches the one login handed out.
+                    email: user.email,
                     permissions: scope.permissions,
                     features: FEATURE_FLAGS,
                     isOrganizationAdmin: scope.isOrganizationAdmin,
