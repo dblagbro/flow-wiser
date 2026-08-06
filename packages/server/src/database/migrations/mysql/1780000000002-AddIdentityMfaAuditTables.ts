@@ -1,5 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
-import { hasColumn } from '../../../utils/database.util'
+import { hasColumn, hasIndex } from '../../../utils/database.util'
 
 /**
  * Apache-2.0 identity — SSO session provenance, MFA, encryption-at-rest rotation metadata, and the
@@ -38,9 +38,11 @@ export class AddIdentityMfaAuditTables1780000000002 implements MigrationInterfac
         }
         // Lets an operator count (or revoke) the sessions still verifying under a retired pepper —
         // a keyed digest cannot be re-keyed in place, so rotation here is generational (§9).
-        await queryRunner.query(
-            `CREATE INDEX \`IDX_identity_session_refreshTokenKeyVersion\` ON \`identity_session\` (\`refreshTokenKeyVersion\`);`
-        )
+        if (!(await hasIndex(queryRunner, 'identity_session', 'IDX_identity_session_refreshTokenKeyVersion'))) {
+            await queryRunner.query(
+                `CREATE INDEX \`IDX_identity_session_refreshTokenKeyVersion\` ON \`identity_session\` (\`refreshTokenKeyVersion\`);`
+            )
+        }
 
         // ── 2. LoginMethod: encryption metadata for clientSecret (§9) ─────────────────────────
         const loginMethodColumns: [string, string][] = [
@@ -56,9 +58,11 @@ export class AddIdentityMfaAuditTables1780000000002 implements MigrationInterfac
             }
         }
         // Resumable rotation pass: WHERE `clientSecret` IS NOT NULL AND `clientSecretKeyVersion` < :current
-        await queryRunner.query(
-            `CREATE INDEX \`IDX_identity_login_method_clientSecretKeyVersion\` ON \`identity_login_method\` (\`clientSecretKeyVersion\`);`
-        )
+        if (!(await hasIndex(queryRunner, 'identity_login_method', 'IDX_identity_login_method_clientSecretKeyVersion'))) {
+            await queryRunner.query(
+                `CREATE INDEX \`IDX_identity_login_method_clientSecretKeyVersion\` ON \`identity_login_method\` (\`clientSecretKeyVersion\`);`
+            )
+        }
 
         // ── 3. MFA policy: org-wide axis on Organization, per-role axis on Role (§8) ──────────
         if (!(await hasColumn(queryRunner, 'identity_organization', 'mfaPolicy'))) {
@@ -229,7 +233,9 @@ export class AddIdentityMfaAuditTables1780000000002 implements MigrationInterfac
         await queryRunner.query(`ALTER TABLE \`identity_role\` DROP COLUMN \`requiresMfa\`;`)
         await queryRunner.query(`ALTER TABLE \`identity_organization\` DROP COLUMN \`mfaPolicy\`;`)
 
-        await queryRunner.query(`DROP INDEX \`IDX_identity_login_method_clientSecretKeyVersion\` ON \`identity_login_method\`;`)
+        if (await hasIndex(queryRunner, 'identity_login_method', 'IDX_identity_login_method_clientSecretKeyVersion')) {
+            await queryRunner.query(`DROP INDEX \`IDX_identity_login_method_clientSecretKeyVersion\` ON \`identity_login_method\`;`)
+        }
         for (const name of [
             'clientSecretSalt',
             'clientSecretNonce',
@@ -240,7 +246,9 @@ export class AddIdentityMfaAuditTables1780000000002 implements MigrationInterfac
             await queryRunner.query(`ALTER TABLE \`identity_login_method\` DROP COLUMN \`${name}\`;`)
         }
 
-        await queryRunner.query(`DROP INDEX \`IDX_identity_session_refreshTokenKeyVersion\` ON \`identity_session\`;`)
+        if (await hasIndex(queryRunner, 'identity_session', 'IDX_identity_session_refreshTokenKeyVersion')) {
+            await queryRunner.query(`DROP INDEX \`IDX_identity_session_refreshTokenKeyVersion\` ON \`identity_session\`;`)
+        }
         for (const name of [
             'refreshTokenAlgorithm',
             'refreshTokenKeyVersion',
