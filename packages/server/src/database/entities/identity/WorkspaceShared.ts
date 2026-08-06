@@ -37,9 +37,9 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateCol
  * must not be expressible through a sharing feature.
  */
 @Entity('identity_workspace_shared')
-@Index('idx_identity_workspace_shared_lookup', ['workspaceId', 'sharedItemId', 'itemType'])
-@Index('idx_identity_workspace_shared_item', ['sharedItemId', 'itemType'])
-@Index('idx_identity_workspace_shared_org', ['organizationId'])
+@Index('IDX_identity_workspace_shared_lookup', ['workspaceId', 'sharedItemId', 'itemType'])
+@Index('IDX_identity_workspace_shared_item', ['sharedItemId', 'itemType'])
+@Index('IDX_identity_workspace_shared_org', ['organizationId'])
 export class WorkspaceShared {
     @PrimaryGeneratedColumn('uuid')
     id: string
@@ -68,11 +68,11 @@ export class WorkspaceShared {
     @Column({ type: 'uuid', nullable: true })
     organizationId?: string | null
 
-    @Column({ type: 'datetime' })
+    @Column({ type: 'timestamp' })
     @CreateDateColumn()
     createdDate: Date
 
-    @Column({ type: 'datetime' })
+    @Column({ type: 'timestamp' })
     @UpdateDateColumn()
     updatedDate: Date
 }

@@ -10,14 +10,14 @@
  * mandates a single unified trail, so sign-ins are written as AuditEvents and projected back into
  * the legacy §D.9 shape. See LoginActivity.ts for that decision in full.
  *
- * Registration: these are exported as `identityEntities` and are NOT yet merged into the global
- * `entities` map in `../index.ts`. That map still binds the names User/Organization/Role/… to the
- * outgoing entities; merging both sets would bind the same class names twice. The cut-over commit
- * that removes the outgoing stack replaces those imports with `...identityEntities` here.
+ * Registration: these are exported as `identityEntities` and are merged into the global
+ * `entities` map in `../index.ts`. As of the cut-over (the commit deleting the outgoing stack) that map imports these
+ * directly — see ../index.ts.
  */
 import { User } from './User'
 import { Organization } from './Organization'
 import { OrganizationUser } from './OrganizationUser'
+import { WorkspaceShared } from './WorkspaceShared'
 import { Workspace } from './Workspace'
 import { WorkspaceUser } from './WorkspaceUser'
 import { Role } from './Role'
@@ -58,5 +58,6 @@ export const identityEntities = {
     Token,
     MfaFactor,
     MfaRecoveryCode,
-    AuditEvent
+    AuditEvent,
+    WorkspaceShared
 }
