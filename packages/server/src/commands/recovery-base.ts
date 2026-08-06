@@ -151,7 +151,7 @@ interface OpenedTty extends SecretPromptStreams {
  *
  * `/dev/tty` and NOT `process.stdin`, because they are not the same thing: stdin can be a pipe, a
  * file or /dev/null, and reading a password from a pipe re-creates exactly the leak §7 forbids —
- * `echo hunter2 | flow-wiser admin:create` puts the secret in shell history just as surely as
+ * `echo hunter2 | flowise admin:create` puts the secret in shell history just as surely as
  * `--password hunter2` does. Reading the terminal directly means the value can only have come from
  * a human typing it.
  *

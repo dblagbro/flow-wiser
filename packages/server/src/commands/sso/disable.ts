@@ -5,7 +5,7 @@ import { User } from '../../database/entities/identity'
 import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, recordRecoveryEvent } from '../recovery-base'
 
 /**
- * `flow-wiser sso:disable` — "provider outage lockout" (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise sso:disable` — "provider outage lockout" (REQUIREMENTS-MIGRATION.md §7).
  *
  * The failure this exists for is not a bug in this codebase. It is Azure AD being down, or a client
  * secret expiring at midnight, or a tenant admin revoking the app registration — and the symptom is
@@ -153,8 +153,8 @@ export default class SsoDisable extends RecoveryCommand {
         this.log(`${result.accountsWithLocalPassword} of ${result.totalAccounts} account(s) hold a local password.`)
         if (result.accountsWithLocalPassword === 0) {
             this.log('NOBODY can log in with SSO off. Create or repair a local account before you rely on this:')
-            this.log('  flow-wiser admin:create --email <you> --role super-admin')
-            this.log('  flow-wiser admin:reset-password --email <existing-account>')
+            this.log('  flowise admin:create --email <you> --role super-admin')
+            this.log('  flowise admin:reset-password --email <existing-account>')
             this.exitWithFailure = true
         }
     }

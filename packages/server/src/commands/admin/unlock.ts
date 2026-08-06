@@ -16,7 +16,7 @@ import {
 } from '../recovery-base'
 
 /**
- * `flow-wiser admin:unlock --email <e>` — "clear lockout / failed attempts"
+ * `flowise admin:unlock --email <e>` — "clear lockout / failed attempts"
  * (REQUIREMENTS-MIGRATION.md §7).
  *
  * ── How you unlock a counter that lives in an append-only table ──────────────────────────────
@@ -79,7 +79,7 @@ export const unlockAdminAccount = async (input: UnlockInput): Promise<UnlockResu
             message: `Recovery CLI could not unlock ${email}: no such account`,
             detail: { email }
         })
-        throw new RecoveryError(`No account with the address ${email}. Run 'flow-wiser admin:list' to see the accounts that exist.`)
+        throw new RecoveryError(`No account with the address ${email}. Run 'flowise admin:list' to see the accounts that exist.`)
     }
 
     const before = await lockoutStateFor(dataSource, user.id, env)
@@ -168,6 +168,6 @@ export default class AdminUnlock extends RecoveryCommand {
         if (result.reactivatedMemberships.length > 0) {
             this.log(`Reactivated ${result.reactivatedMemberships.length} inactive organization membership(s).`)
         }
-        this.log('If the password itself is unknown, run: flow-wiser admin:reset-password --email ' + result.email)
+        this.log('If the password itself is unknown, run: flowise admin:reset-password --email ' + result.email)
     }
 }

@@ -230,7 +230,7 @@ const FEATURE_FLAGS: FeatureFlags = {
 }
 
 /**
- * Lockout policy — REQUIREMENTS-MIGRATION.md §7 names `flow-wiser admin:unlock` ("clear lockout /
+ * Lockout policy — REQUIREMENTS-MIGRATION.md §7 names `flowise admin:unlock` ("clear lockout /
  * failed attempts"), which presupposes one.
  *
  * DOCUMENTED WINDOW: **5 consecutive failed password attempts within 15 minutes locks the account
@@ -802,7 +802,7 @@ export class AuthService {
             }
 
             if (!user.credential) {
-                // Nothing to prove and nothing to replace. `flow-wiser admin:clear-password-change` is
+                // Nothing to prove and nothing to replace. `flowise admin:clear-password-change` is
                 // the exit for this account; see `commands/admin/clear-password-change.ts`.
                 return await refuse(
                     PasswordChangeFailure.NO_LOCAL_CREDENTIAL,

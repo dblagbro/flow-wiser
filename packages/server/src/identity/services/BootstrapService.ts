@@ -518,7 +518,7 @@ export class BootstrapService {
      * An EXISTING account keeps its credential. Re-hashing the env password on every boot would
      * silently revert a password the administrator had since changed — and would re-arm
      * `mustChangePassword` forever, so the forced change could never be satisfied. Recovery for a
-     * genuinely lost password is `flow-wiser admin:reset-password` (§7), which prompts rather than
+     * genuinely lost password is `flowise admin:reset-password` (§7), which prompts rather than
      * reading argv or the environment. Membership and workspace assignment ARE still ensured, so an
      * account that lost its role assignment is repaired on the next boot rather than locked out.
      */

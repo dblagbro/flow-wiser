@@ -98,7 +98,7 @@ Requirements:
   query needs no join at all.
 - **Consistency is enforced, not assumed.** `resource.organizationId` must always equal
   `workspace.organizationId` for its workspace. Enforced at write time, and verified by
-  `flow-wiser doctor` (§7), which reports any row whose tenant key disagrees with its
+  `flowise doctor` (§7), which reports any row whose tenant key disagrees with its
   workspace.
 - **Moving a workspace between organizations** is an explicit, audited operation that
   re-stamps every resource in that workspace inside one transaction — never an
@@ -126,7 +126,7 @@ The single most common multi-tenancy failure is one endpoint that forgot the fil
    belonging to organization B — verified per resource type, not just chatflows.
 2. Direct object reference by id across tenants returns **404/403 and an audit record**,
    never data.
-3. `flow-wiser doctor` reports zero tenant-key inconsistencies after migration.
+3. `flowise doctor` reports zero tenant-key inconsistencies after migration.
 4. An instance-wide role sees across organizations, and each such bypass is audited.
 
 ### The credential-value split — a distinction upstream does not make
@@ -260,15 +260,22 @@ login**, because the failure modes that need recovery are exactly the ones that 
 Commands (run against the data directory, on the host or `docker exec`):
 
 ```
-flow-wiser admin:create --email <e> --role super-admin      # password prompted, never argv
-flow-wiser admin:reset-password --email <e>
-flow-wiser admin:list
-flow-wiser admin:unlock --email <e>                          # clear lockout / failed attempts
-flow-wiser mfa:disable --email <e>                           # lost authenticator device
-flow-wiser sso:disable                                       # provider outage lockout
-flow-wiser session:revoke-all
-flow-wiser doctor                                            # diagnose schema/identity state
+flowise admin:create --email <e> --role super-admin      # password prompted, never argv
+flowise admin:reset-password --email <e>
+flowise admin:list
+flowise admin:unlock --email <e>                          # clear lockout / failed attempts
+flowise mfa:disable --email <e>                           # lost authenticator device
+flowise sso:disable                                       # provider outage lockout
+flowise session:revoke-all
+flowise doctor                                            # diagnose schema/identity state
 ```
+
+> Earlier drafts of this section wrote these as `flow-wiser …`. The executable is named
+> `flowise` — that is the `bin` entry in `packages/server/package.json`, the `oclif.bin`
+> that oclif uses to render its own help and usage lines, and the container entrypoint.
+> Nothing has ever installed a `flow-wiser` executable, so every command printed as
+> `flow-wiser …` was uncopyable. The name here and in every message the CLI prints is now
+> `flowise`.
 
 Requirements:
 - Passwords are **prompted, never accepted as arguments** — argv leaks into shell history

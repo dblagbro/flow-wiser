@@ -403,7 +403,7 @@ export class MfaPolicyService {
         // removes the OBLIGATION to hold a factor; it does not silently ignore one the account
         // actually holds, because that would let anyone who reaches a break-glass account skip a
         // second factor that is enrolled and working. A break-glass account whose authenticator is
-        // genuinely broken is recovered with `flow-wiser mfa:disable` (MIGRATION §7), which is the
+        // genuinely broken is recovered with `flowise mfa:disable` (MIGRATION §7), which is the
         // path designed for exactly that and which leaves a record.
         const outcome = hasConfirmedFactor
             ? MfaOutcome.CHALLENGE_REQUIRED

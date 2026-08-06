@@ -6,7 +6,7 @@ import { SessionService } from '../../identity/services/SessionService'
 import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, normaliseEmail, recordRecoveryEvent } from '../recovery-base'
 
 /**
- * `flow-wiser session:revoke-all [--email <e>]` (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise session:revoke-all [--email <e>]` (REQUIREMENTS-MIGRATION.md §7).
  *
  * The containment command. When something has gone wrong and it is not yet known what, the first
  * useful action is to make every outstanding session stop working — and it has to be possible from
@@ -62,7 +62,7 @@ export const revokeAllSessions = async (input: RevokeAllInput): Promise<RevokeAl
                 message: `Recovery CLI could not revoke sessions for ${email}: no such account`,
                 detail: { email }
             })
-            throw new RecoveryError(`No account with the address ${email}. Run 'flow-wiser admin:list' to see the accounts that exist.`)
+            throw new RecoveryError(`No account with the address ${email}. Run 'flowise admin:list' to see the accounts that exist.`)
         }
 
         const liveBefore = await dataSource.getRepository(Session).count({ where: { userId: user.id, revokedDate: IsNull() } })

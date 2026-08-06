@@ -122,7 +122,7 @@ export interface PlannedUser {
     /** §6 — set on every migrated PASSWORD account, never on an SSO-only one. */
     mustChangePassword: boolean
     isSSO: boolean
-    /** True when the account is migrated disabled and needs `flow-wiser admin:reset-password` (§5, §7). */
+    /** True when the account is migrated disabled and needs `flowise admin:reset-password` (§5, §7). */
     disabled: boolean
     emailVerified: boolean
     exists: boolean
@@ -574,7 +574,7 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
             if (!owner.userId) {
                 warnings.push(
                     `Organization ${organization.id} ("${organization.name}") has no determinable owner, so no account is ` +
-                        'promoted to super-admin for it (§5). Provision one with `flow-wiser admin:create --role super-admin`.'
+                        'promoted to super-admin for it (§5). Provision one with `flowise admin:create --role super-admin`.'
                 )
             }
             for (const name of TARGET_ROLE_NAMES) {
@@ -620,9 +620,9 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
                     credential.disposition === 'carried-bcrypt'
                         ? 'bcrypt hash carried across; the existing password still works and a change is forced on first login (§5, §6)'
                         : credential.disposition === 'carried-unverifiable-disabled'
-                        ? `hash is ${credential.algorithm} and this build has no backend for it; carried but the account is DISABLED pending \`flow-wiser admin:reset-password\` (§5)`
+                        ? `hash is ${credential.algorithm} and this build has no backend for it; carried but the account is DISABLED pending \`flowise admin:reset-password\` (§5)`
                         : credential.disposition === 'unrecognised-disabled'
-                        ? 'stored hash is in no recognised format; NOT carried and the account is DISABLED pending `flow-wiser admin:reset-password` (§5)'
+                        ? 'stored hash is in no recognised format; NOT carried and the account is DISABLED pending `flowise admin:reset-password` (§5)'
                         : sso
                         ? 'no local password and SSO is configured; migrated as an SSO account and NOT flagged for password change (§6)'
                         : 'no local password (invited but never registered); migrated without a credential and not flagged (§6)'
@@ -633,7 +633,7 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
                         credential.disposition === 'unrecognised-disabled'
                             ? 'its stored hash is in no recognised format'
                             : `its ${credential.algorithm} hash cannot be verified by this build`
-                    }. Recover with \`flow-wiser admin:reset-password --email ${user.email}\` (§5, §7).`
+                    }. Recover with \`flowise admin:reset-password --email ${user.email}\` (§5, §7).`
                 )
             }
         }
@@ -704,7 +704,7 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
         if (stamp.orphanRows > 0) {
             warnings.push(
                 `${stamp.table}: ${stamp.orphanRows} row(s) carry a workspaceId that matches no workspace. They cannot be ` +
-                    'given a tenant key and will be left with a NULL organizationId; `flow-wiser doctor` will keep reporting them (§3a).'
+                    'given a tenant key and will be left with a NULL organizationId; `flowise doctor` will keep reporting them (§3a).'
             )
         }
     }
@@ -719,7 +719,7 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
         warnings.push(
             'Pre-3.0 database: there are no user, organization, workspace or role tables, so there are no accounts to ' +
                 'carry across (§1). Every flow, credential and message is left untouched; provision an administrator with ' +
-                'the bootstrap environment or `flow-wiser admin:create --role super-admin` (§4, §7).'
+                'the bootstrap environment or `flowise admin:create --role super-admin` (§4, §7).'
         )
     }
     if (!HAS_TRANSACTIONAL_DDL[db.engine]) {
@@ -915,7 +915,7 @@ const applyUsers = async (context: ApplyContext, legacy: LegacyData): Promise<vo
                 subjectLabel: planned.email,
                 outcome: 'failure',
                 message: `Account ${planned.email} migrated DISABLED — ${planned.note}`,
-                detail: { recovery: `flow-wiser admin:reset-password --email ${planned.email}` }
+                detail: { recovery: `flowise admin:reset-password --email ${planned.email}` }
             })
         }
     }
@@ -1110,7 +1110,7 @@ const applyTenantStamps = async (context: ApplyContext): Promise<{ table: string
         }
 
         // §3a: "Consistency is enforced, not assumed. resource.organizationId must always equal
-        // workspace.organizationId for its workspace." Verified here and again by `flow-wiser doctor`.
+        // workspace.organizationId for its workspace." Verified here and again by `flowise doctor`.
         const disagreeing = await db.query(
             `SELECT COUNT(*) AS c FROM ${quote(db.engine, stamp.table)} t ` +
                 `JOIN ${quote(db.engine, workspaceSource)} w ON w.${quote(db.engine, 'id')} = t.${quote(db.engine, 'workspaceId')} ` +

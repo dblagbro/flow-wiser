@@ -15,7 +15,7 @@ import { EnvBootstrapAccountResolver } from '../../identity/services/MfaPolicySe
 import { LockoutState, RecoveryAuditAction, RecoveryCommand, RecoveryContext, lockoutStateFor, recordRecoveryEvent } from '../recovery-base'
 
 /**
- * `flow-wiser admin:list` (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise admin:list` (REQUIREMENTS-MIGRATION.md §7).
  *
  * The command every other recovery command's error message points at, and the first thing anyone
  * runs: "who can actually get into this instance?"
@@ -126,7 +126,7 @@ export const listAdminAccounts = async (
 
 /** One line per account, plus indented detail — readable in an 80-column ssh session, which is where this runs. */
 export const formatAdminList = (rows: AdminListRow[]): string[] => {
-    if (rows.length === 0) return ['No accounts exist. Run: flow-wiser admin:create --email <you> --role super-admin']
+    if (rows.length === 0) return ['No accounts exist. Run: flowise admin:create --email <you> --role super-admin']
 
     const lines: string[] = [`${rows.length} account(s):`, '']
     for (const row of rows) {

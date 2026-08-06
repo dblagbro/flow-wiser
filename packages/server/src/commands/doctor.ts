@@ -8,7 +8,7 @@ import { SYSTEM_ROLE_NAMES } from '../identity/services/BootstrapService'
 import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, buildRecoveryDataSource, recordRecoveryEvent } from './recovery-base'
 
 /**
- * `flow-wiser doctor` — "diagnose schema/identity state" (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise doctor` — "diagnose schema/identity state" (REQUIREMENTS-MIGRATION.md §7).
  *
  * The command that answers "what is actually wrong with this instance", run before any of the
  * others. Everything it reports is something that has silently broken a real deployment.
@@ -33,7 +33,7 @@ import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, buildRecoveryDat
  *
  * 3. **Orphaned tenant keys.** MIGRATION §3a: "`resource.organizationId` must always equal
  *    `workspace.organizationId` for its workspace. Enforced at write time, and verified by
- *    `flow-wiser doctor` (§7), which reports any row whose tenant key disagrees with its
+ *    `flowise doctor` (§7), which reports any row whose tenant key disagrees with its
  *    workspace." A row whose denormalised tenant key has drifted is invisible to the UI and is
  *    served to the WRONG TENANT by any query that filters on organization alone — the exact breach
  *    the denormalisation was introduced to make impossible.
@@ -345,7 +345,7 @@ const checkIdentityCounts = async (queryRunner: QueryRunner, dataSource: DataSou
             name,
             status: 'fail',
             summary: 'There are no accounts. Nobody can log in.',
-            details: [...details, 'Fix: flow-wiser admin:create --email <you> --role super-admin']
+            details: [...details, 'Fix: flowise admin:create --email <you> --role super-admin']
         }
     }
     if (missingSystemRoles.length > 0) {
@@ -394,7 +394,7 @@ const checkWhoCanLogIn = async (queryRunner: QueryRunner, dataSource: DataSource
             name,
             status: 'fail',
             summary: 'No account holds an instance-wide role. Nobody can administer this instance.',
-            details: [...details, 'Fix: flow-wiser admin:create --email <you> --role super-admin']
+            details: [...details, 'Fix: flowise admin:create --email <you> --role super-admin']
         }
     }
     // A dangling roleId is a data defect, not a role: the assignment grants nothing at all.
@@ -704,7 +704,7 @@ const checkAuditHealth = (): DoctorCheck => {
 const BADGE: Record<DoctorStatus, string> = { ok: '  OK  ', warn: ' WARN ', fail: ' FAIL ', skip: ' SKIP ' }
 
 export const formatDoctorReport = (report: DoctorReport, verbose: boolean): string[] => {
-    const lines: string[] = [`flow-wiser doctor — ${report.target}`, '']
+    const lines: string[] = [`flowise doctor — ${report.target}`, '']
     for (const check of report.checks) {
         lines.push(`[${BADGE[check.status]}] ${check.name}`)
         lines.push(`          ${check.summary}`)
