@@ -559,7 +559,11 @@ const readPositiveInt = (raw: string | undefined, fallback: number): number => {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
-export const lockoutStateFor = async (dataSource: DataSource, userId: string, env: NodeJS.ProcessEnv = process.env): Promise<LockoutState> => {
+export const lockoutStateFor = async (
+    dataSource: DataSource,
+    userId: string,
+    env: NodeJS.ProcessEnv = process.env
+): Promise<LockoutState> => {
     const maxAttempts = readPositiveInt(env.IDENTITY_LOCKOUT_MAX_ATTEMPTS, LOCKOUT_DEFAULT_MAX_ATTEMPTS)
     const windowMs = readPositiveInt(env.IDENTITY_LOCKOUT_WINDOW_MS, LOCKOUT_DEFAULT_WINDOW_MS)
     const windowStart = Date.now() - windowMs

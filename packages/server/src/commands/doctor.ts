@@ -219,7 +219,12 @@ const checkMigrations = async (queryRunner: QueryRunner, dataSource: DataSource)
         }
     }
 
-    return { name, status: 'ok', summary: `${rows.length} migration(s) applied, including ${identityMigrations.length} identity one(s).`, details }
+    return {
+        name,
+        status: 'ok',
+        summary: `${rows.length} migration(s) applied, including ${identityMigrations.length} identity one(s).`,
+        details
+    }
 }
 
 // ── 2. Identity tables ───────────────────────────────────────────────────────────────────────
@@ -246,7 +251,10 @@ const checkIdentityTables = async (queryRunner: QueryRunner): Promise<DoctorChec
             name,
             status: 'fail',
             summary: `${present.length}/${IDENTITY_TABLES.length} identity tables exist — the schema is half-applied.`,
-            details: ['Missing: ' + missing.join(', '), 'A partially-applied identity migration is MIGRATION §8 territory: restore the backup.']
+            details: [
+                'Missing: ' + missing.join(', '),
+                'A partially-applied identity migration is MIGRATION §8 territory: restore the backup.'
+            ]
         }
     }
     return { name, status: 'ok', summary: `All ${IDENTITY_TABLES.length} identity tables exist.`, details: [] }
@@ -354,11 +362,7 @@ const checkWhoCanLogIn = async (queryRunner: QueryRunner, dataSource: DataSource
 
 // ── 5. Forced password changes and MFA exemptions ────────────────────────────────────────────
 
-const checkPasswordAndMfaState = async (
-    queryRunner: QueryRunner,
-    dataSource: DataSource,
-    env: NodeJS.ProcessEnv
-): Promise<DoctorCheck> => {
+const checkPasswordAndMfaState = async (queryRunner: QueryRunner, dataSource: DataSource, env: NodeJS.ProcessEnv): Promise<DoctorCheck> => {
     const name = 'Identity — password state and MFA exemptions'
     if (!(await queryRunner.hasTable('identity_user'))) {
         return { name, status: 'skip', summary: 'Skipped: the identity tables do not exist.', details: [] }
@@ -390,10 +394,7 @@ const checkPasswordAndMfaState = async (
             name,
             status: 'warn',
             summary: `${exempt.length} account(s) are permanently exempt from MFA enforcement (MIGRATION §4).`,
-            details: [
-                ...details,
-                'Withdraw the exemption once a working authenticator is enrolled: IDENTITY_BOOTSTRAP_MFA_EXEMPT=false'
-            ]
+            details: [...details, 'Withdraw the exemption once a working authenticator is enrolled: IDENTITY_BOOTSTRAP_MFA_EXEMPT=false']
         }
     }
     return {
@@ -420,7 +421,12 @@ const checkTenantKeys = async (queryRunner: QueryRunner, dataSource: DataSource)
         : null
 
     if (!workspaceTable) {
-        return { name, status: 'skip', summary: 'Skipped: no workspace table exists, so there is no tenant key to check against.', details: [] }
+        return {
+            name,
+            status: 'skip',
+            summary: 'Skipped: no workspace table exists, so there is no tenant key to check against.',
+            details: []
+        }
     }
 
     const checked: string[] = []
@@ -456,7 +462,10 @@ const checkTenantKeys = async (queryRunner: QueryRunner, dataSource: DataSource)
             orphanCount += 1
             if (!row.workspaceOrg) problems.push(`${table} ${row.id}: workspace ${row.workspaceId ?? '(null)'} does not exist`)
             else if (!row.rowOrg) problems.push(`${table} ${row.id}: organizationId is NULL, workspace says ${row.workspaceOrg}`)
-            else problems.push(`${table} ${row.id}: organizationId ${row.rowOrg} but workspace ${row.workspaceId} belongs to ${row.workspaceOrg}`)
+            else
+                problems.push(
+                    `${table} ${row.id}: organizationId ${row.rowOrg} but workspace ${row.workspaceId} belongs to ${row.workspaceOrg}`
+                )
         }
     }
 
@@ -626,7 +635,11 @@ export const formatDoctorReport = (report: DoctorReport, verbose: boolean): stri
         }
         lines.push('')
     }
-    lines.push(report.failures === 0 ? `No failures. ${report.warnings} warning(s).` : `${report.failures} FAILURE(S), ${report.warnings} warning(s).`)
+    lines.push(
+        report.failures === 0
+            ? `No failures. ${report.warnings} warning(s).`
+            : `${report.failures} FAILURE(S), ${report.warnings} warning(s).`
+    )
     return lines
 }
 

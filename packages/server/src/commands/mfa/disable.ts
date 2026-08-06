@@ -1,14 +1,7 @@
 import { Flags } from '@oclif/core'
 import { AuditOutcome } from '../../database/entities/identity/AuditEvent'
 import { MfaFactor, MfaFactorStatus, MfaRecoveryCode, User } from '../../database/entities/identity'
-import {
-    RecoveryAuditAction,
-    RecoveryCommand,
-    RecoveryContext,
-    RecoveryError,
-    normaliseEmail,
-    recordRecoveryEvent
-} from '../recovery-base'
+import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, normaliseEmail, recordRecoveryEvent } from '../recovery-base'
 
 /**
  * `flow-wiser mfa:disable --email <e>` — "lost authenticator device"

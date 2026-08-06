@@ -150,7 +150,9 @@ export const formatAdminList = (rows: AdminListRow[]): string[] => {
             )
         }
         for (const assignment of row.assignments) {
-            lines.push(`    role         ${assignment.roleName}${assignment.isSystemRole ? '' : ' (custom)'} in ${assignment.workspaceName}`)
+            lines.push(
+                `    role         ${assignment.roleName}${assignment.isSystemRole ? '' : ' (custom)'} in ${assignment.workspaceName}`
+            )
         }
         if (flags.length > 0) lines.push(`    flags        ${flags.join(', ')}`)
         lines.push('')

@@ -3,14 +3,7 @@ import { IsNull } from 'typeorm'
 import { AuditOutcome } from '../../database/entities/identity/AuditEvent'
 import { Session, SessionRevokeReason, User } from '../../database/entities/identity'
 import { SessionService } from '../../identity/services/SessionService'
-import {
-    RecoveryAuditAction,
-    RecoveryCommand,
-    RecoveryContext,
-    RecoveryError,
-    normaliseEmail,
-    recordRecoveryEvent
-} from '../recovery-base'
+import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, normaliseEmail, recordRecoveryEvent } from '../recovery-base'
 
 /**
  * `flow-wiser session:revoke-all [--email <e>]` (REQUIREMENTS-MIGRATION.md §7).
