@@ -50,7 +50,7 @@ jest.mock('../../database/entities/ScheduleRecord', () => ({
     ScheduleRecord: class ScheduleRecord {},
     ScheduleTriggerType: { AGENTFLOW: 'AGENTFLOW' }
 }))
-jest.mock('../../enterprise/database/entities/workspace.entity', () => ({ Workspace: class Workspace {} }))
+jest.mock('../../database/entities/identity', () => ({ Workspace: class Workspace {} }))
 jest.mock('../../identity/tenancy/ControllerServiceUtils', () => ({ getWorkspaceSearchOptions: jest.fn().mockReturnValue({}) }))
 jest.mock('../../errors/internalFlowiseError', () => ({
     InternalFlowiseError: class InternalFlowiseError extends Error {

@@ -18,15 +18,27 @@ import { ApiKey } from './ApiKey'
 import { CustomTemplate } from './CustomTemplate'
 import { Execution } from './Execution'
 import { CustomMcpServer } from './CustomMcpServer'
-import { LoginActivity, WorkspaceShared, WorkspaceUsers } from '../../enterprise/database/entities/EnterpriseEntities'
-import { User } from '../../enterprise/database/entities/user.entity'
-import { Organization } from '../../enterprise/database/entities/organization.entity'
-import { Role } from '../../enterprise/database/entities/role.entity'
-import { OrganizationUser } from '../../enterprise/database/entities/organization-user.entity'
-import { Workspace } from '../../enterprise/database/entities/workspace.entity'
-import { WorkspaceUser } from '../../enterprise/database/entities/workspace-user.entity'
-import { LoginMethod } from '../../enterprise/database/entities/login-method.entity'
-import { LoginSession } from '../../enterprise/database/entities/login-session.entity'
+// Apache-2.0 identity layer. These replace the commercially-licensed entities that
+// previously bound these same class names. Their tables are `identity_`-prefixed, so the
+// outgoing tables are left intact for the data migration -- see docs/REQUIREMENTS-MIGRATION.md.
+import {
+    User,
+    Organization,
+    OrganizationUser,
+    Workspace,
+    WorkspaceUser,
+    Role,
+    LoginMethod,
+    LoginActivity,
+    Session,
+    Token,
+    MfaFactor,
+    MfaRecoveryCode,
+    AuditEvent,
+    WorkspaceShared
+} from './identity'
+import { LoginMethod } from '../../database/entities/identity'
+import { LoginSession } from '../../database/entities/identity'
 import { ScheduleRecord } from './ScheduleRecord'
 import { ScheduleTriggerLog } from './ScheduleTriggerLog'
 
@@ -49,7 +61,7 @@ export const entities = {
     Evaluator,
     ApiKey,
     User,
-    WorkspaceUsers,
+    WorkspaceUser,
     LoginActivity,
     WorkspaceShared,
     CustomTemplate,
@@ -59,9 +71,12 @@ export const entities = {
     Role,
     OrganizationUser,
     Workspace,
-    WorkspaceUser,
     LoginMethod,
-    LoginSession,
+    Session,
+    Token,
+    MfaFactor,
+    MfaRecoveryCode,
+    AuditEvent,
     ScheduleRecord,
     ScheduleTriggerLog
 }
