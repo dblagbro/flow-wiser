@@ -42,6 +42,7 @@ overrides:
   multer: 2.2.0
   basic-ftp: 5.2.1
   convict: 6.2.5
+  vm2: 3.11.5
 
 importers:
 
@@ -740,8 +741,8 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
       vm2:
-        specifier: 3.11.2
-        version: 3.11.2
+        specifier: 3.11.5
+        version: 3.11.5
       weaviate-client:
         specifier: 3.12.0
         version: 3.12.0(encoding@0.1.13)
@@ -10696,6 +10697,7 @@ packages:
 
   crypto-js@4.2.0:
     resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
 
   crypto-random-string@2.0.0:
     resolution: {integrity: sha512-v1plID3y9r/lPhviJ1wrXpLeyUIGAZ2SHNYTEapm7/8A9nLPoyvVp3RK/EPFqn5kEznyWgYZNsRtYYIWbuG8KA==}
@@ -19780,8 +19782,8 @@ packages:
       terser:
         optional: true
 
-  vm2@3.11.2:
-    resolution: {integrity: sha512-hnsYAgBSAgwwPM/Gq66gMmUY0VlY9mKC8nvVRAZiJp+tYxF4sfNRlZymP8uqzIUK2U/7+SVZ/H8p7USxNHLlZA==}
+  vm2@3.11.5:
+    resolution: {integrity: sha512-RSrkBiwrj6FRU+QdqNs6KG0XdlvJCjpQ4GXiqmMbrhmwfu5k/XIMpAer0L8f6iuf0uJ3a4T1xJN126Q8yf0VIA==}
     engines: {node: '>=6.0'}
     hasBin: true
 
@@ -44386,7 +44388,7 @@ snapshots:
       sass: 1.71.1
       terser: 5.29.1
 
-  vm2@3.11.2:
+  vm2@3.11.5:
     dependencies:
       acorn: 8.16.0
       acorn-walk: 8.3.5
