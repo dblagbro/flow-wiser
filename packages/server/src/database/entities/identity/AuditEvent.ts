@@ -102,8 +102,12 @@ export class AuditEvent {
      * silent precision loss above 2^53; the SQLite driver returns a number. Consumers must treat it
      * as an opaque ordering key and not do arithmetic on it.
      */
-    @PrimaryGeneratedColumn({ type: 'bigint' })
-    seqNo: string
+    // SQLite requires EXACTLY `INTEGER PRIMARY KEY` for AUTOINCREMENT -- `bigint PRIMARY KEY
+    // AUTOINCREMENT` is rejected outright, and SQLite is Flowise's default engine. The
+    // migrations already emit `integer PRIMARY KEY AUTOINCREMENT`; this decorator previously
+    // said bigint, so entity metadata and DDL disagreed. Aligned to the DDL.
+    @PrimaryGeneratedColumn()
+    seqNo: number
 
     /**
      * Stable public identifier. Assigned by the audit service (uuid v4) rather than by a column
