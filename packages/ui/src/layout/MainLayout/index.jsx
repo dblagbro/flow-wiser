@@ -84,7 +84,13 @@ const MainLayout = () => {
         localStorage.setItem(BANNER_DISMISSED_KEY, 'true')
         setBannerDismissed(true)
     }
-    const bannerOffset = bannerDismissed ? 0 : BANNER_HEIGHT
+    // Flow-Wiser: upstream's sunset announcement is suppressed. It advertises another
+    // project's end-of-life and links to flowiseai.com/sunset, which is off-message on a
+    // continuation fork and points users away from the thing they are running.
+    // Forced dismissed rather than deleted, so the banner mechanism stays available if we
+    // ever want to announce something of our own -- and so the 45px layout offset collapses
+    // to 0 rather than leaving a blank strip.
+    const bannerOffset = 0
 
     return (
         <Box sx={{ display: 'flex' }}>
@@ -100,7 +106,7 @@ const MainLayout = () => {
                     transition: leftDrawerOpened ? theme.transitions.create('width') : 'none'
                 }}
             >
-                {!bannerDismissed && <AnnouncementBanner onClose={handleDismissBanner} />}
+                {false && <AnnouncementBanner onClose={handleDismissBanner} />}
                 <Toolbar sx={{ height: `${headerHeight}px`, borderBottom: '1px solid', borderColor: theme.palette.grey[900] + 25 }}>
                     <Header handleLeftDrawerToggle={handleLeftDrawerToggle} />
                 </Toolbar>
