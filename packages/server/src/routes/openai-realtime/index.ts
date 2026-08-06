@@ -1,6 +1,6 @@
 import express from 'express'
 import openaiRealTimeController from '../../controllers/openai-realtime'
-import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+import { checkAnyPermission } from '../../identity/rbac/PermissionCheck'
 
 const router = express.Router()
 

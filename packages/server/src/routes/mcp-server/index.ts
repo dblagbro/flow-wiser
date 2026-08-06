@@ -1,6 +1,6 @@
 import express from 'express'
 import mcpServerController from '../../controllers/mcp-server'
-import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+import { checkAnyPermission } from '../../identity/rbac/PermissionCheck'
 const router = express.Router()
 
 // GET    /api/v1/mcp-server/:id     → get current config
