@@ -107,7 +107,7 @@ export class IdentityManager {
      * The argument is accepted and ignored -- there is no plan to look up -- but dropping it from
      * the signature would break every caller for no gain.
      */
-    public async getFeaturesByPlan(_subscriptionId?: string, _withoutCache = false): Promise<Record<string, boolean>> {
+    public async getFeaturesByPlan(_subscriptionId?: string): Promise<Record<string, boolean>> {
         return Object.fromEntries(ALL_FEATURES.map((f) => [f, true]))
     }
 

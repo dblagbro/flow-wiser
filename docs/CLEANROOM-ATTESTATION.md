@@ -168,7 +168,53 @@ Background only; not advice.
 - No trademark is used as a source identifier: Apache 2.0 §6 grants no trademark rights,
   so the project ships its own name and marks with an explicit non-affiliation disclaimer.
 
-## 8. Contact
+## 8. Disclosed incident — 2026-08-06, final cut-over
+
+One incident is recorded here rather than omitted. §2 claims the protected files were
+never `grep`-ed; on the final cut-over branch (`wip/final-cutover`) that claim needs this
+qualification.
+
+**What happened.** While enumerating Apache-2.0 call sites of
+`getFeaturesByPlan` / `getProductIdFromSubscription`, an agent ran a recursive `grep` from
+`packages/server/src` with `--exclude-dir=enterprise` and a `grep -v` intended to drop
+`IdentityManager.ts`. The exclusion covered the directory correctly, but the `grep -v`
+pattern was anchored `^./IdentityManager.ts` while the actual output lines began
+`IdentityManager.ts:` — so the filter did not match and **roughly a dozen matching lines
+from `packages/server/src/IdentityManager.ts` were displayed.**
+
+**What was exposed.** Only lines matching that search: method signatures
+(`getPlatformType`, `isLicenseValid`, `initializeSSO`, `getProductIdFromSubscription`,
+`getFeaturesByPlan`), and single-line bodies delegating to `StripeManager` or branching on
+`Platform.CLOUD` / `Platform.ENTERPRISE`. No file was opened, and no other protected file
+was affected. The exposure was a search result, not a read of the file.
+
+**Effect on the work.** Assessed line by line. Everything the exposed lines showed had
+already been derived, and committed, from Apache-2.0 call sites before the incident —
+`index.ts:277-278` shows both methods being `await`ed with a subscription id, and
+`identity/PlatformManager.ts` documented that surface in an earlier commit on the
+`apache2-only` branch, before this one existed.
+
+**One detail was not independently derivable and was removed.** A second parameter,
+`withoutCache`, was briefly added to `getFeaturesByPlan`. No Apache-2.0 call site passes
+it; it came from the exposed signature. It was deleted in the same arc, and the shipped
+signature takes only the subscription id its call sites actually pass. Verify:
+
+```bash
+git log -p --all -- packages/server/src/identity/PlatformManager.ts | grep -n "withoutCache"
+grep -rn "getFeaturesByPlan" packages/server/src/   # every call site passes 0 or 1 argument
+```
+
+**Why this is disclosed rather than quietly corrected.** §5 records that the absence of
+reverse engineering is the project's strongest fact, and a fact is only strong if the
+record of it is complete. An undisclosed near-miss found later by someone else is worth
+far less than a disclosed one, and the correction is checkable in the history above.
+
+**Process change.** Exclusions must be expressed so that a mismatched path prefix cannot
+silently disable them. Use `--exclude-dir=enterprise --exclude=IdentityManager.ts` on the
+`grep` itself — the tool's own exclusion, which does not depend on how it formats output —
+rather than post-filtering with `grep -v`.
+
+## 9. Contact
 
 If you believe any part of this process is wrong, open an issue at
 https://github.com/dblagbro/flow-wiser/issues or report privately via
