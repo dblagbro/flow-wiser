@@ -99,14 +99,32 @@ export class IdentityManager {
         return true
     }
 
-    /** All features, enabled. */
-    public getFeaturesByPlan(): Record<string, boolean> {
+    /**
+     * All features, enabled.
+     *
+     * `async` and subscription-shaped because the call sites are:
+     *   `await this.identityManager.getFeaturesByPlan(subscriptionId)`   index.ts:277
+     * The argument is accepted and ignored -- there is no plan to look up -- but dropping it from
+     * the signature would break every caller for no gain.
+     */
+    public async getFeaturesByPlan(_subscriptionId?: string, _withoutCache = false): Promise<Record<string, boolean>> {
         return Object.fromEntries(ALL_FEATURES.map((f) => [f, true]))
     }
 
-    /** No billing, so no product. Callers treat a missing id as "not subscribed". */
-    public getProductIdFromSubscription(): string | null {
-        return null
+    /**
+     * No billing, so no product.
+     *
+     * Returns the EMPTY STRING rather than null, and that is a call-site constraint, not a
+     * preference: `schedule/ScheduleExecutor.ts:212` and `utils/buildChatflow.ts:1057` pass the
+     * result straight into `executeAgentFlow({ ..., productId })`, whose parameter is a required
+     * `string`. Null would not type-check there, and widening that parameter to `string | null`
+     * would push the same question into every downstream consumer of it.
+     *
+     * Empty string is also the honest value: it is what "this deployment has no product" looks
+     * like to code that only ever forwards it. Nothing in the Apache-2.0 tree branches on it.
+     */
+    public async getProductIdFromSubscription(_subscriptionId?: string): Promise<string> {
+        return ''
     }
 
     /**

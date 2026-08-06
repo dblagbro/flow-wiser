@@ -1,4 +1,6 @@
 import { Request } from 'express'
+import { StatusCodes } from 'http-status-codes'
+import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 
 /**
  * Tenant scoping for repository queries — the Apache-2.0 replacement for the helpers the
@@ -60,4 +62,45 @@ export const getWorkspaceSearchOptions = (workspaceId?: string | null): Workspac
 export const getWorkspaceSearchOptionsFromReq = (req: Request): WorkspaceSearchOptions => {
     const user = (req as Request & { user?: { activeWorkspaceId?: string } }).user
     return getWorkspaceSearchOptions(user?.activeWorkspaceId)
+}
+
+/**
+ * The ACTIVE workspace id of the authenticated subject, or a 401.
+ *
+ * Same session-derived rule as {@link getWorkspaceSearchOptionsFromReq} — note 2 above applies
+ * unchanged — but it RETURNS A BARE ID rather than a where-clause fragment, and it refuses to
+ * return nothing.
+ *
+ * CALL SITE: `packages/server/src/routes/oauth2/index.ts:78`.
+ *
+ *     const workspaceId = getActiveWorkspaceIdForRequest(req)
+ *     let credential = await credentialRepository.findOneBy({ id: credentialId, workspaceId })
+ *
+ * ── Why this one throws when the other returns `{}` ──────────────────────────────────────────
+ *
+ * The difference is what the caller does with the absence, and it is a security difference, not a
+ * style one.
+ *
+ * `getWorkspaceSearchOptions` returns `{}` and the caller SPREADS it — the workspace condition is
+ * simply not added, which is the documented behaviour for pre-workspace data (note 1).
+ *
+ * Here the value is placed into a where-clause BY NAME. TypeORM drops a condition whose value is
+ * `undefined`, so `findOneBy({ id, workspaceId: undefined })` does not fail and does not match
+ * nothing — it matches the credential in ANY workspace. Returning `undefined` from this function
+ * would therefore turn one missing session field into a silent cross-tenant read of exactly the
+ * kind REQUIREMENTS-MIGRATION §3a exists to prevent, at the OAuth2 endpoint, on credentials.
+ *
+ * So it fails closed instead. The two OAuth2 handlers that call it are already inside a
+ * `try/catch` that forwards to the error middleware, so the throw becomes a clean 401.
+ */
+export const getActiveWorkspaceIdForRequest = (req: Request): string => {
+    const user = (req as Request & { user?: { activeWorkspaceId?: string } }).user
+    const workspaceId = user?.activeWorkspaceId
+    if (!workspaceId) {
+        throw new InternalFlowiseError(
+            StatusCodes.UNAUTHORIZED,
+            'No active workspace on this request — refusing an unscoped tenant query (requirements MIGRATION §3a)'
+        )
+    }
+    return workspaceId
 }

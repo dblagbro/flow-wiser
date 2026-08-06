@@ -37,8 +37,6 @@ import {
     AuditEvent,
     WorkspaceShared
 } from './identity'
-import { LoginMethod } from '../../database/entities/identity'
-import { LoginSession } from '../../database/entities/identity'
 import { ScheduleRecord } from './ScheduleRecord'
 import { ScheduleTriggerLog } from './ScheduleTriggerLog'
 

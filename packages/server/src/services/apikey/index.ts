@@ -1,7 +1,7 @@
 import { StatusCodes } from 'http-status-codes'
 import { v4 as uuidv4 } from 'uuid'
 import { ApiKey } from '../../database/entities/ApiKey'
-import { LoggedInUser } from '../../enterprise/Interface.Enterprise'
+import { LoggedInUser } from '../../identity/Interface'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
 import { Platform } from '../../Interface'

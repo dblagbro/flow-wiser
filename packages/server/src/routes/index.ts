@@ -60,16 +60,14 @@ import versionRouter from './versions'
 import webhookRouter from './webhook'
 import webhookListenerRouter from './webhook-listener'
 
-import accountRouter from '../enterprise/routes/account.route'
-import auditRouter from '../enterprise/routes/audit'
-import authRouter from '../enterprise/routes/auth'
-import loginMethodRouter from '../enterprise/routes/login-method.route'
-import organizationUserRoute from '../enterprise/routes/organization-user.route'
-import organizationRouter from '../enterprise/routes/organization.route'
-import roleRouter from '../enterprise/routes/role.route'
-import userRouter from '../enterprise/routes/user.route'
-import workspaceUserRouter from '../enterprise/routes/workspace-user.route'
-import workspaceRouter from '../enterprise/routes/workspace.route'
+// Apache-2.0 identity layer. Ten mount points, three states — implemented, partially implemented,
+// and explicitly 501. See docs/STATUS.md; the 501s are the backlog, not a design.
+import createAccountRouter from '../identity/routes/account'
+import createAuthRouter from '../identity/routes/auth'
+import loginMethodRouter from '../identity/routes/loginMethod'
+import mfaRouter from '../identity/routes/mfa'
+import { notImplementedRouter } from '../identity/routes/notImplemented'
+import { workspaceRouter, workspaceUserRouter } from '../identity/routes/workspace'
 import { IdentityManager } from '../identity/PlatformManager'
 
 const router = express.Router()
@@ -134,16 +132,41 @@ router.use('/custom-mcp-servers', customMcpServersRouter)
 router.use('/mcp-server', mcpServerRouter)
 router.use('/mcp', mcpEndpointRouter)
 
-router.use('/auth', authRouter)
-router.use('/audit', IdentityManager.checkFeatureByPlan('feat:login-activity'), auditRouter)
-router.use('/user', userRouter)
-router.use('/organization', organizationRouter)
-router.use('/role', IdentityManager.checkFeatureByPlan('feat:roles'), roleRouter)
-router.use('/organizationuser', organizationUserRoute)
+// ── Identity ─────────────────────────────────────────────────────────────────────────────────
+// Sign-in, sign-out, session refresh, MFA and the permission catalog are implemented. The
+// administration surfaces below them are not, and say so with a 501 rather than falling through
+// to the SPA catch-all at index.ts:364 — which would answer a JSON request with a page of HTML.
+router.use('/auth', createAuthRouter())
+router.use('/mfa', mfaRouter)
+router.use('/account', createAccountRouter())
+router.use('/loginmethod', loginMethodRouter)
 router.use('/workspace', workspaceRouter)
 router.use('/workspaceuser', workspaceUserRouter)
-router.use('/account', accountRouter)
-router.use('/loginmethod', loginMethodRouter)
+router.use(
+    '/audit',
+    IdentityManager.checkFeatureByPlan('feat:login-activity'),
+    notImplementedRouter('The audit query API', 'Audit events are recorded; the query endpoint over them is not implemented in this build.')
+)
+router.use('/user', notImplementedRouter('User administration', 'Reading and updating user accounts is not implemented in this build.'))
+router.use(
+    '/organization',
+    notImplementedRouter(
+        'Organization administration',
+        'Every /organization endpoint the client calls is a billing endpoint. Flow-Wiser has no billing, so there is nothing behind them.'
+    )
+)
+router.use(
+    '/role',
+    IdentityManager.checkFeatureByPlan('feat:roles'),
+    notImplementedRouter(
+        'Role administration',
+        'Roles are seeded by the bootstrap (identity/services/BootstrapService.ts); editing them over HTTP is not implemented in this build.'
+    )
+)
+router.use(
+    '/organizationuser',
+    notImplementedRouter('Organization membership administration', 'Managing organization members is not implemented in this build.')
+)
 router.use('/logs', IdentityManager.checkFeatureByPlan('feat:logs'), logsRouter)
 // router.use('/files', IdentityManager.checkFeatureByPlan('feat:files'), filesRouter)
 
