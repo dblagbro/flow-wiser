@@ -50,7 +50,7 @@ export class User {
     pendingEmail?: string | null
 
     /** Null = unverified, which is what produces the `'User Email Unverified'` login response (spec §E.3) */
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: Date, nullable: true })
     emailVerifiedDate?: Date | null
 
     /**
@@ -58,7 +58,7 @@ export class User {
      * which satisfies "password change must invalidate the session" (spec §D.12) and
      * "rotation on privilege change" (requirements §5) without a table scan of identity_session.
      */
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: Date, nullable: true })
     credentialUpdatedDate?: Date | null
 
     /** Cloud registration only (spec §D.1) */

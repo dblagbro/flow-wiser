@@ -200,6 +200,16 @@ export class App {
             logger.info('🎉 [server]: All initialization steps completed successfully!')
         } catch (error) {
             logger.error('❌ [server]: Error during Data Source initialization:', error)
+            // Rethrow. Previously this was logged and swallowed, so start() carried on to
+            // config(), which dereferenced the identityManager this block never got to assign
+            // and died with `Cannot read properties of undefined (reading 'initializeSSO')`.
+            // The real cause was still in the log, several lines up, under a fatal-looking
+            // TypeError that had nothing to do with it — and that is the log an operator reads
+            // at 3am during a failed upgrade.
+            //
+            // Swallowing is also worse than it looks: any failure late in this sequence left a
+            // half-initialized server that went on to listen and serve requests.
+            throw error
         }
     }
 

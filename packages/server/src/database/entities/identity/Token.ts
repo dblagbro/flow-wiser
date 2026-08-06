@@ -63,7 +63,7 @@ export class Token {
     // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
     // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
     // whole identity DataSource fails to initialise. Every other date column here already says so.
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: Date, nullable: true })
     consumedDate?: Date | null
 
     /**
