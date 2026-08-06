@@ -62,7 +62,7 @@ export class MfaRecoveryCode {
     // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
     // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
     // whole identity DataSource fails to initialise. Every other date column here already says so.
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     consumedDate?: Date | null
 
     /** The session that redeemed it, so a suspicious redemption can be traced to its login */

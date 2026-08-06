@@ -307,4 +307,15 @@ export const setSessionAuthService = (service: AuthService | undefined): void =>
     sharedAuthService = service
 }
 
-export default { initializeJwtCookieMiddleware, verifyToken, verifyTokenForBullMQDashboard, enforcePasswordChange }
+/**
+ * Explicitly typed because the inferred shape reaches into `@types/qs` through Express's
+ * generics, which tsc cannot name portably from a declaration file (TS2742).
+ */
+const sessionMiddleware: {
+    initializeJwtCookieMiddleware: typeof initializeJwtCookieMiddleware
+    verifyToken: typeof verifyToken
+    verifyTokenForBullMQDashboard: typeof verifyTokenForBullMQDashboard
+    enforcePasswordChange: typeof enforcePasswordChange
+} = { initializeJwtCookieMiddleware, verifyToken, verifyTokenForBullMQDashboard, enforcePasswordChange }
+
+export default sessionMiddleware

@@ -162,7 +162,7 @@ export class Session {
      * kept separately so a future step-up/re-authentication requirement — §8 needs one to disable
      * MFA or regenerate recovery codes — can measure the age of the proof.
      */
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     mfaSatisfiedDate?: Date | null
 
     /** Access-credential lifetime is short and independent; this is the refresh window (spec §E.4) */
@@ -175,7 +175,7 @@ export class Session {
 
     /** Null = live. Set on logout, explicit revoke, credential change or privilege change */
     @Index()
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     revokedDate?: Date | null
 
     @Column({ nullable: true, type: 'varchar', length: 32 })
@@ -190,7 +190,7 @@ export class Session {
     ipAddress?: string | null
 
     /** Refreshed on each successful use — drives idle timeout and the "last active" column */
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     lastActiveDate?: Date | null
 
     @ManyToOne(() => User)

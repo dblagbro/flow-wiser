@@ -34,10 +34,29 @@ export function sanitizeNullBytes(obj: any): any {
     return obj
 }
 
-export function sanitizeUser(user: Partial<User>) {
-    delete user.credential
-    delete user.tempToken
-    delete user.tokenExpiry
+/**
+ * Fields that must never leave the server on a user object.
+ *
+ * `credential` is the password hash and is the only one of these declared on our own User
+ * entity — it is `select: false`, so this is defence in depth rather than the primary control.
+ *
+ * `tempToken` and `tokenExpiry` are NOT on our entity, and are stripped deliberately anyway.
+ * Flow-Wiser migrates from existing Flowise 3.x databases, whose `user` rows carry them from
+ * the outgoing identity stack. Those columns survive the migration, so a row read back from a
+ * migrated database can still carry a `tempToken` — a password-reset and invite token, held in
+ * cleartext. A sanitizer that knew only the current entity shape would hand it to the client.
+ *
+ * Strip by name, not by type. The type is what changed; the data did not.
+ *
+ * Deliberately NOT stripped: `status` and `createdBy`, which also survive migration but are
+ * membership state and a user id, not secrets.
+ */
+const SENSITIVE_USER_FIELDS = ['credential', 'tempToken', 'tokenExpiry'] as const
+
+export function sanitizeUser<T extends Partial<User>>(user: T): T {
+    for (const field of SENSITIVE_USER_FIELDS) {
+        delete (user as Record<string, unknown>)[field]
+    }
 
     return user
 }

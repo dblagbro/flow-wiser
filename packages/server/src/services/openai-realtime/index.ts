@@ -82,7 +82,9 @@ const buildAndInitTool = async (chatflowid: string, reqWorkspaceId?: string, _ch
     }
 
     const orgId = org.id
-    const subscriptionId = org.subscriptionId
+    // Our Organization declares subscriptionId nullable; the executor's contract is
+    // `string | undefined`. Normalise here rather than widening the executor.
+    const subscriptionId = org.subscriptionId ?? undefined
 
     const reactFlowNodes = await buildFlow({
         startingNodeIds,

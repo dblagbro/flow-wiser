@@ -110,7 +110,7 @@ export class MfaFactor {
     // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
     // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
     // whole identity DataSource fails to initialise. Every other date column here already says so.
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     confirmedDate?: Date | null
 
     /**
@@ -121,7 +121,7 @@ export class MfaFactor {
     // `type` is explicit because `?: Date | null` serialises to design:type Object, not Date —
     // TypeORM then rejects the column outright ("Data type Object ... is not supported") and the
     // whole identity DataSource fails to initialise. Every other date column here already says so.
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     lastUsedDate?: Date | null
 
     /**
