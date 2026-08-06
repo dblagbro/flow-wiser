@@ -51,6 +51,21 @@ export class Role {
     @Column({ type: 'boolean', default: false })
     isSystem: boolean
 
+    /**
+     * The `required-per-role` axis of the MFA policy (requirements §8). See `MfaPolicy` on
+     * Organization for the complete model and the reasoning behind the split.
+     *
+     * A user holding this role in ANY workspace of the organization must present a second factor
+     * before a session is issued, whatever the organization-wide setting says — the two axes are
+     * OR-ed, never overridden, so a role can tighten the policy but never relax it. This is the
+     * natural home for the requirement because permissions and MFA obligation are the same kind of
+     * statement: both describe what holding this role means.
+     *
+     * Defaults false, so adding the column changes no existing behaviour.
+     */
+    @Column({ type: 'boolean', default: false })
+    requiresMfa: boolean
+
     @Column({ nullable: true, type: 'uuid' })
     createdBy?: string | null
 

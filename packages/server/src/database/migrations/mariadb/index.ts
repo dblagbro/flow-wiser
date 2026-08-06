@@ -49,6 +49,7 @@ import { AddMcpServerConfigToChatFlow1767000000000 } from './1767000000000-AddMc
 import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEntities'
 import { AddIdentityTables1780000000000 } from './1780000000000-AddIdentityTables'
 import { AddIdentitySessionTables1780000000001 } from './1780000000001-AddIdentitySessionTables'
+import { AddIdentityMfaAuditTables1780000000002 } from './1780000000002-AddIdentityMfaAuditTables'
 
 import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/mariadb/1720230151482-AddAuthTables'
 import { AddWorkspace1725437498242 } from '../../../enterprise/database/migrations/mariadb/1725437498242-AddWorkspace'
@@ -124,5 +125,6 @@ export const mariadbMigrations = [
     AddMcpServerConfigToChatFlow1767000000000,
     AddScheduleEntities1772000000000,
     AddIdentityTables1780000000000,
-    AddIdentitySessionTables1780000000001
+    AddIdentitySessionTables1780000000001,
+    AddIdentityMfaAuditTables1780000000002
 ]
