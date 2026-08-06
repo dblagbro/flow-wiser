@@ -52,7 +52,7 @@ jest.mock(
 jest.mock('../utils/telemetry', () => ({ Telemetry: class Telemetry {} }))
 jest.mock('../CachePool', () => ({ CachePool: class CachePool {} }))
 jest.mock('../UsageCacheManager', () => ({ UsageCacheManager: class UsageCacheManager {} }))
-jest.mock('../IdentityManager', () => ({ IdentityManager: class IdentityManager {} }))
+jest.mock('../identity/PlatformManager', () => ({ IdentityManager: class IdentityManager {} }))
 jest.mock('../utils/quotaUsage', () => ({
     checkPredictions: jest.fn(),
     updatePredictionsUsage: jest.fn()

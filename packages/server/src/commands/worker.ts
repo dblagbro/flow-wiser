@@ -8,7 +8,7 @@ import { CachePool } from '../CachePool'
 import { QueueEvents, QueueEventsListener } from 'bullmq'
 import { AbortControllerPool } from '../AbortControllerPool'
 import { UsageCacheManager } from '../UsageCacheManager'
-import { IdentityManager } from '../IdentityManager'
+import { IdentityManager } from '../identity/PlatformManager'
 
 interface CustomListener extends QueueEventsListener {
     abort: (args: { id: string }, id: string) => void

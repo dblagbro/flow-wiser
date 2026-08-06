@@ -22,7 +22,7 @@ import { CachePool } from '../CachePool'
 import { UsageCacheManager } from '../UsageCacheManager'
 import { v4 as uuidv4 } from 'uuid'
 import logger from '../utils/logger'
-import { IdentityManager } from '../IdentityManager'
+import { IdentityManager } from '../identity/PlatformManager'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 

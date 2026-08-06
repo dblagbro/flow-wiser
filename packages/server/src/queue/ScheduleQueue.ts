@@ -10,7 +10,7 @@ import { CachePool } from '../CachePool'
 import { UsageCacheManager } from '../UsageCacheManager'
 import { RedisEventPublisher } from './RedisEventPublisher'
 import { executeScheduleJob } from '../schedule/ScheduleExecutor'
-import { IdentityManager } from '../IdentityManager'
+import { IdentityManager } from '../identity/PlatformManager'
 
 interface ScheduleQueueOptions {
     appDataSource: DataSource

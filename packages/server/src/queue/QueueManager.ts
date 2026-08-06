@@ -13,7 +13,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { Express } from 'express'
 import { UsageCacheManager } from '../UsageCacheManager'
 import { ExpressAdapter } from '@bull-board/express'
-import { IdentityManager } from '../IdentityManager'
+import { IdentityManager } from '../identity/PlatformManager'
 
 const QUEUE_NAME = process.env.QUEUE_NAME || 'flowise-queue'
 

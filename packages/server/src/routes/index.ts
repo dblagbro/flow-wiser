@@ -70,7 +70,7 @@ import roleRouter from '../enterprise/routes/role.route'
 import userRouter from '../enterprise/routes/user.route'
 import workspaceUserRouter from '../enterprise/routes/workspace-user.route'
 import workspaceRouter from '../enterprise/routes/workspace.route'
-import { IdentityManager } from '../IdentityManager'
+import { IdentityManager } from '../identity/PlatformManager'
 
 const router = express.Router()
 
