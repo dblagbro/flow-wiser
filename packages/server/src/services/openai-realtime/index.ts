@@ -18,7 +18,7 @@ import { ICommonObject, INodeData } from 'flowise-components'
 import { convertToOpenAIFunction } from '@langchain/core/utils/function_calling'
 import { v4 as uuidv4 } from 'uuid'
 import { Variable } from '../../database/entities/Variable'
-import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
+import { getWorkspaceSearchOptions } from '../../identity/tenancy/ControllerServiceUtils'
 import { Workspace } from '../../enterprise/database/entities/workspace.entity'
 import { Organization } from '../../enterprise/database/entities/organization.entity'
 

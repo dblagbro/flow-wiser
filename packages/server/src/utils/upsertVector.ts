@@ -18,7 +18,7 @@ import { UpsertHistory } from '../database/entities/UpsertHistory'
 import { Variable } from '../database/entities/Variable'
 import { Organization } from '../enterprise/database/entities/organization.entity'
 import { Workspace } from '../enterprise/database/entities/workspace.entity'
-import { getWorkspaceSearchOptions } from '../enterprise/utils/ControllerServiceUtils'
+import { getWorkspaceSearchOptions } from '../identity/tenancy/ControllerServiceUtils'
 import { InternalFlowiseError } from '../errors/internalFlowiseError'
 import { getErrorMessage } from '../errors/utils'
 import {
