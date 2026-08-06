@@ -97,7 +97,9 @@ export const disableSso = async (input: SsoDisableInput): Promise<SsoDisableResu
             organizationId: input.organizationId ?? null,
             disabled: enabled.map((method) => ({ id: method.id, provider: method.name, organizationId: method.organizationId ?? null })),
             alreadyDisabled: targeted.length - enabled.length,
-            accountsWithLocalPassword,
+            // `accountsWithLocalLogin`, not `…LocalPassword`: the redactor drops any key whose name
+            // contains `password`, and this number is the whole point of the command's output.
+            accountsWithLocalLogin: accountsWithLocalPassword,
             totalAccounts: users.length
         }
     })

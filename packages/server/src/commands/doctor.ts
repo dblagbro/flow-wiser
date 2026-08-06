@@ -153,6 +153,7 @@ export const runDoctor = async (context: RecoveryContext & { env?: NodeJS.Proces
     try {
         checks.push(await checkMigrations(queryRunner, dataSource))
         checks.push(await checkIdentityTables(queryRunner))
+        checks.push(await checkDanglingForeignKeys(queryRunner))
         checks.push(await checkIdentityCounts(queryRunner, dataSource))
         checks.push(await checkWhoCanLogIn(queryRunner, dataSource))
         checks.push(await checkPasswordAndMfaState(queryRunner, dataSource, env))
@@ -258,6 +259,52 @@ const checkIdentityTables = async (queryRunner: QueryRunner): Promise<DoctorChec
         }
     }
     return { name, status: 'ok', summary: `All ${IDENTITY_TABLES.length} identity tables exist.`, details: [] }
+}
+
+// ── 2b. Foreign keys that point at nothing ───────────────────────────────────────────────────
+
+/**
+ * A table whose foreign key names a table that does not exist.
+ *
+ * This is not hypothetical tidiness. SQLite enforces foreign keys at DML time, not at DDL time, so a
+ * `REFERENCES "workspace"("id")` left behind after the `workspace` table is dropped produces exactly
+ * one symptom: every INSERT into the referencing table fails with `no such table: main.workspace`,
+ * while every SELECT keeps working. The instance therefore looks completely healthy — flows list,
+ * pages render — right up to the moment somebody tries to SAVE one. It is precisely the class of
+ * defect that a diagnostic has to find, because normal use will not.
+ *
+ * Read through `queryRunner.getTable`, so it works on every engine without a hand-written
+ * information_schema query.
+ */
+const checkDanglingForeignKeys = async (queryRunner: QueryRunner): Promise<DoctorCheck> => {
+    const name = 'Schema — foreign keys'
+    const tables = [...TENANT_SCOPED_TABLES, ...IDENTITY_TABLES]
+    const present = new Set<string>()
+    for (const table of tables) if (await queryRunner.hasTable(table)) present.add(table)
+
+    const dangling: string[] = []
+    for (const table of present) {
+        const described = await queryRunner.getTable(table)
+        for (const foreignKey of described?.foreignKeys ?? []) {
+            const referenced = foreignKey.referencedTableName
+            if (!referenced) continue
+            if (present.has(referenced)) continue
+            if (await queryRunner.hasTable(referenced)) continue
+            dangling.push(`${table}.(${foreignKey.columnNames.join(',')}) -> ${referenced} (table does not exist)`)
+        }
+    }
+
+    if (dangling.length === 0) return { name, status: 'ok', summary: 'Every foreign key points at a table that exists.', details: [] }
+    return {
+        name,
+        status: 'fail',
+        summary: `${dangling.length} foreign key(s) reference a table that no longer exists.`,
+        details: [
+            ...truncate(dangling),
+            'On SQLite every INSERT into these tables fails at run time while every SELECT still succeeds,',
+            'so the instance looks healthy until somebody tries to save.'
+        ]
+    }
 }
 
 // ── 3. Population ────────────────────────────────────────────────────────────────────────────
@@ -431,11 +478,23 @@ const checkTenantKeys = async (queryRunner: QueryRunner, dataSource: DataSource)
 
     const checked: string[] = []
     const notDenormalised: string[] = []
+    const noWorkspaceKey: string[] = []
     const problems: string[] = []
     let orphanCount = 0
 
     for (const table of TENANT_SCOPED_TABLES) {
         if (!(await queryRunner.hasTable(table))) continue
+
+        // Not every tenant-scoped table carries `workspaceId` yet either: on a database migrated by
+        // the Apache-2.0 chain alone, `chat_flow` has it and `credential`, `assistant` and `apikey`
+        // do not — those columns were added by the commercially-licensed migrations that the
+        // cut-over unregistered. Without a workspace key there is nothing to check the tenant key
+        // AGAINST, so the table is reported rather than queried with a column that is not there.
+        if (!(await queryRunner.hasColumn(table, 'workspaceId'))) {
+            noWorkspaceKey.push(table)
+            continue
+        }
+
         // §3a's denormalisation ("`organizationId` is written directly onto every tenant-scoped
         // resource row") may not have been applied yet. A table without the column is REPORTED as
         // such, not silently passed — "no column, no mismatches, therefore healthy" is precisely the
@@ -475,6 +534,12 @@ const checkTenantKeys = async (queryRunner: QueryRunner, dataSource: DataSource)
             ? [
                   `tables without an organizationId column  ${notDenormalised.join(', ')}`,
                   'MIGRATION §3a requires the tenant key on every tenant-scoped row; until it is there the boundary is join-only.'
+              ]
+            : []),
+        ...(noWorkspaceKey.length > 0
+            ? [
+                  `tables without a workspaceId column     ${noWorkspaceKey.join(', ')}`,
+                  'These rows belong to no workspace and therefore to no tenant at all — they are invisible to every scoped query.'
               ]
             : []),
         ...truncate(problems)

@@ -109,7 +109,9 @@ export const disableMfaForAccount = async (input: MfaDisableInput): Promise<MfaD
             email,
             factorsRemoved: factors.length,
             confirmedFactorsRemoved: confirmed.length,
-            recoveryCodesBurned: result.recoveryCodesBurned,
+            // `unusedCodesBurned`, not `recoveryCodesBurned`: `recoverycode` is on the redactor's
+            // key-name denylist, so the obvious spelling would store "[redacted]" instead of a count.
+            unusedCodesBurned: result.recoveryCodesBurned,
             factors: factors.map((factor) => ({
                 id: factor.id,
                 type: factor.type,

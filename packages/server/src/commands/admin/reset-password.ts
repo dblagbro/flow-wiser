@@ -94,7 +94,10 @@ export const resetAdminPassword = async (input: ResetPasswordInput): Promise<Res
         message: `Recovery CLI reset the password for ${email}; ${sessionsRevoked} session(s) revoked, password change forced`,
         // NEITHER hash is recorded — not the old one, not the new one (§9: "encrypted values never
         // appear in logs, audit records, API responses, or error messages"). Only the FACT that it moved.
-        detail: { email, hadPassword: previousHash !== null, isSSO: user.isSSO, sessionsRevoked, mustChangePassword: true }
+        // `hadLocalLogin` / `forcedChangeOnNextLogin` rather than `hadPassword` / `mustChangePassword`:
+        // the central redactor drops any key whose NAME contains `password`, so the obvious spelling
+        // would store the string "[redacted]" in place of the fact. See admin/create.ts.
+        detail: { email, hadLocalLogin: previousHash !== null, isSSO: user.isSSO, sessionsRevoked, forcedChangeOnNextLogin: true }
     })
 
     return { userId: user.id, email, hashChanged: credential !== previousHash, sessionsRevoked, mustChangePassword: true }

@@ -185,7 +185,12 @@ export const createAdminAccount = async (input: CreateAdminInput): Promise<Creat
             email,
             role: roleName,
             isOrgOwner: result.isOrgOwner,
-            mustChangePassword: true,
+            // NOT `mustChangePassword`: `crypto/redaction.ts` redacts any key whose NAME contains
+            // `password`, `credential`, `secret`, `token` … The redactor is right — a name-based
+            // denylist is what catches the field nobody anticipated — so the key bends, not the rule.
+            // Spelled this way the flag survives into the trail; spelled the obvious way it arrives
+            // as the string "[redacted]", which tells an investigator nothing.
+            forcedChangeOnNextLogin: true,
             seededRole: result.seededRole,
             createdOrganization: result.createdOrganization,
             createdWorkspace: result.createdWorkspace
