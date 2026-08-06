@@ -149,6 +149,31 @@ explaining how approval works, and on approval they join a tenant group.
 - **Requests expire** (default 30 days) and are retained after decision for audit.
 - Rejection reveals nothing about why, to the applicant.
 
+### Who may approve — decided 2026-08-05
+
+**`org-admin` may approve registrations into their own organization**, alongside the
+instance roles. This scales without an instance administrator in every loop, and matches
+`org-admin` being the administrator of their tenant.
+
+Guarded, because delegated approval is delegated account creation:
+
+- An `org-admin` may approve **only into an organization they administer**. An attempt to
+  approve into any other is refused and **audited as a cross-tenant failure** (§3), not
+  silently ignored.
+- They may assign only roles **at or below their own level** — an `org-admin` cannot mint
+  a `super-user`, an `admin`, or another `org-admin`. Privilege escalation by way of the
+  approval queue is the obvious attack on this feature.
+- The approving actor is recorded on the account itself, not only in the audit trail, so
+  "who let this person in" is answerable from the user record.
+- Instance roles (`super-admin`, `admin`, `super-user`) see and may act on **every**
+  pending request, including those already routed to an `org-admin`.
+
+> If tenants are ever untrusted third parties rather than teams you know, this should be
+> revisited: delegated approval means a tenant can grow its own membership without an
+> instance administrator seeing it happen at the time. The audit trail records it, but
+> after the fact. A per-organization `allowDelegatedApproval` flag, defaulting on, keeps
+> that reversible per tenant.
+
 ## 5. Users section (UI)
 
 The Apache-2.0 UI already ships `packages/ui/src/views/users/` and
