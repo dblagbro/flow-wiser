@@ -2,8 +2,7 @@ import { Args } from '@oclif/core'
 import { QueryRunner } from 'typeorm'
 import * as DataSource from '../DataSource'
 import { User } from '../database/entities/identity'
-import { getHash } from '../enterprise/utils/encryption.util'
-import { validatePasswordOrThrow } from '../enterprise/utils/validation.util'
+import { hash as hashPassword, validatePasswordOrThrow } from '../identity/crypto/passwords'
 import logger from '../utils/logger'
 import { BaseCommand } from './base'
 
@@ -63,9 +62,15 @@ export default class user extends BaseCommand {
         })
         if (!user) throw new Error(`User not found with email: ${email}`)
 
+        // Rejects before the write, so a bad password never opens a transaction. Throws
+        // PasswordPolicyError, which run()'s catch logs.
         validatePasswordOrThrow(password)
 
-        user.credential = getHash(password)
+        // `getHash` in the outgoing tree was synchronous. The Apache-2.0 replacement is bcrypt at
+        // cost 12 (identity/crypto/passwords.ts), which is deliberately expensive and therefore
+        // async -- hashing on the event loop for ~250ms is not something to hide behind a
+        // synchronous signature. The one call site is already inside an async method.
+        user.credential = await hashPassword(password)
         await queryRunner.manager.save(user)
         logger.info(`Password reset for user: ${email}`)
     }

@@ -206,7 +206,7 @@ export class AuditService {
      * NEVER THROWS. The audit write is downstream of the thing being audited, and failing the
      * caller would mean a broken log could deny service.
      */
-    async record(input: AuditRecordInput): Promise<{ id: string; seqNo: string } | null> {
+    async record(input: AuditRecordInput): Promise<{ id: string; seqNo: number } | null> {
         // uuid assigned here rather than by a column default so the value is identical on every
         // engine (AuditEvent.ts). Computed before the try so it can be reported in a failure log.
         const id = uuidv4()
