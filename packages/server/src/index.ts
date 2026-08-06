@@ -92,6 +92,46 @@ const ensurePostgresUuidExtension = async (dataSource: DataSource): Promise<void
     }
 }
 
+/**
+ * Seed the six system roles, the default tenancy, and any environment-supplied administrator.
+ *
+ * `BootstrapService` has existed, fully written and documented, with **no caller anywhere**. So on
+ * every fresh install the six-role hierarchy — super-admin, admin, super-user, org-admin, user,
+ * read-only — was never created, and `FLOWISE_BOOTSTRAP_EMAIL` / `FLOWISE_BOOTSTRAP_PASSWORD` did
+ * nothing. The only role that ever came into existence was the single one `admin:create` seeded on
+ * demand, which is why `doctor` reported five of six missing on a working instance. RBAC was fully
+ * designed and one-sixth usable.
+ *
+ * Runs after migrations, because it writes to the tables they create, and before the identity
+ * manager, so nothing can serve a request against a half-seeded instance. It is idempotent by
+ * construction — existing organizations, workspaces, roles and accounts are adopted, never
+ * duplicated — so it is safe on every boot, including against a database migrated from Flowise 3.x.
+ *
+ * A failure here is FATAL. Seeding is what makes the instance administrable; continuing past a
+ * failure would produce exactly the half-initialized server that `initDatabase`'s catch block used
+ * to allow.
+ */
+const runIdentityBootstrap = async (): Promise<void> => {
+    const { BootstrapService } = await import('./identity/services/BootstrapService')
+    // `allowNoIdentity`: seed roles and tenancy even with no account configured, rather than
+    // refusing to start. See BootstrapService for why throwing there is the wrong trade.
+    const result = await new BootstrapService().run({ allowNoIdentity: true })
+
+    const created = result.rolesCreated.length
+    logger.info(
+        `👥 [server]: Identity bootstrap complete — ${created} role(s) created, ${result.rolesExisting.length} already present; ` +
+            `${result.accountsCreated.length} account(s) created`
+    )
+
+    if (result.noAdministrableIdentity) {
+        logger.warn(
+            '⚠️ [server]: This instance has NO accounts, so nobody can sign in yet. Create the first ' +
+                'administrator with:  flowise admin:create --email <you> --role super-admin  ' +
+                '(or set FLOWISE_BOOTSTRAP_EMAIL and FLOWISE_BOOTSTRAP_PASSWORD and restart).'
+        )
+    }
+}
+
 export class App {
     app: express.Application
     nodesPool: NodesPool
@@ -123,6 +163,8 @@ export class App {
             // Run Migrations Scripts
             await this.AppDataSource.runMigrations({ transaction: 'each' })
             logger.info('🔄 [server]: Database migrations completed successfully')
+
+            await runIdentityBootstrap()
 
             // Initialize Identity Manager
             this.identityManager = await IdentityManager.getInstance()

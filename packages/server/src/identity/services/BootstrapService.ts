@@ -203,6 +203,21 @@ export interface BootstrapResult {
     rolesExisting: string[]
     accountsCreated: string[]
     accountsExisting: string[]
+    /**
+     * The instance has no account anyone can sign in as, and none was supplied by the environment.
+     * Only ever true when the caller passed `allowNoIdentity`; otherwise this case throws.
+     */
+    noAdministrableIdentity: boolean
+}
+
+export interface BootstrapRunOptions {
+    /**
+     * Seed roles and tenancy even when the instance has no identity and none is configured, instead
+     * of refusing. For the SERVER BOOT path only — see the comment at the check itself for why
+     * throwing there is the wrong trade. Every other caller should leave this unset and treat an
+     * unadministrable instance as fatal.
+     */
+    allowNoIdentity?: boolean
 }
 
 export interface BootstrapServiceOptions {
@@ -298,7 +313,9 @@ export class BootstrapService {
      * ("No Workspace Assigned" at login, spec §F-12) — is worse than none, because the instance
      * comes up looking healthy and cannot be logged into.
      */
-    async run(): Promise<BootstrapResult> {
+    async run(options: BootstrapRunOptions = {}): Promise<BootstrapResult> {
+        const allowNoIdentity = options.allowNoIdentity === true
+        let noAdministrableIdentity = false
         const accounts = this.readAccounts()
         const dataSource = this.getDataSource()
 
@@ -319,10 +336,24 @@ export class BootstrapService {
                 // direction — a reachable server nobody administers.
                 const existingUsers = await manager.count(User)
                 if (existingUsers === 0) {
-                    throw new BootstrapError(
-                        'No identity exists and FLOWISE_BOOTSTRAP_EMAIL / FLOWISE_BOOTSTRAP_PASSWORD are not set. ' +
-                            'Refusing to start an instance nobody can administer (REQUIREMENTS-AUTH-RBAC.md §2, MIGRATION §4).'
-                    )
+                    if (!allowNoIdentity) {
+                        throw new BootstrapError(
+                            'No identity exists and FLOWISE_BOOTSTRAP_EMAIL / FLOWISE_BOOTSTRAP_PASSWORD are not set. ' +
+                                'Refusing to start an instance nobody can administer (REQUIREMENTS-AUTH-RBAC.md §2, MIGRATION §4).'
+                        )
+                    }
+                    // The boot path passes `allowNoIdentity` and reports this instead of throwing.
+                    //
+                    // Throwing here would roll back the whole transaction, taking the six seeded
+                    // roles with it — so the first `docker run` of a new instance would refuse to
+                    // start AND leave nothing behind, and the operator's next move (`admin:create`)
+                    // would find no roles to assign.
+                    //
+                    // An instance with zero accounts is not the danger §2 describes. That danger is
+                    // a server nobody ADMINISTERS but anyone can reach; with no users and no API
+                    // keys, nobody can authenticate at all. It is closed, not open. The operator is
+                    // told loudly and given the exact command.
+                    noAdministrableIdentity = true
                 }
             }
 
@@ -338,7 +369,8 @@ export class BootstrapService {
                 rolesCreated,
                 rolesExisting,
                 accountsCreated,
-                accountsExisting
+                accountsExisting,
+                noAdministrableIdentity
             }
         })
 
