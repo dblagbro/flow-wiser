@@ -46,14 +46,15 @@ export type ErrorMessageKey = keyof typeof ErrorMessage
  *
  * The RBAC layer's {@link AuthenticatedUser} is the same principal seen through a narrower lens:
  * every field there is optional because the API-key branch populates only some of them. This type
- * widens it with the account-shaped fields the session branch also carries, and TIGHTENS the two
+ * widens it with the account-shaped fields the session branch also carries, and TIGHTENS the three
  * fields the Apache-2.0 code dereferences without a guard.
  *
  * Required here, optional in `AuthenticatedUser` — each because of a specific unguarded read:
  *
- *   permissions        `services/apikey/index.ts:80`  `user.permissions.includes(permission)`
- *                      `services/apikey/index.ts:128` same, inside a filter
- *   activeWorkspaceId  `services/apikey/index.ts:187` assigned to `ApiKey.workspaceId`, a `string`
+ *   permissions          `services/apikey/index.ts:80`  `user.permissions.includes(permission)`
+ *                        `services/apikey/index.ts:128` same, inside a filter
+ *   activeWorkspaceId    `services/apikey/index.ts:187` assigned to `ApiKey.workspaceId`, a `string`
+ *   activeOrganizationId `controllers/apikey/index.ts:14` passed to a `(organizationId: string)`
  *
  * Narrowing an optional property to a required one is assignment-compatible in the other
  * direction, so a `LoggedInUser` is still a valid `AuthenticatedUser` everywhere RBAC expects one.
@@ -72,6 +73,15 @@ export interface LoggedInUser extends AuthenticatedUser {
 
     /** The scope `permissions` belongs to. Dereferenced unguarded — see above. */
     activeWorkspaceId: string
+
+    /**
+     * The tenant. Required for the same reason as the two above:
+     * `controllers/apikey/index.ts:14` passes it to `getAllApiKeysByOrganization(organizationId:
+     * string)` with no guard. Both authentication branches always populate it — the API-key branch
+     * at `index.ts:283` and the session branch at `AuthService.authenticate` — so requiring it
+     * describes what is actually built rather than tightening a genuinely optional field.
+     */
+    activeOrganizationId: string
 
     /** `authUtils.js:38` — logged in `services/apikey/index.ts:40` when features are missing. */
     email?: string

@@ -48,8 +48,7 @@ export interface WorkspaceSearchOptions {
  * failure: it is the documented behaviour the Apache-2.0 callers already depend on, and the
  * decision to scope is theirs.
  */
-export const getWorkspaceSearchOptions = (workspaceId?: string | null): WorkspaceSearchOptions =>
-    workspaceId ? { workspaceId } : {}
+export const getWorkspaceSearchOptions = (workspaceId?: string | null): WorkspaceSearchOptions => (workspaceId ? { workspaceId } : {})
 
 /**
  * Scope a query to the ACTIVE workspace of the authenticated subject.
