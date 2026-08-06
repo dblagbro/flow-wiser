@@ -18,6 +18,13 @@ export class AddApiKeyPermission1765360298674 implements MigrationInterface {
             await queryRunner.query(`UPDATE "${tableName}" SET "${columnName}" = '${permission}';`)
         }
 
+        // The legacy `role` table was created by the commercially-licensed migrations, which the
+        // Apache-2.0 cut-over unregistered. On a FRESH database it therefore never exists, and this
+        // unguarded SELECT aborted the whole migration chain — no Flow-Wiser database could be
+        // created at all. The pruning below is a data fix-up for an EXISTING deployment; when the
+        // table is absent there is nothing to fix up, so it is skipped rather than failed.
+        if (!(await queryRunner.hasTable('role'))) return
+
         const sso = 'sso:manage'
         const apikey = 'apikeys:import'
         const itemsToRemove = [sso, apikey]
