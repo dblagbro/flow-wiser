@@ -215,25 +215,54 @@ export const readSecret = async (promptText: string, streams: SecretPromptStream
                 else resolve(result as string)
             }
 
+            /**
+             * Where we are in an ANSI escape sequence.
+             *
+             * Raw mode hands us the bytes an arrow key actually sends (ESC, then `[`, then `A`), and
+             * without this state machine the `[` and the `A` would become two characters of
+             * \"password\". The operator would see nothing, because echo is off; the confirmation
+             * entry would not match; and the only visible symptom would be a recovery command that
+             * mysteriously refuses every password. Skipping the sequence is right rather than
+             * erroring on it: cursor keys in a password field are a habit, not a mistake.
+             */
+            let escape: 'none' | 'introduced' | 'sequence' = 'none'
+
             const onData = (chunk: Buffer | string): void => {
                 for (const character of chunk.toString('utf8')) {
+                    if (escape === 'introduced') {
+                        // CSI (`[`) and SS3 (`O`) run on to a final byte; anything else was a
+                        // two-character sequence (Alt+key) and has already finished.
+                        escape = character === '[' || character === 'O' ? 'sequence' : 'none'
+                        continue
+                    }
+                    if (escape === 'sequence') {
+                        // Parameter and intermediate bytes are 0x20-0x3F; the final byte is 0x40-0x7E.
+                        if (character >= '@' && character <= '~') escape = 'none'
+                        continue
+                    }
+
                     switch (character) {
                         case '\r':
                         case '\n':
                             return finish(null, value)
-                        // ^C — abort. A cancelled prompt must never be mistaken for an empty password.
+                        // ^C - abort. A cancelled prompt must never be mistaken for an empty password.
                         case '\u0003':
                             return finish(new PromptError('Cancelled at the password prompt. Nothing was changed.'))
-                        // ^D — end of input. Same treatment: not a password.
+                        // ^D - end of input. Same treatment: not a password.
                         case '\u0004':
                             return finish(new PromptError('End of input at the password prompt. Nothing was changed.'))
+                        // DEL and BS - the line editing that raw mode took away.
                         case '\u007f':
                         case '\b':
                             value = value.slice(0, -1)
                             break
-                        // Swallow the introducer of an escape sequence (arrow keys, function keys) rather
-                        // than letting `[A` become three characters of "password".
+                        // ^U - kill line, the other habit worth honouring.
+                        case '\u0015':
+                            value = ''
+                            break
+                        // ESC - see the state machine above.
                         case '\u001b':
+                            escape = 'introduced'
                             break
                         default:
                             value += character
