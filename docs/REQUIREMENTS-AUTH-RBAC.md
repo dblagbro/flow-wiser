@@ -40,15 +40,22 @@ Derived exclusively from Apache-2.0 sources (`docs/SPEC-AUTH-RBAC.md` carries ci
 | `packages/ui/src/api/role.js` | `GET|POST|PUT|DELETE /role`, `GET /auth/roles/:id`, `GET /auth/roles/name/:name` |
 | `packages/ui/src/api/user.js` | `GET|PUT /user`, `GET|PUT /organizationuser` |
 | `packages/ui/src/api/workspace.js`, `account.api.js`, `loginmethod.js`, `oauth2.js` | account, workspace, login-method, OAuth2 surfaces |
-| `packages/server/src/routes/**` | 142 `checkPermission` / `checkAnyPermission` call sites — middleware contract + permission vocabulary |
+| `packages/server/src/routes/**` | 120 `checkPermission` / `checkAnyPermission` call sites (70 + 50, across 22 files) — middleware contract + permission vocabulary |
 
-**The permission middleware is tiny.** The enforcement surface is ~50 LOC and **142 route
-call-sites are already wired in Apache-2.0 code**. We implement the function; the wiring
-exists.
+**The permission middleware is tiny.** The enforcement surface is ~50 LOC and **120 route
+call-sites are already wired in Apache-2.0 code** (70 `checkPermission` + 50
+`checkAnyPermission`, forming 65 distinct expressions across 22 files). We implement the
+function; the wiring exists.
 
-**The permission vocabulary is recoverable without touching protected files.** 43 of the
-~86 permission strings appear as literals in Apache-2.0 route files. The remainder are
-admin/org/workspace permissions we are redesigning anyway.
+**The permission vocabulary is recoverable without touching protected files.** Scraped
+independently from Apache-2.0 sources: **82** distinct permissions — **61** enforced by
+route call sites, **21** appearing only in UI checks with no server enforcement. Plus 11
+`feat:*` flags, which are a separate axis and not permissions.
+
+> Those **21 unenforced permissions** — including all of `workspace:*`, `users:manage`,
+> `roles:manage`, `sso:manage` — are a *defect to fix*, not a contract to reproduce. The
+> client's `RBACButtons` render `null` rather than disabling, so those checks are purely
+> cosmetic today. Our implementation must enforce them server-side.
 
 ## Where we intend to be better
 
@@ -276,6 +283,6 @@ at rest and audit moved from "later" into v1.
 2. Clean-room guard green; every requirement traces to an Apache-2.0 citation.
 3. The **unmodified** Apache-2.0 UI works against the new server: login, user CRUD, role
    CRUD, workspace switch, permission-gated views.
-4. All 142 existing `checkPermission` call sites enforce correctly.
+4. All 120 existing `checkPermission` call sites enforce correctly.
 5. Container builds and boots; no regression against `3.1.4-fw3`.
 6. Redistributable with no licence carve-out — npm, Docker Hub, anywhere.
