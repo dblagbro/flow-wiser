@@ -62,8 +62,6 @@ export const AuditAction = {
     AUTH_PASSWORD_CHANGE: 'auth.password.change',
     AUTH_SESSION_REFRESH: 'auth.session.refresh',
     AUTH_SESSION_REVOKE: 'auth.session.revoke',
-    /** A user changed their OWN password. Administrative resets are recorded by the recovery CLI. */
-    AUTH_PASSWORD_CHANGE: 'auth.password.change',
     /** Authorization — every permission decision (requirements §4, §10) */
     AUTHZ_PERMISSION_CHECK: 'authz.permission.check',
     /** Credentials — `credential.decrypt` is written on EVERY use, by reference, never by value (§10) */
