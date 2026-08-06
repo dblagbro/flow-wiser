@@ -51,6 +51,7 @@ import { AddScheduleEntities1772000000000 } from './1772000000000-AddScheduleEnt
 import { AddIdentityTables1780000000000 } from './1780000000000-AddIdentityTables'
 import { AddIdentitySessionTables1780000000001 } from './1780000000001-AddIdentitySessionTables'
 import { AddIdentityMfaAuditTables1780000000002 } from './1780000000002-AddIdentityMfaAuditTables'
+import { AddMustChangePasswordToIdentityUser1780000000010 } from './1780000000010-AddMustChangePasswordToIdentityUser'
 
 import { AddAuthTables1720230151482 } from '../../../enterprise/database/migrations/mysql/1720230151482-AddAuthTables'
 import { AddWorkspace1720230151484 } from '../../../enterprise/database/migrations/mysql/1720230151484-AddWorkspace'
@@ -128,5 +129,6 @@ export const mysqlMigrations = [
     AddScheduleEntities1772000000000,
     AddIdentityTables1780000000000,
     AddIdentitySessionTables1780000000001,
-    AddIdentityMfaAuditTables1780000000002
+    AddIdentityMfaAuditTables1780000000002,
+    AddMustChangePasswordToIdentityUser1780000000010
 ]

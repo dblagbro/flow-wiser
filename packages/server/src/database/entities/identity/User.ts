@@ -66,6 +66,23 @@ export class User {
     referral?: string | null
 
     /**
+     * Forced password change (REQUIREMENTS-MIGRATION.md §6).
+     *
+     * "Any account authenticating by password is flagged `mustChangePassword` after migration or
+     * bootstrap. The flag blocks all authenticated routes except the change-password endpoint until
+     * cleared." §4 extends the same rule to bootstrap super-admins, so a provisioned instance never
+     * keeps running on the password that was typed into a shell.
+     *
+     * On the USER and not on OrganizationUser — unlike `status`/`lastLogin` (the §F-1 split), a
+     * password is an account-level fact, not a per-organization one, and §6's "an account may hold
+     * both [password and SSO]; the flag then applies only to its password path" is a statement about
+     * one credential, not about a membership. Ignored for SSO logins, which §6 explicitly exempts:
+     * their credential lives with the identity provider and there is no local password to change.
+     */
+    @Column({ type: 'boolean', default: false })
+    mustChangePassword: boolean
+
+    /**
      * NOTE — deliberately absent:
      *  - `tempToken`: replaced by the purpose-discriminated `Token` entity (spec §F-3).
      *  - `status` / `lastLogin`: owned by OrganizationUser (spec §F-1, see that entity for rationale).
