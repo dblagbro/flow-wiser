@@ -3,7 +3,7 @@ import os from 'os'
 import path from 'path'
 import tty from 'tty'
 import { DataSource } from 'typeorm'
-import { AuditOutcome, AuditSubjectType } from '../database/entities/identity/AuditEvent'
+import { AuditAction, AuditOutcome, AuditSubjectType } from '../database/entities/identity/AuditEvent'
 import { Assistant } from '../database/entities/Assistant'
 import { ChatFlow } from '../database/entities/ChatFlow'
 import { Credential } from '../database/entities/Credential'
@@ -518,5 +518,76 @@ export interface RecoveryContext {
 
 /** Addresses are stored lower-cased and matched case-insensitively (`User.email`, `BootstrapService`). */
 export const normaliseEmail = (email: string): string => email.trim().toLowerCase()
+
+// ── Lockout, as the login path computes it ───────────────────────────────────────────────────
+
+/**
+ * `AuthService` documents the policy: **5 consecutive failed password attempts within 15 minutes
+ * locks the account for the remainder of that window**, and the counter is DERIVED FROM THE AUDIT
+ * TRAIL rather than stored in a column ("the trail already records every failure with a reason, and
+ * it is append-only, so the count cannot be edited away").
+ *
+ * That derivation is re-implemented here rather than imported because `AuthService.lockoutState` is
+ * private, and this is a read of the same append-only table with the same two environment overrides.
+ * The numbers are the ONLY thing that could drift, so they are read from the same variables — if
+ * `IDENTITY_LOCKOUT_MAX_ATTEMPTS` is set for the server, the CLI honours it too.
+ *
+ * Consumed by `admin:list` (to show which accounts are locked) and `admin:unlock` (to know what it
+ * is clearing, and to report it).
+ */
+export const LOCKOUT_DEFAULT_MAX_ATTEMPTS = 5
+export const LOCKOUT_DEFAULT_WINDOW_MS = 15 * 60 * 1000
+
+/**
+ * The action the counter walks. Pinned in `AuditEvent.ts` because the login-activity projection
+ * filters on it, which is exactly why it is safe to key the lockout off it here.
+ */
+export const AUTH_LOGIN_ACTION = AuditAction.AUTH_LOGIN
+
+export interface LockoutState {
+    locked: boolean
+    /** Consecutive failures inside the window, newest-first, stopping at the first success. */
+    failures: number
+    unlocksAt: Date | null
+    maxAttempts: number
+    windowMs: number
+}
+
+const readPositiveInt = (raw: string | undefined, fallback: number): number => {
+    if (!raw) return fallback
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export const lockoutStateFor = async (dataSource: DataSource, userId: string, env: NodeJS.ProcessEnv = process.env): Promise<LockoutState> => {
+    const maxAttempts = readPositiveInt(env.IDENTITY_LOCKOUT_MAX_ATTEMPTS, LOCKOUT_DEFAULT_MAX_ATTEMPTS)
+    const windowMs = readPositiveInt(env.IDENTITY_LOCKOUT_WINDOW_MS, LOCKOUT_DEFAULT_WINDOW_MS)
+    const windowStart = Date.now() - windowMs
+
+    const events = await dataSource.getRepository(AuditEvent).find({
+        where: { subjectId: userId, action: AUTH_LOGIN_ACTION },
+        order: { seqNo: 'DESC' },
+        take: maxAttempts + 1
+    })
+
+    let failures = 0
+    let oldestCounted: Date | null = null
+    for (const event of events) {
+        if (event.outcome === AuditOutcome.SUCCESS) break
+        const occurredAt = event.occurredAt instanceof Date ? event.occurredAt : new Date(event.occurredAt)
+        if (occurredAt.getTime() < windowStart) break
+        failures += 1
+        oldestCounted = occurredAt
+    }
+
+    const locked = failures >= maxAttempts
+    return {
+        locked,
+        failures,
+        unlocksAt: locked && oldestCounted ? new Date(oldestCounted.getTime() + windowMs) : null,
+        maxAttempts,
+        windowMs
+    }
+}
 
 export const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
