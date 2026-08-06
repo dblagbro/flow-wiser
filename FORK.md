@@ -48,51 +48,73 @@ This fork was taken from upstream commit [`ba4c6509`](https://github.com/Flowise
 
 ---
 
-## ⚖️ Licensing — read this before you redistribute
+## ⚖️ Licensing — this fork is 100% Apache 2.0
 
-**Flowise is open core, not wholly open source.** The upstream [`LICENSE.md`](LICENSE.md) splits the
-repository into two parts, and **this fork preserves that split exactly as upstream published it.**
-Your rights and obligations are identical to what they were when obtaining the code from upstream —
-this fork grants you nothing more, and takes nothing away.
-
-### ✅ Apache License 2.0 — the open-source majority
-
-Everything **except** the paths listed in the next section is licensed under the
-[Apache License, Version 2.0](LICENSE.md). You may use, modify, distribute, and sublicense
-it — commercially included — subject to Apache 2.0's terms (attribution, NOTICE preservation,
-and statement of changes).
-
-This is the portion FlowiseAI referred to as *"yours to keep building on,"* and it is the portion
-this fork exists to carry forward.
-
-### ⚠️ Commercial License — NOT open source, NOT freely redistributable
-
-The following **127 files** are governed by the separate
-[FlowiseAI Inc Commercial License](packages/server/src/enterprise/LICENSE.md), **not** Apache 2.0:
+**Upstream Flowise was open core.** Its [`LICENSE.md`](LICENSE.md) split the repository in two, and
+**127 files were not open source**:
 
 | Path | Files |
 | --- | --- |
 | `packages/server/src/enterprise/` | 126 |
 | `packages/server/src/IdentityManager.ts` | 1 |
 
-That license permits copying and modification **for development and testing purposes only**, and
-states that production use requires a valid FlowiseAI Enterprise subscription. It further states
+Those were governed by a FlowiseAI Inc Commercial License permitting copying and modification for
+development and testing only, requiring an Enterprise subscription for production use, and stating
 that it is *"forbidden to copy, merge, publish, distribute, sublicense, and/or sell the Software."*
+That made **no** Flowise fork freely redistributable, this one included.
 
-**Practical guidance for anyone using this fork:**
+### What changed
 
-- These files are **inert at runtime** unless you supply a `FLOWISE_EE_LICENSE_KEY` environment
-  variable. With no key set, the server runs in open-source mode and the enterprise code paths
-  (SSO, RBAC, workspaces, organizations, seat quotas) are not activated.
-- **Running** this fork without an enterprise license key is fine.
-- **Redistributing** these 127 files — republishing to npm, Docker Hub, a public mirror, or
-  bundling them into a product — is **not** covered by Apache 2.0 and is not something this fork
-  can grant you. Do not assume the Apache 2.0 license on this repository extends to them.
-- If you need a build you can redistribute without restriction, use an
-  Apache-2.0-only variant with these paths removed. See *Roadmap* below.
+**Those 127 files have been deleted from this fork.** They are not in this repository, in any
+branch published from it, or in any artifact built from it. The functionality they provided —
+authentication, SSO, RBAC, multi-tenancy — was reimplemented from scratch under Apache 2.0 in
+`packages/server/src/identity/`.
 
-**Nothing in this fork modifies, weakens, or reinterprets the upstream commercial license.**
-It applies to you here exactly as it applied upstream.
+**Nothing was relicensed.** The copyright in those files is FlowiseAI's; no fork can relicense code
+it does not own, and declaring this repository Apache 2.0 while they remained would have been both
+void and dishonest.
+
+**They also could not simply be deleted.** Flowise 3.0 removed the Apache-2.0
+`FLOWISE_USERNAME` / `FLOWISE_PASSWORD` authentication when it introduced the commercial identity
+stack, so dropping the 127 files without a replacement produces an **unauthenticated server** — on
+a product with 116 published security advisories. Replacement was the only route to a
+redistributable fork.
+
+### How the replacement was written
+
+The entire interface was already available under a licence permitting us to read it. `packages/ui/`
+contains **zero** commercially licensed files and is the client that actually calls the server, so
+it specifies the complete HTTP contract; `packages/server/src/routes/` carries 120 permission call
+sites. A specification was derived from those Apache-2.0 sources alone — 53 endpoints, 82
+permissions, 12 entities, 363 citations, and 15 explicitly recorded gaps where the interface did not
+determine behaviour — and implemented against it.
+
+**The commercially licensed files were never read**, and never fed to any tool for summarising or
+porting. There was nothing to reverse engineer. A pre-commit hook and a CI job reject any commit
+that modifies a protected path — deletion is permitted, modification is not, because editing implies
+having read.
+
+| Document | What it holds |
+| --- | --- |
+| [`docs/CLEANROOM-PROTOCOL.md`](docs/CLEANROOM-PROTOCOL.md) | The binding process and its prohibitions |
+| [`docs/CLEANROOM-ATTESTATION.md`](docs/CLEANROOM-ATTESTATION.md) | Evidence, with commands you can re-run. Includes a disclosed incident where a malformed command exposed ~12 lines of one protected file, and the remediation |
+| [`docs/SPEC-AUTH-RBAC.md`](docs/SPEC-AUTH-RBAC.md) | The specification and its citations |
+| [`docs/HOW-WE-DID-THIS.md`](docs/HOW-WE-DID-THIS.md) | The method, written to be reusable on other open-core projects |
+
+### What this means for you
+
+- **You may redistribute this fork in full** — republish to npm, Docker Hub, a public mirror, or
+  bundle it into a product — subject to Apache 2.0's terms (attribution, NOTICE preservation,
+  statement of changes).
+- You do not need, and cannot use, a `FLOWISE_EE_LICENSE_KEY`. There are no licence-gated features;
+  there is nothing to sell.
+- **Container images published before 2026-08-06** (`3.1.4-fw1` through `3.1.4-fw3`) were built
+  from the pre-removal tree and **do** contain the commercially licensed compiled output. The
+  commercial terms govern those images. Use a build made after the removal if you intend to
+  redistribute.
+
+**This fork does not modify, weaken, or reinterpret the upstream commercial license.** It removed
+the files it covered instead.
 
 ### Third-party components
 
@@ -107,9 +129,11 @@ Per Apache 2.0 §4, this fork carries the upstream [`NOTICE`](NOTICE) file and d
 
 - **Original work:** Copyright © 2023–present FlowiseAI, Inc. — https://github.com/FlowiseAI/Flowise
 - **Fork point:** upstream commit `ba4c6509`, 2026-08-03
-- **Changes made by this fork:** listed in [`NOTICE`](NOTICE) and in this file's *Roadmap*. At the
-  fork point, the only changes are the addition of `FORK.md`, `NOTICE`, and a fork banner in
-  `README.md`. **No upstream source code was modified.**
+- **Changes made by this fork:** listed in [`NOTICE`](NOTICE) and [`CHANGELOG.md`](CHANGELOG.md).
+  At the fork point the only changes were `FORK.md`, `NOTICE`, and a README banner, with no
+  upstream source modified. Since then: three container-build defects fixed, the 127
+  commercially licensed files removed, and an Apache-2.0 identity, RBAC, MFA, audit and
+  multi-tenancy implementation added.
 
 ## Trademark
 
@@ -124,9 +148,12 @@ OpenSearch, OpenTofu, Valkey, and OpenBao.
 
 - [x] Preserve the full upstream repository and all 307 release tags before the 2026-08-10 archival
 - [x] Document the Apache 2.0 / Commercial licensing split explicitly
-- [ ] Publish a **`community-oss`** branch containing only Apache-2.0-licensed code, with the 127
-      commercially-licensed files removed and their ~60 dependent modules refactored to
-      open-source-only equivalents. That branch will be freely redistributable in full.
+- [x] Remove the 127 commercially licensed files and refactor every dependent module, so the
+      repository is **100% Apache 2.0** and freely redistributable in full
+- [x] Replace the removed identity stack: authentication, RBAC, SSO, MFA, audit, encryption at
+      rest, multi-tenancy, migration from an existing Flowise database, and a recovery CLI
+- [ ] Publish an Apache-2.0-only container image
+- [ ] Chatflow version history
 - [ ] Triage and carry forward outstanding upstream security patches
 
 ## Contributing
@@ -158,7 +185,9 @@ This software is provided **"as is", without warranty of any kind**, express or 
 Apache License 2.0 §7 and §8. This fork is maintained on a best-effort basis and carries no
 service-level commitment.
 
-The licensing summary in this document is a good-faith reading of the upstream license texts
-provided for orientation. **It is not legal advice.** The authoritative terms are
-[`LICENSE.md`](LICENSE.md) and [`packages/server/src/enterprise/LICENSE.md`](packages/server/src/enterprise/LICENSE.md).
-If your intended use is commercially significant, consult a lawyer.
+The licensing summary in this document is a good-faith account provided for orientation. **It is
+not legal advice.** The authoritative terms for this repository are [`LICENSE.md`](LICENSE.md).
+The commercial licence that formerly applied to the removed files was published upstream at
+`packages/server/src/enterprise/LICENSE.md`; it is not reproduced here because those files are
+gone, and it is retrievable from upstream history. If your intended use is commercially
+significant, consult a lawyer.

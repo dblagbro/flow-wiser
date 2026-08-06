@@ -72,13 +72,19 @@ rely on this project alone.
 
 ## Scope
 
-**In scope** — the Apache-2.0 licensed code in this repository, the container build, and
-dependency vulnerabilities reachable in a default deployment.
+**In scope** — all code in this repository, which is now entirely Apache 2.0, including the
+identity, RBAC and multi-tenancy implementation under `packages/server/src/identity/`; the
+container build; and dependency vulnerabilities reachable in a default deployment.
 
-**Out of scope** — Flowise Cloud (discontinued), the commercially licensed code under
-`packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts` (see
-[FORK.md](FORK.md)), and vulnerabilities in third-party nodes that require attacker-supplied
-flows to already be installed by an administrator.
+The identity code is new and is the most security-sensitive part of the project. Reports
+against authentication, session handling, MFA, permission enforcement or tenant isolation
+are especially welcome.
+
+**Out of scope** — Flowise Cloud (discontinued); the commercially licensed code that used to
+live at `packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts`, which
+has been removed from this fork and is no longer ours to fix (report those to FlowiseAI, or
+note that upstream is archived and unmaintained); and vulnerabilities in third-party nodes
+that require attacker-supplied flows to already be installed by an administrator.
 
 ## Hardening notes for operators
 

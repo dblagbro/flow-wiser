@@ -122,7 +122,7 @@ docker build --no-cache --pull \
 
 This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins *RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys*.
 
-⚠️ **Licensing:** like every Flowise container, this image contains compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0. Their terms govern those components wherever you obtain the image. See [FORK.md](FORK.md). **An Apache-2.0-only build with those components removed is in progress** — see [docs/REQUIREMENTS-AUTH-RBAC.md](docs/REQUIREMENTS-AUTH-RBAC.md).
+⚠️ **Licensing — applies to the `3.1.4-fw3` image only.** Like every Flowise container published to date, that image contains compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain the image. **The repository itself no longer contains those files** — they have been removed and reimplemented under Apache 2.0. An Apache-2.0-only image is the next build to be published. See [FORK.md](FORK.md).
 
 ---
 
@@ -139,26 +139,34 @@ This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 
 > commit [`ba4c6509`](https://github.com/FlowiseAI/Flowise/commit/ba4c6509), so teams running
 > Flowise have a living copy that does not depend on an archived upstream.
 >
-> ### ⚖️ Licensing at a glance — Flowise is *open core*, not wholly open source
+> ### ⚖️ Licensing at a glance — **100% Apache 2.0**
 >
 > | Scope | License | Redistributable? |
 > | --- | --- | --- |
-> | Everything else | **Apache License 2.0** | ✅ Yes |
-> | `packages/server/src/enterprise/` (126 files)<br>`packages/server/src/IdentityManager.ts` | **[FlowiseAI Commercial License](packages/server/src/enterprise/LICENSE.md)** | ❌ **No** — dev/testing only |
+> | Everything in this repository | **Apache License 2.0** | ✅ Yes |
 >
-> The commercial portion is **inert at runtime** unless `FLOWISE_EE_LICENSE_KEY` is set, so running
-> this fork in open-source mode exercises none of it. This fork preserves the upstream licensing
-> split **exactly as published and relicenses nothing** — your rights and obligations for those 127
-> files are identical to obtaining them from upstream, and FlowiseAI's Commercial License governs
-> them wherever you get them.
+> Upstream Flowise was **open core**: 127 files — `packages/server/src/enterprise/` (126) plus
+> `packages/server/src/IdentityManager.ts` — were under a FlowiseAI Commercial License that forbids
+> copying, publishing and distribution. No Flowise fork could be freely redistributed.
 >
-> **Removing those files entirely is the project's headline goal** — see
-> [docs/REQUIREMENTS-AUTH-RBAC.md](docs/REQUIREMENTS-AUTH-RBAC.md). The repository is currently
-> **94.67% Apache 2.0 by file count, 95.58% by lines**; the remaining 5% is one coherent subsystem
-> (authentication, SSO, RBAC, multi-tenancy). It cannot simply be deleted — Flowise 3.x removed the
-> Apache-2.0 auth it replaced, so dropping it without a replacement yields an unauthenticated
-> server. Original Apache-2.0 replacements are being built on the `apache2-only` branch under a
-> [clean-room protocol](docs/CLEANROOM-PROTOCOL.md).
+> **Those files have been deleted from this fork**, and the functionality they provided —
+> authentication, SSO, RBAC, multi-tenancy — reimplemented from scratch under Apache 2.0.
+> Nothing was relicensed: no fork can relicense code it does not own, and no attempt was made.
+>
+> They could not simply be dropped, either. Flowise 3.0 removed the Apache-2.0 authentication when
+> it introduced the commercial stack, so deleting them without a replacement yields an
+> **unauthenticated server**.
+>
+> The replacement was derived only from Apache-2.0 sources already in the repository — principally
+> `packages/ui/`, which contains no commercially licensed files and is the client that calls the
+> server. **The commercially licensed files were never read.** A pre-commit hook and a CI job
+> reject any commit touching a protected path.
+>
+> - [docs/CLEANROOM-PROTOCOL.md](docs/CLEANROOM-PROTOCOL.md) — the binding process
+> - [docs/CLEANROOM-ATTESTATION.md](docs/CLEANROOM-ATTESTATION.md) — evidence, with commands you
+>   can re-run yourself, including a disclosed near-miss we published rather than omitted
+> - [docs/HOW-WE-DID-THIS.md](docs/HOW-WE-DID-THIS.md) — the method, written to be reusable on
+>   other open-core projects
 >
 > 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
 >
@@ -410,11 +418,11 @@ See [Contributing Guide](CONTRIBUTING.md). Reach out to us at [Discord](https://
 
 ## 📄 License
 
-Source code in this repository is made available under the [Apache License Version 2.0](LICENSE.md),
-**with the exception of** `packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts`,
-which are governed by the separate
-[FlowiseAI Inc Commercial License](packages/server/src/enterprise/LICENSE.md) and are **not**
-open source or freely redistributable.
+All source code in this repository is made available under the
+[Apache License Version 2.0](LICENSE.md). There are no exceptions and no commercially licensed
+carve-outs.
 
-This fork preserves that upstream licensing split exactly as published and relicenses nothing.
-See **[FORK.md](FORK.md)** for the full breakdown and **[NOTICE](NOTICE)** for attribution.
+The 127 files that upstream licensed commercially have been removed and independently
+reimplemented under Apache 2.0. Nothing was relicensed. See **[FORK.md](FORK.md)** for the full
+breakdown, **[NOTICE](NOTICE)** for attribution, and
+**[docs/CLEANROOM-ATTESTATION.md](docs/CLEANROOM-ATTESTATION.md)** for the evidence.
