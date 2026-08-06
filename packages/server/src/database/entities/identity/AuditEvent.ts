@@ -50,6 +50,16 @@ export const AuditAction = {
     AUTH_LOGOUT: 'auth.logout',
     /** Authentication — full trail only, no legacy activity code exists for these */
     AUTH_MFA_CHALLENGE: 'auth.mfa.challenge',
+    /**
+     * A user changed their OWN password, proving the current one first
+     * (`identity/routes/account.ts`, `AuthService.changeOwnPassword`).
+     *
+     * Deliberately NOT `auth.login`: the login-activity projection filters on that literal, and a
+     * password change is not a sign-in. Deliberately not one of the `identity.recovery.*` actions
+     * either — those are break-glass, performed by a SYSTEM actor with no session, and this one is
+     * performed by the account holder under their own session.
+     */
+    AUTH_PASSWORD_CHANGE: 'auth.password.change',
     AUTH_SESSION_REFRESH: 'auth.session.refresh',
     AUTH_SESSION_REVOKE: 'auth.session.revoke',
     /** A user changed their OWN password. Administrative resets are recorded by the recovery CLI. */

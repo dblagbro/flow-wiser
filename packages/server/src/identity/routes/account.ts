@@ -1,6 +1,7 @@
 import { CookieOptions, NextFunction, Request, Response, Router } from 'express'
 import { StatusCodes } from 'http-status-codes'
-import { AuthService } from '../services/AuthService'
+import logger from '../../utils/logger'
+import { AuthService, PasswordChangeFailure } from '../services/AuthService'
 import { REFRESH_COOKIE, SESSION_COOKIE } from './auth'
 import { notImplementedRouter } from './notImplemented'
 
@@ -19,39 +20,39 @@ import { notImplementedRouter } from './notImplemented'
  * reset-password, billing, delete — all require a transactional email path and an invitation model
  * that the identity layer does not have yet. They answer 501; see `notImplemented.ts`.
  *
- * `POST /account/reset-password` is now implemented, for the SESSION-AUTHENTICATED case only.
+ * ONE CONSEQUENCE WORTH STATING PLAINLY, now resolved: `POST /account/reset-password` is the
+ * change-password endpoint that MIGRATION §6 exempts from the `mustChangePassword` block
+ * (`identity/middleware/session.ts`). It is implemented below, for the SESSION-AUTHENTICATED branch
+ * only. Until it existed, `admin:create` produced an account that could sign in and log out and
+ * nothing else, for ever, because no code path anywhere set `mustChangePassword` back to false.
  *
- * WHY IT HAD TO BE. This comment previously said the recovery CLI was the way through for an
- * account carrying `mustChangePassword`. That was not true: nothing anywhere in the codebase ever
- * set the flag back to false — not this router, not `admin:reset-password` (which sets it to
- * true), not the migration tool. A fresh install therefore bricked itself. You created the first
- * administrator, signed in successfully, and every subsequent request returned 403
- * `must_change_password` forever, with no exit over HTTP or CLI. Found by booting the server and
- * driving a real first login; no unit test would have shown it, because each piece worked.
+ * ── ONE PATH, TWO FLOWS, AND ONLY ONE OF THEM IS BUILT ───────────────────────────────────────
+ * `packages/ui/src/api/account.api.js:9` posts to this single path for both:
  *
- * TWO FLOWS, ONE PATH. The Apache-2.0 client posts `{ user: { email, tempToken, password } }`
- * here (`packages/ui/src/api/account.api.js:8`, `views/auth/resetPassword.jsx:102-106`) for the
- * FORGOTTEN-password flow, where the tempToken is proof of identity delivered by email. That
- * flow still answers 501 — there is no transactional email path in this build, so no token can
- * ever be issued.
+ *   FORGOTTEN password   `{ user: { email, tempToken, password } }` — the proof is a token mailed to
+ *                        the address. There is no transactional email path in this build, so there
+ *                        is no way to issue that token and no way to verify one. A body carrying
+ *                        `tempToken` is answered 501, not 400: the request is well-formed and the
+ *                        server simply does not implement it, and pretending otherwise would send
+ *                        the operator hunting for a typo.
+ *   FORCED change        `{ user: { email, currentPassword, password } }` — the proof is the CURRENT
+ *                        password, over the caller's own session. This is the §6 exit and it is what
+ *                        the handler below implements.
  *
- * The forced-change flow is a different thing wearing the same URL: the caller is already
- * authenticated. A live session is strictly stronger evidence than an emailed token, so no token
- * is required — but the CURRENT password is, which the emailed-token flow cannot ask for. That
- * closes the gap a stolen session cookie would otherwise open: possession of the cookie alone
- * must not be enough to seize the account by changing its password.
- *
- * This is a deliberate divergence from the shipped client, recorded here rather than inferred.
- * The client cannot yet drive it (its form requires a token before it will submit); the CLI and
- * API can. Teaching the client the session-authenticated variant is follow-up work.
+ * ── The route is whitelisted, so it authenticates itself ─────────────────────────────────────
+ * `utils/constants.ts` WHITELIST_URLS names `/api/v1/account/reset-password` by prefix, which means
+ * the bootstrap's gate (`index.ts:240`) never runs for it and an anonymous caller reaches this
+ * handler. That is correct for the forgotten-password flow — which by definition has no session —
+ * and it makes resolving the principal this handler's own job rather than the middleware's.
  */
 
 /** Mirrors the cookie attributes `routes/auth.ts` sets, so `clearCookie` actually matches them. */
-const cookieOptions = (env: NodeJS.ProcessEnv, path: string): CookieOptions => ({
+const cookieOptions = (env: NodeJS.ProcessEnv, path: string, maxAgeMs?: number): CookieOptions => ({
     httpOnly: true,
     secure: env.IDENTITY_COOKIE_SECURE === undefined ? env.NODE_ENV === 'production' : env.IDENTITY_COOKIE_SECURE === 'true',
     sameSite: 'lax',
-    path
+    path,
+    ...(maxAgeMs ? { maxAge: maxAgeMs } : {})
 })
 
 const readCookie = (req: Request, name: string): string | undefined => {
@@ -70,6 +71,23 @@ const readCookie = (req: Request, name: string): string | undefined => {
         }
     }
     return undefined
+}
+
+/**
+ * One status per refusal, declared in one place so a new failure cannot inherit an old one's meaning.
+ *
+ * 403 and not 401 for WRONG_SUBJECT: the caller IS authenticated and simply may not do this. A 401
+ * would log the shipped client out over what is, most often, a stale email left in the form field.
+ * 409 for NO_LOCAL_CREDENTIAL: nothing about the request is malformed — the account state is what
+ * makes it impossible.
+ */
+const PASSWORD_CHANGE_STATUS: Record<PasswordChangeFailure, number> = {
+    [PasswordChangeFailure.WRONG_SUBJECT]: StatusCodes.FORBIDDEN,
+    [PasswordChangeFailure.INVALID_CREDENTIALS]: StatusCodes.UNAUTHORIZED,
+    [PasswordChangeFailure.NO_LOCAL_CREDENTIAL]: StatusCodes.CONFLICT,
+    [PasswordChangeFailure.WEAK_PASSWORD]: StatusCodes.BAD_REQUEST,
+    [PasswordChangeFailure.UNCHANGED]: StatusCodes.BAD_REQUEST,
+    [PasswordChangeFailure.INTERNAL_ERROR]: StatusCodes.INTERNAL_SERVER_ERROR
 }
 
 export interface AccountRouterOptions {
@@ -106,79 +124,89 @@ export const createAccountRouter = (options: AccountRouterOptions = {}): Router 
     })
 
     /**
-     * `POST /account/reset-password` — session-authenticated password change.
+     * `POST /account/reset-password` — MIGRATION §6's exit, session-authenticated branch.
      *
-     * Body follows the shipped client's envelope, `{ user: { email, password, currentPassword } }`,
-     * so a client that already builds that object needs only to swap `tempToken` for
-     * `currentPassword`. A `tempToken` in the body means the caller wants the emailed-token flow,
-     * which this build cannot serve — that is answered 501 below rather than silently treated as
-     * something else.
+     * See the module header for why one path carries two flows and why only this one is built.
      */
     router.post('/reset-password', (req: Request, res: Response, next: NextFunction) => {
         void (async () => {
-            const body = (req.body ?? {}) as { user?: Record<string, unknown> }
-            const payload = (body.user ?? {}) as Record<string, unknown>
+            // The shipped client nests everything under `user` (`resetPassword.jsx:101-107`). A flat
+            // body is accepted too, so `curl` and any future client need not know that.
+            const body = (req.body ?? {}) as { user?: Record<string, unknown> } & Record<string, unknown>
+            const fields = (body.user && typeof body.user === 'object' ? body.user : body) as Record<string, unknown>
 
-            if (typeof payload.tempToken === 'string' && payload.tempToken.length > 0) {
+            // The forgotten-password flow, answered honestly. Checked FIRST and before any session
+            // lookup: a caller presenting a token is not claiming to hold a session, and telling them
+            // "unauthorized" would send them to a sign-in screen that cannot help them either.
+            if (typeof fields.tempToken === 'string' && fields.tempToken.trim().length > 0) {
+                logger.warn('[identity] 501 POST /account/reset-password — the token (forgotten-password) flow is not implemented')
                 res.status(StatusCodes.NOT_IMPLEMENTED).json({
-                    message: 'Token-based password reset is not implemented in this build',
+                    message: 'Password reset by emailed token is not available on this instance',
                     error: 'not_implemented',
-                    reason: 'Resetting a password by emailed token requires a transactional email path, which is not configured. Sign in and change the password with your current one, or use the recovery CLI.'
+                    detail:
+                        'Resetting a forgotten password requires a transactional email path that is not configured in this build. ' +
+                        'A signed-in user can change their own password by supplying the current one; an operator can clear a ' +
+                        'forced password change with `flow-wiser admin:clear-password-change`, or set a new password with ' +
+                        '`flow-wiser admin:reset-password`.'
                 })
                 return
             }
 
-            const principal = (req as Request & { user?: { id?: string; email?: string } }).user
-            if (!principal?.id) {
+            const principal = await auth.authenticate(readCookie(req, SESSION_COOKIE), readCookie(req, REFRESH_COOKIE))
+            if (!principal) {
+                // NOT the `Invalid or Missing token` literal: that string makes the client drop its
+                // stored user and bounce to /signin (`ErrorContext.jsx:38`), which for a user who is
+                // signed in and merely got the current password wrong would be a logout loop.
                 res.status(StatusCodes.UNAUTHORIZED).json({
-                    message: 'Sign in before changing your password',
-                    error: 'unauthenticated'
+                    message: 'Sign in before changing your password.',
+                    error: 'unauthorized'
                 })
                 return
             }
 
-            // A signed-in caller may only change their OWN password here. Changing someone else's
-            // is administration, and administration is not implemented in this build — it must not
-            // arrive through a self-service endpoint by passing a different address.
-            //
-            // The comparison is skipped when the principal carries no address rather than treated
-            // as a mismatch. Identity comes from `principal.id`, which is what the change is keyed
-            // on; the body's email is a cross-check, and a cross-check that cannot be performed
-            // must not become a denial. An earlier version failed closed here and rejected every
-            // caller — including the legitimate owner — because this path did not populate email.
-            const principalEmail = typeof principal.email === 'string' ? principal.email.trim().toLowerCase() : null
-            if (principalEmail && typeof payload.email === 'string' && payload.email.trim().toLowerCase() !== principalEmail) {
-                res.status(StatusCodes.FORBIDDEN).json({
-                    message: 'You can only change your own password here',
-                    error: 'forbidden'
-                })
-                return
-            }
-
-            const result = await auth.changeOwnPassword(principal.id, payload.currentPassword, payload.password, {
-                ip: req.ip ?? null,
-                userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
-                route: 'POST /account/reset-password'
-            })
+            // `principal.session.userId` and NOT `principal.user.id`: the latter is optional on
+            // `AuthenticatedUser` because the API-key branch has no user (§C.2), whereas the session
+            // ROW always names its owner. Which account is being changed is the one fact this handler
+            // may not get wrong, so it is read from the column that cannot be absent.
+            const result = await auth.changeOwnPassword(
+                { userId: principal.session.userId, activeWorkspaceId: principal.user.activeWorkspaceId ?? null },
+                { email: fields.email, currentPassword: fields.currentPassword, newPassword: fields.password },
+                {
+                    ip: req.ip ?? null,
+                    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+                    route: 'POST /account/reset-password'
+                }
+            )
 
             if (!result.ok) {
-                res.status(result.status).json(result.body)
+                res.status(PASSWORD_CHANGE_STATUS[result.failure]).json({
+                    message: result.message,
+                    error: result.failure,
+                    ...(result.violations ? { violations: result.violations } : {})
+                })
                 return
             }
 
-            // Every other session for this account was revoked, including any an attacker held.
-            // This one was reissued, so the caller stays signed in rather than being bounced to a
-            // login screen immediately after successfully proving their current password.
-            res.cookie(SESSION_COOKIE, result.session.sessionId, cookieOptions(env, sessionCookiePath))
-            res.cookie(REFRESH_COOKIE, result.session.refreshSecret, cookieOptions(env, refreshCookiePath))
-            res.status(StatusCodes.OK).json(result.body)
+            // The change revoked every session including the caller's own. Handing back the
+            // replacement keeps them signed in — a forced change that ends on a login screen is
+            // indistinguishable from a failure.
+            const maxAgeMs = Math.max(result.session.expiresDate.getTime() - Date.now(), 0)
+            res.cookie(SESSION_COOKIE, result.session.sessionId, cookieOptions(env, sessionCookiePath, maxAgeMs))
+            res.cookie(REFRESH_COOKIE, result.session.refreshSecret, cookieOptions(env, refreshCookiePath, maxAgeMs))
+            res.status(StatusCodes.OK).json({
+                message: 'password_changed',
+                // Named explicitly so a client can stop showing the forced-change screen without
+                // having to re-fetch the whole login payload to find out.
+                mustChangePassword: false,
+                sessionsRevoked: result.sessionsRevoked
+            })
         })().catch(next)
     })
 
     router.use(
         notImplementedRouter(
             'Account self-service',
-            'Registration, invitations, email verification and password reset by emailed token require a transactional email path that is not configured in this build. Sign-in, sign-out and session-authenticated password change are implemented.'
+            'Registration, invitations, email verification and password reset require a transactional email path that is not configured in this build. Sign-in and sign-out are implemented.'
         )
     )
 
