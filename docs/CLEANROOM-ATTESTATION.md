@@ -53,8 +53,8 @@ contract from it:
 find packages/ui -ipath '*enterprise*' | wc -l          # expect: 0
 ```
 
-**b. The specification cites only Apache-2.0 sources.** 349 citations; every one from an
-Apache-2.0 tree:
+**b. The specification cites only Apache-2.0 sources.** **363** citations. 360 are from
+Apache-2.0 trees; the remaining 3 are the module-specifier references itemised in (c):
 
 ```bash
 grep -oE "packages/(ui|server)/src/[a-zA-Z0-9_-]+" docs/SPEC-AUTH-RBAC.md \
