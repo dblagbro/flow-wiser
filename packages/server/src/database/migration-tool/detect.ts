@@ -318,9 +318,7 @@ export const formatDetection = (report: DetectionReport): string => {
     const lines: string[] = []
     lines.push(`Engine:                 ${report.engine}`)
     lines.push(`Era:                    ${report.era}`)
-    lines.push(
-        `Applied migrations:     ${report.appliedMigrationCount}` + (report.migrationsTablePresent ? '' : '  (no migrations table)')
-    )
+    lines.push(`Applied migrations:     ${report.appliedMigrationCount}` + (report.migrationsTablePresent ? '' : '  (no migrations table)'))
     lines.push(
         `Identity migrations:    ${report.legacyIdentityMigrationsApplied.length} of ${LEGACY_IDENTITY_MIGRATIONS.length} recorded as applied`
     )

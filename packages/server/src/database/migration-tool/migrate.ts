@@ -52,7 +52,14 @@ import {
     uuidColumnType
 } from './db'
 import { detect, DetectionReport, Era, formatDetection, IDENTITY_TABLES } from './detect'
-import { captureFingerprint, compareFingerprints, Fingerprint, FingerprintComparison, formatComparison, recaptureFingerprint } from './fingerprint'
+import {
+    captureFingerprint,
+    compareFingerprints,
+    Fingerprint,
+    FingerprintComparison,
+    formatComparison,
+    recaptureFingerprint
+} from './fingerprint'
 import { formatRoleMapping, LegacyRole, mapLegacyRole, RoleMappingDecision, RoleMappingOptions, TARGET_ROLE_NAMES } from './roleMapping'
 
 /** Aborts the migration. Every message names the requirement clause it is enforcing. */
@@ -103,11 +110,7 @@ export const MigrationAuditAction = {
 } as const
 
 /** What happened to one account's stored password hash (§5). */
-export type CredentialDisposition =
-    | 'carried-bcrypt'
-    | 'carried-unverifiable-disabled'
-    | 'absent-sso-or-invited'
-    | 'unrecognised-disabled'
+export type CredentialDisposition = 'carried-bcrypt' | 'carried-unverifiable-disabled' | 'absent-sso-or-invited' | 'unrecognised-disabled'
 
 export interface PlannedUser {
     id: string
@@ -258,10 +261,23 @@ const defaultRolePermissions = (name: SystemRoleName): string[] => {
 }
 
 /**
- * Render a timestamp the way every engine in scope accepts it as a datetime literal, and the way
- * the reference database already stores it (`2026-08-06 17:21:17.507`).
+ * `YYYY-MM-DD HH:MM:SS[.fff]` with NO timezone — the form every engine in scope accepts as a
+ * datetime literal, and the form the reference database already stores (`2026-08-06 17:21:17.507`).
+ */
+const NAIVE_DATETIME = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/
+
+/**
+ * Carry a stored timestamp across UNCHANGED.
+ *
+ * A naive datetime string is passed through verbatim rather than parsed. `new Date('2026-08-06
+ * 17:21:17.507')` interprets a timezone-less string as LOCAL time, and `toISOString()` then converts
+ * it to UTC — so on a host at UTC-4 an account's last login silently moves four hours every time the
+ * value is copied. That is data corruption performed by a date library, it is invisible in review,
+ * and it compounds on every migration. The string is already in the target format; the correct
+ * amount of processing is none.
  */
 const asTimestamp = (value: unknown, fallback: Date): string => {
+    if (typeof value === 'string' && NAIVE_DATETIME.test(value.trim())) return value.trim().replace('T', ' ')
     const date = value instanceof Date ? value : typeof value === 'string' || typeof value === 'number' ? new Date(value) : null
     const resolved = date && !Number.isNaN(date.getTime()) ? date : fallback
     return resolved.toISOString().replace('T', ' ').replace('Z', '')
@@ -269,6 +285,7 @@ const asTimestamp = (value: unknown, fallback: Date): string => {
 
 const asNullableTimestamp = (value: unknown): string | null => {
     if (value === null || value === undefined || value === '') return null
+    if (typeof value === 'string' && NAIVE_DATETIME.test(value.trim())) return value.trim().replace('T', ' ')
     const date = value instanceof Date ? value : new Date(String(value))
     return Number.isNaN(date.getTime()) ? null : date.toISOString().replace('T', ' ').replace('Z', '')
 }
@@ -445,13 +462,29 @@ const resolveOrgOwner = (
     return { userId: null, reason: 'no owner could be determined — no membership grants organization administration' }
 }
 
+/**
+ * Which table currently holds the authoritative workspace rows.
+ *
+ * `identity_workspace` once it has been populated; the old `workspace` table before that. The
+ * distinction matters at PLANNING time, when `identity_workspace` exists (the TypeORM migrations
+ * created it) but is still empty: resolving against an empty table would report every single
+ * resource row as an orphan and produce a report that says the migration is about to fail.
+ */
+const resolveWorkspaceSource = async (db: Database): Promise<string | null> => {
+    if ((await tableExists(db, 'identity_workspace')) && (await countRows(db, 'identity_workspace')) > 0) return 'identity_workspace'
+    if (await tableExists(db, 'workspace')) return 'workspace'
+    if (await tableExists(db, 'identity_workspace')) return 'identity_workspace'
+    return null
+}
+
 const planTenantStamps = async (db: Database, detection: DetectionReport, options: MigrateOptions): Promise<PlannedTenantStamp[]> => {
     if (options.stampTenancy === false) return []
     const stampAll = options.stampAllWorkspaceScopedTables !== false
     const named = new Set<string>(TENANT_SCOPED_TABLES)
     const candidates = detection.workspaceScopedTables.filter((table) => stampAll || named.has(table.toLowerCase()))
 
-    const workspaceSource = (await tableExists(db, 'identity_workspace')) ? 'identity_workspace' : 'workspace'
+    const workspaceSource = await resolveWorkspaceSource(db)
+    if (!workspaceSource) return []
     const plans: PlannedTenantStamp[] = []
     for (const table of candidates) {
         const hasColumn = await columnExists(db, table, 'organizationId')
@@ -557,7 +590,8 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
             const membership = legacy.organizationUsers.find((row) => String(row.userId) === String(user.id))
             const organizationId = membership ? String(membership.organizationId) : ''
             const sso = credential.disposition === 'absent-sso-or-invited' && (ssoEnabledOrgs.has(organizationId) || ssoEnabledOrgs.has(''))
-            const disabled = credential.disposition === 'carried-unverifiable-disabled' || credential.disposition === 'unrecognised-disabled'
+            const disabled =
+                credential.disposition === 'carried-unverifiable-disabled' || credential.disposition === 'unrecognised-disabled'
             const oldStatus = String(user.status ?? '').toLowerCase()
             users.push({
                 id: String(user.id),
@@ -577,12 +611,12 @@ export const planMigration = async (db: Database, options: MigrateOptions = {}):
                     credential.disposition === 'carried-bcrypt'
                         ? 'bcrypt hash carried across; the existing password still works and a change is forced on first login (§5, §6)'
                         : credential.disposition === 'carried-unverifiable-disabled'
-                          ? `hash is ${credential.algorithm} and this build has no backend for it; carried but the account is DISABLED pending \`flow-wiser admin:reset-password\` (§5)`
-                          : credential.disposition === 'unrecognised-disabled'
-                            ? 'stored hash is in no recognised format; NOT carried and the account is DISABLED pending `flow-wiser admin:reset-password` (§5)'
-                            : sso
-                              ? 'no local password and SSO is configured; migrated as an SSO account and NOT flagged for password change (§6)'
-                              : 'no local password (invited but never registered); migrated without a credential and not flagged (§6)'
+                        ? `hash is ${credential.algorithm} and this build has no backend for it; carried but the account is DISABLED pending \`flow-wiser admin:reset-password\` (§5)`
+                        : credential.disposition === 'unrecognised-disabled'
+                        ? 'stored hash is in no recognised format; NOT carried and the account is DISABLED pending `flow-wiser admin:reset-password` (§5)'
+                        : sso
+                        ? 'no local password and SSO is configured; migrated as an SSO account and NOT flagged for password change (§6)'
+                        : 'no local password (invited but never registered); migrated without a credential and not flagged (§6)'
             })
             if (disabled) {
                 warnings.push(
@@ -1036,7 +1070,8 @@ const applyLoginMethods = async (context: ApplyContext, legacy: LegacyData): Pro
 const applyTenantStamps = async (context: ApplyContext): Promise<{ table: string; rows: number }[]> => {
     const db = context.db
     const inconsistencies: { table: string; rows: number }[] = []
-    const workspaceSource = (await tableExists(db, 'identity_workspace')) ? 'identity_workspace' : 'workspace'
+    const workspaceSource = await resolveWorkspaceSource(db)
+    if (!workspaceSource) return inconsistencies
 
     for (const stamp of context.plan.tenantStamps) {
         if (stamp.addColumn && !(await columnExists(db, stamp.table, 'organizationId'))) {
@@ -1230,8 +1265,9 @@ export const migrate = async (db: Database, options: MigrateOptions = {}): Promi
         if (tenantKeyInconsistencies.length > 0) {
             throw new MigrationAbort(
                 'Tenant key verification failed: ' +
-                    tenantKeyInconsistencies.map((entry) => `${entry.table} has ${entry.rows} row(s) whose organizationId ` +
-                        'disagrees with their workspace').join('; ') +
+                    tenantKeyInconsistencies
+                        .map((entry) => `${entry.table} has ${entry.rows} row(s) whose organizationId ` + 'disagrees with their workspace')
+                        .join('; ') +
                     ' (§3a). Rolling back.',
                 tenantKeyInconsistencies
             )
@@ -1292,7 +1328,18 @@ export const migrate = async (db: Database, options: MigrateOptions = {}): Promi
     ].join('\n')
     log(report)
 
-    return { dryRun: false, plan, report, backup, fingerprintBefore, fingerprintAfter, comparison, written, tenantKeyInconsistencies, warnings }
+    return {
+        dryRun: false,
+        plan,
+        report,
+        backup,
+        fingerprintBefore,
+        fingerprintAfter,
+        comparison,
+        written,
+        tenantKeyInconsistencies,
+        warnings
+    }
 }
 
 const emptyLegacy = (): LegacyData => ({

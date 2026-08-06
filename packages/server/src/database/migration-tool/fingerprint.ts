@@ -266,6 +266,8 @@ export const formatComparison = (comparison: FingerprintComparison): string => {
     const lines: string[] = []
     for (const entry of comparison.verified) lines.push(`  OK   ${entry.table.padEnd(28)} ${entry.rows} rows  ${entry.hash.slice(0, 16)}…`)
     for (const mismatch of comparison.mismatches) lines.push(`  FAIL ${mismatch.message}`)
-    lines.push(comparison.identical ? '  All protected tables identical.' : `  ${comparison.mismatches.length} MISMATCH(ES) — migration aborted.`)
+    lines.push(
+        comparison.identical ? '  All protected tables identical.' : `  ${comparison.mismatches.length} MISMATCH(ES) — migration aborted.`
+    )
     return lines.join('\n')
 }

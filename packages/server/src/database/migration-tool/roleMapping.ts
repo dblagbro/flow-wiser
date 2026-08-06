@@ -194,7 +194,9 @@ export const mapLegacyRole = (role: LegacyRole | null, isOrgOwner: boolean, opti
             ...base,
             target: 'user',
             rule: 'write-grants',
-            reason: `"${role.name}" holds ${writes.length} write grant(s) (e.g. ${writes.slice(0, 3).join(', ')}); §5's default for a member`
+            reason: `"${role.name}" holds ${writes.length} write grant(s) (e.g. ${writes
+                .slice(0, 3)
+                .join(', ')}); §5's default for a member`
         }
     }
 

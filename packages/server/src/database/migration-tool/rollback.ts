@@ -148,7 +148,8 @@ export const restoreSqliteBackup = (options: RestoreOptions): RestoreResult => {
     checks.push(`restored ${bytes} bytes over ${options.targetPath}`)
 
     const restoredHeader = readHeader(options.targetPath, SQLITE_MAGIC.length)
-    if (!restoredHeader.equals(SQLITE_MAGIC)) throw new RestoreError(`Restore wrote a file that is not a SQLite database: ${options.targetPath}`)
+    if (!restoredHeader.equals(SQLITE_MAGIC))
+        throw new RestoreError(`Restore wrote a file that is not a SQLite database: ${options.targetPath}`)
     if (sha256File(options.targetPath) !== sha256File(options.backupPath)) {
         throw new RestoreError(`Restored file does not match the backup byte for byte: ${options.targetPath}`)
     }
