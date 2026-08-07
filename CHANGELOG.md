@@ -28,6 +28,100 @@ first.
 
 ---
 
+## [3.1.4-fw5] — 2026-08-07
+
+**Security release.** Fixes an independently assessed, empirically confirmed vulnerability that
+allowed a code node to read every stored credential, plus the unauthenticated execution path that
+would have made it reachable without a login.
+
+Findings came from a sanctioned security assessment against a live instance. Where the assessment
+proved something, this entry says so; where it suspected something and the code turned out already
+hardened, that is said too.
+
+### Fixed
+
+#### Code nodes could `require('fs')` and read the entire credential database — CONFIRMED, HIGH
+
+`TOOL_FUNCTION_BUILTIN_DEP` was concatenated onto the code sandbox's require allowlist with no
+filtering, and the sandbox's secure wrappers mock only `axios`/`node-fetch` — never `fs`. A
+deployment setting `TOOL_FUNCTION_BUILTIN_DEP=crypto,fs,path`, as this one did, gave any code node
+the host filesystem.
+
+Demonstrated with benign proofs replicating the application's exact NodeVM configuration:
+
+    fs.readFileSync('/root/.flowise/database.sqlite')  → "SQLite format 3"
+    fs.readdirSync('/mnt/s')                           → the mounted NAS, readable and writable
+
+That is every stored credential, secret and API key, and arbitrary write to shared storage.
+**No sandbox escape was required** — the sandbox was asked for the filesystem and handed it over.
+
+Fixed in two places, deliberately:
+
+- **In code.** `filterDangerousBuiltIns` refuses `fs`, `child_process`, `process`, `vm`, `module`,
+  `worker_threads`, `net`, `dns` and others regardless of configuration, warning rather than
+  filtering silently so a failing flow is explicable. An explicit escape hatch exists
+  (`TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS`) and requires an exact acknowledgement string, so it
+  cannot be reached by copying a config snippet. `path` is kept — it manipulates strings and opens
+  nothing.
+- **In configuration.** `fs` removed from the deployment's `TOOL_FUNCTION_BUILTIN_DEP`.
+
+The code fix is the important one. A value in a compose file is one careless edit from returning,
+and a sandbox whose containment can be removed by an environment variable is not a sandbox.
+
+#### `/api/v1/prediction/:id` executed keyless flows without authentication — CONFIRMED, MEDIUM
+
+`validateFlowAPIKey` began `if (!chatFlowApiKeyId) return true`. Since `/api/v1/prediction/` is
+whitelisted and skips the bootstrap auth gate, that function was the only check on the path — and
+it treated "no key configured" as "authorised". Confirmed live: an unauthenticated POST to a
+private, keyless flow reached `buildChatflow`. 22 of 25 flows on the assessed instance were keyless.
+
+A prediction now requires one of: a valid flow API key, an explicit `isPublic` flag, or an
+authenticated caller. **Absence of a credential is not a credential.**
+
+*Breaking:* calling `/prediction/` on a keyless, non-public flow without a session now returns 401.
+That is the access being removed. Mark such flows public, or give them an API key.
+
+#### A public flow may no longer contain a code-execution node
+
+`isPublic` is a deliberate grant of unauthenticated execution; combined with a code node it means
+unauthenticated code execution by design. Publishing such a flow is now refused with a message
+naming the offending nodes. Private flows with code nodes are untouched — the risk is the
+combination. Detection matches node-name substrings **and** non-empty code-bearing input fields, so
+a code node type added later is still caught; a false positive costs a moment, a false negative
+costs the host.
+
+### Verified as already hardened
+
+Reported by the assessment, confirmed by inspection — recorded so nobody re-fixes them:
+
+- **SSRF from code nodes** (suspected) — already mitigated. `httpSecurity.ts` denies
+  `169.254.169.254`, all RFC1918 ranges, `localhost` and `::1` by default, across redirect chains.
+- **vm2 command execution** — the four public escape techniques are blocked by the shipped config:
+  `Proxy` is removed from the sandbox and `eval: false` disables code-generation-from-strings,
+  defeating the `Function('return process')` primitive every published escape relies on.
+- **Path traversal / arbitrary file read** via `get-upload-file` — UUID and format validated.
+- **Unauthenticated MCP code execution** — route-level `authenticateToken` applies despite the
+  whitelist.
+
+### Known and NOT fixed in this release
+
+**`vm2` is deprecated and unpatchable.** Its escapes are blocked by configuration today, not by the
+library. The durable fix is `isolated-vm` or the already-present `@e2b/code-interpreter` remote
+sandbox; it touches every code-node type and is scheduled as its own change rather than rushed into
+a security release. Until then, treat *who can author a code node* and *which flows are public* as
+host-RCE-equivalent trust boundaries.
+
+Correcting an earlier claim: the `vm2` 3.11.5 pin in `3.1.4-fw4` was described as closing six
+critical sandbox escapes. 3.11.5 is the final release of a deprecated package. The pin moved off a
+worse version; it did not make the sandbox safe.
+
+### Added
+
+- `packages/server/src/utils/codeNodeGuard.test.ts` — 16 cases including the assessment's payloads
+- `packages/components/src/dangerousBuiltins.test.ts` — pins the refusal of every dangerous builtin
+
+---
+
 ## [3.1.4-fw4] — 2026-08-06
 
 **The first Flowise build that is genuinely open source, and the first fresh install that

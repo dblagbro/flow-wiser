@@ -11,6 +11,52 @@ Legend — **S1** blocks release · **S2** must fix before wider use · **S3** s
 
 ---
 
+## Security assessment 2026-08-07 — remediated in `3.1.4-fw5`
+
+An independent, sanctioned assessment against a live instance. All three findings below are fixed
+and each fix was verified by replaying the assessment's own conditions against the built image.
+
+### SEC-01 · Code nodes could `require('fs')` — CONFIRMED HIGH → **FIXED**
+`TOOL_FUNCTION_BUILTIN_DEP` was concatenated onto the sandbox require allowlist unfiltered; the
+secure wrappers mock only HTTP libraries. Proven: `fs.readFileSync('/root/.flowise/database.sqlite')`
+returned `SQLite format 3` — every stored credential — and `/mnt/s` (the NAS) was readable and
+writable. **No vm2 escape required.**
+**Fixed:** `filterDangerousBuiltIns` refuses 20 host-access builtins in code, plus `fs` removed from
+the deployment config. **Verified:** fed the exact exploited value `crypto,fs,path`, the built image
+allows `crypto,path` and logs a refusal.
+
+### SEC-02 · Unauthenticated prediction of keyless flows — CONFIRMED MEDIUM → **FIXED**
+`validateFlowAPIKey` returned `true` when a flow had no key. 22 of 25 flows were keyless.
+**Fixed:** a prediction now needs a valid key, an explicit `isPublic`, or an authenticated caller.
+**The first fix attempt was insufficient** and the retest caught it: the check also lives inside
+`utilBuildChatflow`, but the controller resolves the flow, evaluates origin rules and runs the
+streaming validator *before* reaching it — so an unauthenticated request still hit real work and
+still returned the same 500 the assessment had observed. The gate now sits at the top of
+`createPrediction`. Audited the other whitelisted routes: `/api/v1/prediction/` was the only
+whitelisted route that executes a flow.
+
+### SEC-03 · Public flow + code node = unauthenticated code execution → **FIXED**
+Publishing a flow containing a code-execution node is refused with a message naming the nodes.
+Private flows with code nodes are untouched — the risk is the combination. Detection matches node
+names *and* non-empty code-bearing input fields, so a node type added later is still caught.
+
+### Verified already hardened — do not re-fix
+SSRF from code nodes (deny list covers `169.254.169.254`, RFC1918, localhost, `::1`, on by default);
+vm2 command-exec escapes (blocked by `Proxy` removal + `eval:false`); path traversal in
+`get-upload-file`; unauthenticated MCP execution.
+
+### SEC-04 · `vm2` remains deprecated and unpatchable — **OPEN, tracked**
+Escapes are blocked by configuration, not by the library. Durable fix is `isolated-vm` or the
+already-present `@e2b/code-interpreter`; it touches every code-node type and is scheduled separately
+rather than rushed into a security release. Until then, *who can author a code node* and *which
+flows are public* are host-RCE-equivalent trust boundaries.
+
+**Correction to a prior claim:** `3.1.4-fw4` described the `vm2` 3.11.5 pin as closing six critical
+sandbox escapes. 3.11.5 is the final release of a deprecated package; the pin moved off a worse
+version but did not make the sandbox safe.
+
+---
+
 ## S1 — Blocks release
 
 ### I-01 · Published images `fw1`–`fw3` contain commercially licensed code

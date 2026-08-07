@@ -10,6 +10,7 @@ import apiKeyService from '../../services/apikey'
 import chatflowsService from '../../services/chatflows'
 import scheduleService from '../../services/schedule'
 import { GeneralErrorMessage } from '../../utils/constants'
+import { assertPublicFlowHasNoCodeNode } from '../../utils/codeNodeGuard'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { getPageAndLimitParams } from '../../utils/pagination'
 import { checkUsageLimit } from '../../utils/quotaUsage'
@@ -172,6 +173,9 @@ const saveChatflow = async (req: Request, res: Response, next: NextFunction) => 
         const newChatFlow = new ChatFlow()
         Object.assign(newChatFlow, stripProtectedFields(body))
 
+        // Security 2026-08-07: a public flow is executable without authentication, so a public
+        // flow containing a code node is unauthenticated code execution by design.
+        assertPublicFlowHasNoCodeNode(newChatFlow.isPublic, newChatFlow.flowData)
         newChatFlow.workspaceId = workspaceId
         const apiResponse = await chatflowsService.saveChatflow(
             newChatFlow,
@@ -216,6 +220,10 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
         const updateChatFlow = new ChatFlow()
         Object.assign(updateChatFlow, stripProtectedFields(body))
 
+        // Security 2026-08-07: same guard on update. `flowData` may be absent from a partial
+        // update that only flips isPublic, so fall back to the stored flow — otherwise publishing
+        // an existing code-node flow in a body that omits flowData would slip straight through.
+        assertPublicFlowHasNoCodeNode(updateChatFlow.isPublic, updateChatFlow.flowData ?? chatflow.flowData)
         updateChatFlow.id = chatflow.id
         const rateLimiterManager = RateLimiterManager.getInstance()
         await rateLimiterManager.updateRateLimiter(updateChatFlow)

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { RateLimiterManager } from '../../utils/rateLimit'
 import chatflowsService from '../../services/chatflows'
+import { validateFlowAPIKey } from '../../utils/validateKey'
 import logger from '../../utils/logger'
 import predictionsServices from '../../services/predictions'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
@@ -30,6 +31,20 @@ const createPrediction = async (req: Request, res: Response, next: NextFunction)
         const chatflow = await chatflowsService.getChatflowById(req.params.id, workspaceId)
         if (!chatflow) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Chatflow ${req.params.id} not found`)
+        }
+
+        // FINDING 2 (security assessment 2026-08-07) — the gate belongs HERE, at the top.
+        //
+        // `validateFlowAPIKey` is also called inside `utilBuildChatflow`, but by then this handler
+        // has already resolved the flow, evaluated origin rules and run the streaming validator.
+        // An unauthenticated caller therefore still reached real work and could distinguish
+        // responses — the first fix attempt left a 500 from `checkIfChatflowIsValidForStreaming`
+        // exactly where the assessment had observed one, because the deeper check never ran.
+        //
+        // `/api/v1/prediction/` is whitelisted, so the bootstrap auth gate does not run for it and
+        // nothing else on this path is protecting it.
+        if (!(await validateFlowAPIKey(req, chatflow))) {
+            throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, `Unauthorized`)
         }
         let isDomainAllowed = true
         let unauthorizedOriginError = 'This site is not allowed to access this chatbot'

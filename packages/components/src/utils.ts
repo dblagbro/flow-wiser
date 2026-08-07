@@ -118,6 +118,94 @@ const defaultAllowExternalDependencies = ['axios', 'node-fetch']
 export const defaultAllowBuiltInDep = ['assert', 'buffer', 'crypto', 'events', 'path', 'querystring', 'timers', 'url', 'zlib']
 
 /**
+ * Node builtins that hand a code node the host, and are refused even when the environment asks
+ * for them (security assessment 2026-08-07, FINDING 0 — CONFIRMED, HIGH).
+ *
+ * ── What was proven ──────────────────────────────────────────────────────────────────────────
+ *
+ * The deployment set `TOOL_FUNCTION_BUILTIN_DEP=crypto,fs,path`, which was concatenated onto the
+ * sandbox's require allowlist with no filtering. A code node could then `require('fs')` — and the
+ * HTTP wrappers below mock only `axios`/`node-fetch`, never `fs`. Demonstrated on a sanctioned
+ * box, replicating the app's exact NodeVM config:
+ *
+ *     fs.readFileSync('/etc/hostname')                 → the container id
+ *     fs.readdirSync('/root/.flowise')                 → api.json, database.sqlite, …
+ *     fs.readFileSync('/root/.flowise/database.sqlite')→ "SQLite format 3" — every stored
+ *                                                        credential, secret and API key
+ *     fs.readdirSync('/mnt/s')                         → the NAS bind mount, read AND write
+ *
+ * No vm2 escape was required. The sandbox was asked to hand over the filesystem, and it did.
+ *
+ * ── Why this is a denylist in code rather than a fix to one compose file ─────────────────────
+ *
+ * The immediate cause was configuration, and the configuration has been corrected. But a value
+ * in a compose file is one careless edit from returning, and whoever set `fs` there did so for a
+ * reason nobody has written down. A sandbox whose containment can be removed by an environment
+ * variable is not a sandbox — it is a default. So the dangerous names are refused here, where
+ * the security property actually lives.
+ *
+ * The escape hatch is deliberate and deliberately loud: `TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS`
+ * must be set to the exact string `i-understand-this-grants-host-access`. An operator who
+ * genuinely needs `fs` can have it, and cannot arrive there by copying a config snippet.
+ *
+ * `path` is NOT on this list. It manipulates strings and opens nothing, and removing it would
+ * break flows for no security gain.
+ */
+export const deniedBuiltInDep = [
+    'fs',
+    'fs/promises',
+    'child_process',
+    'process',
+    'vm',
+    'module',
+    'worker_threads',
+    'cluster',
+    'v8',
+    'inspector',
+    'repl',
+    'net',
+    'dgram',
+    'dns',
+    'tls',
+    'http2',
+    'perf_hooks',
+    'async_hooks',
+    'diagnostics_channel',
+    'trace_events'
+]
+
+const DANGEROUS_BUILTIN_OVERRIDE = 'i-understand-this-grants-host-access'
+
+/**
+ * Apply {@link deniedBuiltInDep} to a requested allowlist, logging anything it removes.
+ *
+ * Silent filtering would be its own bug: an operator who set `fs` deliberately would see their
+ * flows fail with a confusing require error and no indication why.
+ */
+export const filterDangerousBuiltIns = (requested: string[]): string[] => {
+    if (process.env.TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS === DANGEROUS_BUILTIN_OVERRIDE) {
+        console.warn(
+            '⚠️  [security] TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS is set. Code nodes may require ' +
+                'host-access builtins such as fs and child_process. Anyone who can author or run a flow ' +
+                'can read every stored credential and write anywhere this process can.'
+        )
+        return requested
+    }
+
+    const normalised = requested.map((dep) => dep.trim()).filter((dep) => dep.length > 0)
+    const removed = normalised.filter((dep) => deniedBuiltInDep.includes(dep))
+    if (removed.length > 0) {
+        console.warn(
+            `⚠️  [security] Refusing to expose ${removed.join(', ')} to the code sandbox. ` +
+                'These grant host filesystem/process access and defeat containment. ' +
+                'Remove them from TOOL_FUNCTION_BUILTIN_DEP, or set ' +
+                `TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS=${DANGEROUS_BUILTIN_OVERRIDE} if that is genuinely intended.`
+        )
+    }
+    return normalised.filter((dep) => !deniedBuiltInDep.includes(dep))
+}
+
+/**
  * Get base classes of components
  *
  * @export
@@ -1726,8 +1814,12 @@ export const executeJavaScriptCode = async (
             throw new Error(`Sandbox Execution Error: ${e}`)
         }
     } else {
+        // FINDING 0 (2026-08-07): the environment's additions are filtered through
+        // `filterDangerousBuiltIns`, so `fs`, `child_process` and friends cannot be granted to the
+        // sandbox by configuration alone. See `deniedBuiltInDep` for what was proven and why this
+        // is enforced in code rather than left to a compose file.
         const builtinDeps = process.env.TOOL_FUNCTION_BUILTIN_DEP
-            ? defaultAllowBuiltInDep.concat(process.env.TOOL_FUNCTION_BUILTIN_DEP.split(','))
+            ? filterDangerousBuiltIns(defaultAllowBuiltInDep.concat(process.env.TOOL_FUNCTION_BUILTIN_DEP.split(',')))
             : defaultAllowBuiltInDep
         const externalDeps = process.env.TOOL_FUNCTION_EXTERNAL_DEP ? process.env.TOOL_FUNCTION_EXTERNAL_DEP.split(',') : []
         let deps = process.env.ALLOW_BUILTIN_DEP === 'true' ? availableDependencies.concat(externalDeps) : externalDeps
