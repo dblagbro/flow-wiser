@@ -1,3 +1,29 @@
+# ---------------------------------------------------------------------------
+# ⚠️  THIS WORKFLOW DOES NOT BUILD A FLOW-WISER RELEASE. Do not run it to publish one.
+#
+# It is upstream's workflow, unmodified, and three things about it are wrong for
+# this fork:
+#
+#   1. It builds ./docker/Dockerfile, which installs FlowiseAI's published npm
+#      package. That package contains the compiled dist/enterprise/ output and
+#      dist/IdentityManager.js under the FlowiseAI Commercial License. Any image
+#      it produces is NOT redistributable, whatever this repository contains.
+#      That is how 3.1.4-fw1 through 3.1.4-fw3 came to carry it.
+#   2. It pushes to `flowiseai/flowise`, which is not ours.
+#   3. It defaults node_version to 24, which cannot compile better-sqlite3.
+#
+# Flow-Wiser releases are built from the ROOT Dockerfile:
+#
+#   docker build --no-cache --pull \
+#     --build-arg NODE_VERSION=20 \
+#     --build-arg FLOWISE_VERSION=<version> \
+#     -t dblagbro/flow-wiser:<version> .
+#
+# Retained unmodified so upstream's images stay reproducible for comparison.
+# Rewriting it to publish Flow-Wiser images is deliberately left as a separate,
+# explicit decision rather than something that happens by editing a matrix entry.
+# ---------------------------------------------------------------------------
+
 name: Docker Image CI - Docker Hub
 
 on:
