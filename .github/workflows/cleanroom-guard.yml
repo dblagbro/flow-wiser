@@ -1,10 +1,33 @@
 name: Clean-room guard
+
+# WHY THIS WAS REWRITTEN (2026-08-07)
+#
+# The previous version was documented in CLEANROOM-ATTESTATION.md and HOW-WE-DID-THIS.md as the
+# control that "rejects any commit that modifies a protected path". A recovery audit found it had
+# run exactly ONCE in the project's history and could not have caught the failure it existed to
+# prevent:
+#
+#   1. It triggered on `push: branches: [main]`, and all work happens on `apache2-only`.
+#   2. It matched only `packages/server/src/(enterprise/|IdentityManager.ts)` — the paths the
+#      commercially licensed files USED to occupy. 11,357 lines of that same licensed source were
+#      sitting in `upstream-archive/patches/*.patch` as diff hunks, which the pattern never saw.
+#
+# So the repository shipped three container images containing commercially licensed code while the
+# documentation asserted the guard was protecting it. The lesson is recorded here rather than only
+# in prose: a guard scoped to where a problem used to live does not protect against where the
+# content actually is.
+#
+# This version therefore checks CONTENT as well as PATHS, and runs on every branch.
+
 on:
     pull_request:
     push:
-        branches: [main]
+        branches: ['**']
+    workflow_dispatch:
+
 permissions:
     contents: read
+
 jobs:
     guard:
         runs-on: ubuntu-latest
@@ -12,11 +35,57 @@ jobs:
             - uses: actions/checkout@v4
               with:
                   fetch-depth: 0
-            - name: Reject modifications to commercially-licensed paths
+
+            # ── 1. The live tree must contain no commercially licensed source, ever ────────────
+            # A full-tree check rather than a diff. A diff-based guard only ever sees what one
+            # commit changed, so anything already present when the guard was introduced stays
+            # invisible to it for ever — which is exactly how the archive went unnoticed.
+            - name: No commercially licensed source anywhere in the tree
               run: |
+                  set -euo pipefail
+                  fail=0
+
+                  live=$(find packages/server/src/enterprise -type f 2>/dev/null | wc -l)
+                  if [ "$live" -ne 0 ]; then
+                    echo "::error::packages/server/src/enterprise/ exists ($live files)"; fail=1
+                  fi
+                  if [ -e packages/server/src/IdentityManager.ts ]; then
+                    echo "::error::packages/server/src/IdentityManager.ts exists"; fail=1
+                  fi
+
+                  # Diff hunks that ADD or REMOVE lines belonging to a protected path. Patch
+                  # headers and diffstats are fine — a path name is not protected expression — so
+                  # this counts only content lines inside a protected file's hunk.
+                  leaked=0
+                  while IFS= read -r f; do
+                    n=$(awk '
+                      /^diff --git a\/packages\/server\/src\/enterprise\// {inside=1; next}
+                      /^diff --git a\/packages\/server\/src\/IdentityManager/ {inside=1; next}
+                      /^diff --git/ {inside=0}
+                      inside && /^[+-][^+-]/ {c++}
+                      END {print c+0}' "$f")
+                    if [ "$n" -gt 0 ]; then
+                      echo "::error::$f carries $n lines of commercially licensed source"
+                      leaked=$((leaked + n))
+                    fi
+                  done < <(find . -path ./node_modules -prune -o -name '*.patch' -print -o -name '*.diff' -print 2>/dev/null)
+
+                  if [ "$leaked" -gt 0 ]; then
+                    echo "::error::$leaked line(s) of commercially licensed source in patch files"; fail=1
+                  fi
+
+                  [ "$fail" -eq 0 ] && echo "Tree is clean: no commercially licensed source present."
+                  exit $fail
+
+            # ── 2. Protected paths may be DELETED but never modified ──────────────────────────
+            # Editing a protected file implies having read it, which is what the clean-room
+            # protocol forbids. Deletion is how they left, so deletion stays permitted.
+            - name: Reject modifications to commercially licensed paths
+              run: |
+                  set -euo pipefail
                   BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
                   if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-                    echo "No base ref to diff against; skipping."; exit 0
+                    echo "No base ref to diff against; the full-tree check above still applied."; exit 0
                   fi
                   BAD=$(git diff --name-status --diff-filter=ACMR "$BASE" "${{ github.sha }}" \
                         | awk '{print $2}' \
@@ -27,4 +96,18 @@ jobs:
                     echo "See docs/CLEANROOM-PROTOCOL.md. Deletion is allowed; modification is not."
                     exit 1
                   fi
-                  echo "Clean-room guard passed."
+                  echo "No protected path was modified."
+
+            # ── 3. Nothing licensed may reach a built image ───────────────────────────────────
+            # The images that shipped commercially licensed code did so because `COPY . .` ran with
+            # no .dockerignore. Asserting the exclusion here means the next person to delete that
+            # line finds out from CI rather than from a lawyer.
+            - name: .dockerignore must exclude the upstream archive
+              run: |
+                  set -euo pipefail
+                  test -f .dockerignore || { echo "::error::.dockerignore is missing"; exit 1; }
+                  grep -qE '^upstream-archive/?$' .dockerignore || {
+                    echo "::error::.dockerignore does not exclude upstream-archive/ — it is 71 MB of upstream patches containing commercially licensed hunks"; exit 1; }
+                  grep -qE '^\*\*/\.env$|^\.env$' .dockerignore || {
+                    echo "::error::.dockerignore does not exclude .env files"; exit 1; }
+                  echo ".dockerignore excludes the archive and environment files."
