@@ -347,6 +347,15 @@ Stated plainly rather than omitted:
   **501**. There is no transactional email path in this build, so no token can be issued.
   The forced-password-change flow through the same URL does work.
 - Chatflow version history is designed but not yet built.
+- **The denormalised tenant key is not written on create.** `REQUIREMENTS-MIGRATION.md` §3a
+  requires `organizationId` on every tenant-scoped resource row; the migrations add the column
+  and the index, but the write paths do not populate it, so a newly created chatflow has
+  `organizationId` NULL while its workspace has one. `doctor` catches it and exits non-zero:
+  *"1 row(s) carry a tenant key that disagrees with their workspace"*. Nothing is currently
+  served to the wrong tenant, because scoping still goes through `workspaceId` — but a query
+  that filters on organization alone, which §3a exists to make safe, would miss those rows.
+  §3a's central enforcement layer is the missing piece; until it lands, expect `doctor` to
+  report this on any instance where content has been created.
 - The two non-fatal node-load failures from `3.1.4-fw1` remain: `@langchain/core` does not
   export `./utils/uuid` (ReAct Agent), and `Cannot find module '@smithy/eventstream-codec'`
   (AWS Bedrock). The server starts and serves normally; only those nodes are unavailable.

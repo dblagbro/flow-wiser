@@ -93,8 +93,22 @@ RUN FOUND="$(find / -xdev \( -path '*/enterprise/*' -o -name 'IdentityManager.*'
        fi \
     && echo "CLEAN: no enterprise/ path, no IdentityManager artifact, no upstream-archive anywhere in the image"
 
+# Put `flowise` on PATH.
+#
+# Every recovery message the server and CLI print names `flowise` -- "create the
+# first administrator with: flowise admin:create --email <you> --role
+# super-admin" is logged on the first boot of every new instance. pnpm links the
+# workspace bin into node_modules/.bin, but nothing put that directory on PATH,
+# so `docker exec <container> flowise admin:create` answered "not found" and the
+# operator had to know the layout of the image to get in. The commands we print
+# have to be the commands that run.
+ENV PATH=/usr/src/flowise/node_modules/.bin:$PATH
+
 # Give the node user ownership of the application files
 RUN chown -R node:node .
+
+# The bin has to work, not just exist.
+RUN cd / && flowise --version
 
 # Switch to non-root user (node user already exists in node:20-alpine)
 USER node

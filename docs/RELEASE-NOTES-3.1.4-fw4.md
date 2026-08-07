@@ -163,6 +163,14 @@ Stated plainly rather than omitted.
   this build, so no token can be issued. The forced-password-change flow through the same
   URL does work.
 - **Chatflow version history** is designed but not built.
+- **The denormalised tenant key is not written on create.** `REQUIREMENTS-MIGRATION.md` §3a
+  requires `organizationId` on every tenant-scoped resource row. The column and its index
+  exist; the write paths do not populate them, so a newly created chatflow has
+  `organizationId` NULL while its workspace has one. `flowise doctor` catches this and exits
+  non-zero, so **expect one failure from `doctor` on any instance where content has been
+  created** until §3a's central enforcement layer lands. Nothing is served to the wrong
+  tenant today — scoping still runs through `workspaceId` — but a query filtering on
+  organization alone, which is exactly what §3a exists to make safe, would miss those rows.
 - Two **non-fatal node-load failures** remain, inherited from upstream dependency drift.
   The server starts and serves normally; only these nodes are unavailable:
   `@langchain/core` does not export `./utils/uuid` (ReAct Agent), and
@@ -203,12 +211,18 @@ docker run -d --name flow-wiser -p 3000:3000 --user root \
   -v flow-wiser-data:/data \
   dblagbro/flow-wiser:3.1.4-fw4
 
-docker exec -it flow-wiser sh -c 'cd /usr/src/flowise/packages/server && ./bin/run admin:create --email you@example.com --role super-admin'
+docker exec -it flow-wiser flowise admin:create --email you@example.com --role super-admin
 ```
 
 The password is prompted on `/dev/tty` and cannot be piped, passed as a flag, or read from
 the environment. The first sign-in will require you to change it, which is the flow that
 did not exist before this release.
+
+`flowise doctor` will tell you whether the result is healthy, and exits non-zero if not.
+
+One note if you are scripting against the API: requests need the header
+`x-request-from: internal`. Without it a request is treated as an external API-key call and
+answered `401`. The shipped UI sets it (`packages/ui/src/api/client.js`).
 
 ## How this was done legally
 
