@@ -16,7 +16,8 @@ import {
     IconCheck,
     IconX,
     IconCode,
-    IconAlertTriangleFilled
+    IconAlertTriangleFilled,
+    IconHistory
 } from '@tabler/icons-react'
 
 // project imports
@@ -28,6 +29,7 @@ import ChatflowConfigurationDialog from '@/ui-component/dialog/ChatflowConfigura
 import UpsertHistoryDialog from '@/views/vectorstore/UpsertHistoryDialog'
 import ViewLeadsDialog from '@/ui-component/dialog/ViewLeadsDialog'
 import ExportAsTemplateDialog from '@/ui-component/dialog/ExportAsTemplateDialog'
+import FlowVersionsSideDrawer from '@/views/canvas/FlowVersionsSideDrawer'
 import { Available } from '@/ui-component/rbac/available'
 
 // API
@@ -120,7 +122,7 @@ const LockedScheduleSwitch = styled(ScheduleSwitch, { shouldForwardProp: (prop) 
 
 // ==============================|| CANVAS HEADER ||============================== //
 
-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
+const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow, handleRefreshFlow }) => {
     const theme = useTheme()
     const dispatch = useDispatch()
     const navigate = useNavigate()
@@ -144,6 +146,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
 
     const [exportAsTemplateDialogOpen, setExportAsTemplateDialogOpen] = useState(false)
     const [exportAsTemplateDialogProps, setExportAsTemplateDialogProps] = useState({})
+    const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false)
     const enqueueSnackbar = (...args) => dispatch(enqueueSnackbarAction(...args))
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
@@ -571,6 +574,30 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </Tooltip>
                     )}
                     {chatflow?.id && (
+                        <Available permission='chatflows:view'>
+                            <ButtonBase title='Version History' sx={{ borderRadius: '50%', mr: 2 }}>
+                                <Avatar
+                                    variant='rounded'
+                                    sx={{
+                                        ...theme.typography.commonAvatar,
+                                        ...theme.typography.mediumAvatar,
+                                        transition: 'all .2s ease-in-out',
+                                        background: theme.palette.canvasHeader.settingsLight,
+                                        color: theme.palette.canvasHeader.settingsDark,
+                                        '&:hover': {
+                                            background: theme.palette.canvasHeader.settingsDark,
+                                            color: theme.palette.canvasHeader.settingsLight
+                                        }
+                                    }}
+                                    color='inherit'
+                                    onClick={() => setVersionsDrawerOpen(true)}
+                                >
+                                    <IconHistory stroke={1.5} size='1.3rem' />
+                                </Avatar>
+                            </ButtonBase>
+                        </Available>
+                    )}
+                    {chatflow?.id && (
                         <ButtonBase title='API Endpoint' sx={{ borderRadius: '50%', mr: 2 }}>
                             <Avatar
                                 variant='rounded'
@@ -680,6 +707,17 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 onCancel={() => setChatflowConfigurationDialogOpen(false)}
                 isAgentCanvas={isAgentCanvas}
             />
+            {chatflow?.id && (
+                <FlowVersionsSideDrawer
+                    show={versionsDrawerOpen}
+                    dialogProps={{ chatflowId: chatflow.id, chatflowName: chatflow.name }}
+                    onClose={() => setVersionsDrawerOpen(false)}
+                    onRestored={(restored) => {
+                        if (restored) dispatch({ type: SET_CHATFLOW, chatflow: restored })
+                        if (handleRefreshFlow) handleRefreshFlow()
+                    }}
+                />
+            )}
         </>
     )
 }
@@ -689,6 +727,7 @@ CanvasHeader.propTypes = {
     handleSaveFlow: PropTypes.func,
     handleDeleteFlow: PropTypes.func,
     handleLoadFlow: PropTypes.func,
+    handleRefreshFlow: PropTypes.func,
     isAgentCanvas: PropTypes.bool,
     isAgentflowV2: PropTypes.bool
 }

@@ -184,6 +184,15 @@ const AgentflowCanvas = () => {
         }
     }
 
+    // Pull the flow back from the server and repaint the canvas — used after a version restore,
+    // which changes the saved flow without going through this component's own save path.
+    const handleRefreshFlow = () => {
+        if (chatflow?.id) {
+            dispatch({ type: REMOVE_DIRTY })
+            getSpecificChatflowApi.request(chatflow.id)
+        }
+    }
+
     const handleDeleteFlow = async () => {
         const confirmPayload = {
             title: `Delete`,
@@ -709,6 +718,7 @@ const AgentflowCanvas = () => {
                             handleSaveFlow={handleSaveFlow}
                             handleDeleteFlow={handleDeleteFlow}
                             handleLoadFlow={handleLoadFlow}
+                            handleRefreshFlow={handleRefreshFlow}
                             isAgentCanvas={true}
                             isAgentflowV2={true}
                         />
