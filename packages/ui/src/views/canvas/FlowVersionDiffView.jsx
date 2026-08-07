@@ -50,7 +50,10 @@ const FlowVersionDiffView = ({ diff, loading, promptsOnly, onTogglePromptsOnly, 
                                 label={`+${diff.added}`}
                                 sx={{
                                     backgroundColor: tint(theme.palette.success.main),
-                                    color: theme.palette.success.dark,
+                                    // `success.dark` is not mode-swapped by the palette, so on a dark
+                                    // surface it lands dark-on-dark. The tinted background already
+                                    // carries the add/remove meaning; the label just has to be legible.
+                                    color: isDark ? theme.palette.text.primary : theme.palette.success.dark,
                                     fontWeight: 600
                                 }}
                             />
@@ -59,7 +62,7 @@ const FlowVersionDiffView = ({ diff, loading, promptsOnly, onTogglePromptsOnly, 
                                 label={`-${diff.removed}`}
                                 sx={{
                                     backgroundColor: tint(theme.palette.error.main),
-                                    color: theme.palette.error.dark,
+                                    color: isDark ? theme.palette.text.primary : theme.palette.error.dark,
                                     fontWeight: 600
                                 }}
                             />
