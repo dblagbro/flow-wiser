@@ -55,15 +55,46 @@ export interface CaptureActor {
 }
 
 /**
+ * Resolve the acting user's name and address from their id.
+ *
+ * §"Commit metadata" requires "Author: the acting user", and acceptance §1 requires every commit to
+ * carry the correct author. `req.user` carries only an id — it is built by `AuthService.authenticate`,
+ * which does not populate an address — so the identity row has to be read to turn that id into
+ * something a history drawer can display.
+ *
+ * Best-effort, like everything else on the capture path: an unresolvable id falls back to the
+ * placeholder rather than failing the save. It is looked up per capture rather than cached, because
+ * a save is already doing database work and a stale cached address on an audit-adjacent record is
+ * worse than one extra indexed read.
+ */
+const resolveActor = async (actorUserId?: string | null): Promise<CaptureActor | undefined> => {
+    if (!actorUserId) return undefined
+    try {
+        // Required lazily: this module is imported by the chatflow service, which the CLI commands
+        // pull in transitively — and the CLI has no running Express app to ask for a DataSource.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getRunningExpressApp } = require('../utils/getRunningExpressApp')
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { User } = require('../database/entities/identity')
+        const user = await getRunningExpressApp().AppDataSource.getRepository(User).findOne({ where: { id: actorUserId } })
+        if (!user) return undefined
+        return { name: user.name || user.email, email: user.email }
+    } catch {
+        return undefined
+    }
+}
+
+/**
  * Capture a create or update. Returns the commit sha, or null when nothing changed or capture
  * failed — callers treat both the same way and must not branch on it for correctness.
  */
 export const captureFlowVersion = async (
     chatflow: Partial<ChatFlow> & { id: string },
-    actor?: CaptureActor,
+    actor?: CaptureActor | string,
     options: { action?: 'create' | 'update'; label?: string } = {}
 ): Promise<string | null> => {
     try {
+        const resolved = typeof actor === 'string' ? await resolveActor(actor) : actor
         const store = getVersionStore()
         const next = normaliseFlowData(chatflow.flowData)
         const previous = await store.readAt(chatflow.id, 'HEAD').catch(() => null)
@@ -83,7 +114,7 @@ export const captureFlowVersion = async (
                 workspaceId: (chatflow as { workspaceId?: string }).workspaceId ?? null,
                 organizationId: (chatflow as { organizationId?: string }).organizationId ?? null
             },
-            author: { name: actor?.name || 'unknown', email: actor?.email || 'unknown@flow-wiser.local' },
+            author: { name: resolved?.name || 'unknown', email: resolved?.email || 'unknown@flow-wiser.local' },
             message: options.label ? `${subject}\n\n${options.label}` : subject,
             when: new Date()
         })
@@ -97,12 +128,17 @@ export const captureFlowVersion = async (
 }
 
 /** Record a deletion, so a flow's history ends explicitly rather than simply stopping. */
-export const captureFlowDeletion = async (chatflowId: string, name?: string | null, actor?: CaptureActor): Promise<string | null> => {
+export const captureFlowDeletion = async (
+    chatflowId: string,
+    name?: string | null,
+    actor?: CaptureActor | string
+): Promise<string | null> => {
     try {
+        const resolved = typeof actor === 'string' ? await resolveActor(actor) : actor
         return await getVersionStore().captureDeletion({
             chatflowId,
             name,
-            author: { name: actor?.name || 'unknown', email: actor?.email || 'unknown@flow-wiser.local' }
+            author: { name: resolved?.name || 'unknown', email: resolved?.email || 'unknown@flow-wiser.local' }
         })
     } catch (error) {
         logger.warn(`⚠️ [versioning]: could not record the deletion of flow ${chatflowId}: ${asMessage(error)}`)

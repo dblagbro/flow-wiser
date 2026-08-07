@@ -221,20 +221,82 @@ export class VersionStore {
         return entries.find((entry) => new Date(entry.timestamp).getTime() <= target) ?? null
     }
 
-    /** Name a version (§6). Tags are per-commit, so a checkpoint survives everything committed after it. */
-    async tag(ref: string, label: string): Promise<string> {
+    /**
+     * Name a version (§6). Tags are per-commit, so a checkpoint survives everything committed after it.
+     *
+     * ── The label is NOT the ref ─────────────────────────────────────────────────────────────
+     *
+     * A git ref name becomes a path under `.git/refs/`, so passing a user-supplied label straight
+     * through is an arbitrary file write. A label of `../../../../usr/src/flowise/PWNED` created
+     * exactly that file, outside the data directory, for anyone holding `chatflows:update`. The
+     * content is only a 40-character oid, but creating or truncating arbitrary paths as the server
+     * user is more than enough to do damage.
+     *
+     * It is also simply invalid: the requirements' own example, `before RAG prompt rewrite`, has
+     * spaces. isomorphic-git accepted it and round-tripped it happily, so the API looked fine —
+     * while real git reported `ignoring ref with broken name` and `git fsck` errored. A checkpoint
+     * invisible to `git gc` and to any operator using git directly is not a checkpoint.
+     *
+     * So the ref is a SLUG derived from the label, and the human label is preserved in the
+     * annotated tag's own message. Slugging is done by allowing a known-safe alphabet rather than
+     * by stripping known-bad sequences: a denylist has to anticipate every traversal spelling, and
+     * an allowlist cannot be wrong about a character it has never seen.
+     */
+    async tag(ref: string, label: string): Promise<{ oid: string; slug: string; label: string }> {
         await this.ensureRepo()
+
+        const trimmed = String(label ?? '').trim()
+        if (trimmed.length === 0) throw new Error('A checkpoint label cannot be empty')
+        if (trimmed.length > 200) throw new Error('A checkpoint label cannot exceed 200 characters')
+
+        const slug = trimmed
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 80)
+        // Everything the label contained was punctuation, or it collapsed to nothing.
+        if (slug.length === 0) throw new Error('A checkpoint label must contain at least one letter or digit')
+
         const oid = await this.resolve(ref)
-        await git.tag({ fs, dir: this.dir, ref: label, object: oid })
-        return oid
+        // Annotated, so the human label travels with the tag object rather than living only in a
+        // sidecar we would then have to keep in step.
+        await git.annotatedTag({
+            fs,
+            dir: this.dir,
+            ref: slug,
+            object: oid,
+            message: trimmed,
+            tagger: { name: AUTHOR_FALLBACK.name, email: AUTHOR_FALLBACK.email, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 }
+        })
+        return { oid, slug, label: trimmed }
     }
 
-    async listTags(): Promise<{ label: string; oid: string }[]> {
+    /** Every checkpoint, with the human label recovered from the annotated tag's message. */
+    async listTags(): Promise<{ label: string; slug: string; oid: string }[]> {
         await this.ensureRepo()
-        const labels = await git.listTags({ fs, dir: this.dir })
-        const out: { label: string; oid: string }[] = []
-        for (const label of labels) {
-            out.push({ label, oid: await git.resolveRef({ fs, dir: this.dir, ref: label }) })
+        const slugs = await git.listTags({ fs, dir: this.dir })
+        const out: { label: string; slug: string; oid: string }[] = []
+        for (const slug of slugs) {
+            try {
+                const pointer = await git.resolveRef({ fs, dir: this.dir, ref: slug })
+                // An annotated tag resolves to a tag OBJECT that in turn names the commit; a
+                // lightweight tag (anything created before this change) resolves straight to it.
+                let oid = pointer
+                let label = slug
+                try {
+                    const tagObject = await git.readTag({ fs, dir: this.dir, oid: pointer })
+                    oid = tagObject.tag.object
+                    label = (tagObject.tag.message || slug).trim()
+                } catch {
+                    /* lightweight tag — the slug is all we have */
+                }
+                out.push({ label, slug, oid })
+            } catch {
+                // A ref with a name real git rejects (created before this change) cannot be
+                // resolved. Skipped rather than thrown: one malformed legacy tag must not make
+                // every history request fail.
+                logger.warn(`⚠️ [versioning]: skipping checkpoint with an unreadable ref name: ${slug}`)
+            }
         }
         return out
     }
@@ -264,6 +326,12 @@ export class VersionStore {
             map.set(oid, [...(map.get(oid) ?? []), label])
         }
         return map
+    }
+
+    /** Resolve a checkpoint slug to the commit it names, so a tag is usable wherever a ref is. */
+    async resolveTag(slug: string): Promise<string | null> {
+        const found = (await this.listTags()).find((tag) => tag.slug === slug || tag.label === slug)
+        return found?.oid ?? null
     }
 
     private async readWorkingFile(filepath: string): Promise<string | null> {

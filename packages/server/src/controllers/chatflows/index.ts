@@ -81,7 +81,7 @@ const deleteChatflow = async (req: Request, res: Response, next: NextFunction) =
             if (userPermittedTypes.length === 0)
                 throw new InternalFlowiseError(StatusCodes.FORBIDDEN, `You do not have permission to delete any chatflow types`)
         }
-        const apiResponse = await chatflowsService.deleteChatflow(req.params.id, orgId, workspaceId, userPermittedTypes)
+        const apiResponse = await chatflowsService.deleteChatflow(req.params.id, orgId, workspaceId, userPermittedTypes, req.user?.id)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -178,7 +178,8 @@ const saveChatflow = async (req: Request, res: Response, next: NextFunction) => 
             orgId,
             workspaceId,
             subscriptionId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            req.user?.id
         )
 
         return res.json(apiResponse)
@@ -219,7 +220,7 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
         const rateLimiterManager = RateLimiterManager.getInstance()
         await rateLimiterManager.updateRateLimiter(updateChatFlow)
 
-        const apiResponse = await chatflowsService.updateChatflow(chatflow, updateChatFlow, orgId, workspaceId, subscriptionId)
+        const apiResponse = await chatflowsService.updateChatflow(chatflow, updateChatFlow, orgId, workspaceId, subscriptionId, req.user?.id)
         return res.json(apiResponse)
     } catch (error) {
         next(error)

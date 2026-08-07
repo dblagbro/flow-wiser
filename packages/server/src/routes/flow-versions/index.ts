@@ -91,7 +91,7 @@ router.get('/:id/diff', checkPermission('chatflows:view'), (req: Request, res: R
             return
         }
 
-        const oldText = await store.readAt(req.params.id, a)
+        const oldText = await store.readAt(req.params.id, (await store.resolveTag(a)) ?? a)
         if (oldText === null) {
             res.status(StatusCodes.NOT_FOUND).json({ message: `No version ${a} for this flow`, error: 'unknown_ref' })
             return
@@ -121,6 +121,27 @@ router.get('/:id/diff', checkPermission('chatflows:view'), (req: Request, res: R
     })().catch(next)
 })
 
+/**
+ * `GET /flow-versions/:id/:ref` — one exact version (§Phase 2), and §8's export path.
+ *
+ * Declared AFTER the literal `/at` and `/diff` routes: Express matches in declaration order, and a
+ * parameterised segment placed first would swallow both. `ref` accepts a full sha, a short sha, or
+ * a checkpoint slug.
+ */
+router.get('/:id/:ref', checkPermission('chatflows:view'), (req: Request, res: Response, next: NextFunction) => {
+    void (async () => {
+        await requireFlow(req, req.params.id)
+        const store = getVersionStore()
+        const ref = (await store.resolveTag(req.params.ref)) ?? req.params.ref
+        const flowData = await store.readAt(req.params.id, ref)
+        if (flowData === null) {
+            res.status(StatusCodes.NOT_FOUND).json({ message: `No version ${req.params.ref} for this flow`, error: 'unknown_ref' })
+            return
+        }
+        res.json({ chatflowId: req.params.id, ref: await store.resolve(ref), flowData })
+    })().catch(next)
+})
+
 /** `POST /flow-versions/:id/tag` — name a checkpoint (§6). */
 router.post('/:id/tag', checkPermission('chatflows:update'), (req: Request, res: Response, next: NextFunction) => {
     void (async () => {
@@ -130,7 +151,16 @@ router.post('/:id/tag', checkPermission('chatflows:update'), (req: Request, res:
             res.status(StatusCodes.BAD_REQUEST).json({ message: '`ref` and `label` are both required', error: 'missing_field' })
             return
         }
-        res.json({ label, oid: await getVersionStore().tag(ref, label) })
+        try {
+            res.json(await getVersionStore().tag(ref, label))
+        } catch (error) {
+            // A rejected label is the caller's input problem, not a server fault. The message is
+            // safe to return — it describes the rule, never the filesystem.
+            res.status(StatusCodes.BAD_REQUEST).json({
+                message: error instanceof Error ? error.message : 'Invalid checkpoint label',
+                error: 'invalid_label'
+            })
+        }
     })().catch(next)
 })
 
@@ -162,13 +192,15 @@ router.post('/:id/restore', checkPermission('chatflows:update'), (req: Request, 
             return
         }
 
-        const user = (req as Request & { user?: { activeOrganizationId?: string; activeWorkspaceId?: string } }).user
+        const user = (req as Request & { user?: { id?: string; activeOrganizationId?: string; activeWorkspaceId?: string } }).user
         const updated = await chatflowsService.updateChatflow(
             chatflow,
             { ...chatflow, flowData: restored } as typeof chatflow,
             user?.activeOrganizationId ?? '',
             user?.activeWorkspaceId ?? '',
-            ''
+            '',
+            // So the restore commit is attributed to whoever performed it, not to `unknown`.
+            user?.id
         )
 
         res.json({

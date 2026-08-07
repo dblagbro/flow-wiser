@@ -124,7 +124,9 @@ const deleteChatflow = async (
     chatflowId: string,
     orgId: string,
     workspaceId: string,
-    userPermittedTypes: EnumChatflowType[]
+    userPermittedTypes: EnumChatflowType[],
+    /** Versioning §"Commit metadata" — see saveChatflow. */
+    actorUserId?: string
 ): Promise<any> => {
     try {
         const appServer = getRunningExpressApp()
@@ -166,7 +168,7 @@ const deleteChatflow = async (
         // Versioning — record the deletion as a commit, so the flow's history ENDS explicitly
         // rather than merely stopping. The versions themselves survive: git keeps every prior
         // commit, so a deleted flow remains fully recoverable from its history.
-        await captureFlowDeletion(chatflowId, chatflow?.name, undefined)
+        await captureFlowDeletion(chatflowId, chatflow?.name, actorUserId)
 
         return dbResponse
     } catch (error) {
@@ -356,7 +358,10 @@ const saveChatflow = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    /** Versioning §"Commit metadata" — the acting user, so the commit is attributable. Optional so
+     *  non-request callers (imports, seeds) still work; they produce an `unknown` author. */
+    actorUserId?: string
 ): Promise<any> => {
     validateChatflowType(newChatFlow.type)
     const appServer = getRunningExpressApp()
@@ -458,7 +463,7 @@ const saveChatflow = async (
     // Versioning §1 — automatic capture. Deliberately AFTER the row is committed and after
     // telemetry, and deliberately not awaited for correctness: it is best-effort and never blocks
     // or fails a save. See versioning/capture.ts.
-    await captureFlowVersion(dbResponse, undefined, { action: 'create' })
+    await captureFlowVersion(dbResponse, actorUserId, { action: 'create' })
 
     return dbResponse
 }
@@ -468,7 +473,9 @@ const updateChatflow = async (
     updateChatFlow: ChatFlow,
     orgId: string,
     workspaceId: string,
-    subscriptionId: string
+    subscriptionId: string,
+    /** Versioning §"Commit metadata" — see saveChatflow. */
+    actorUserId?: string
 ): Promise<any> => {
     const appServer = getRunningExpressApp()
     if (updateChatFlow.flowData && containsBase64File(updateChatFlow)) {
@@ -563,7 +570,7 @@ const updateChatflow = async (
     }
 
     // Versioning §1 — automatic capture. Best-effort; never blocks or fails the update.
-    await captureFlowVersion(dbResponse, undefined, { action: 'update' })
+    await captureFlowVersion(dbResponse, actorUserId, { action: 'update' })
 
     return dbResponse
 }
