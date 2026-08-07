@@ -111,11 +111,20 @@ const ensurePostgresUuidExtension = async (dataSource: DataSource): Promise<void
  * failure would produce exactly the half-initialized server that `initDatabase`'s catch block used
  * to allow.
  */
-const runIdentityBootstrap = async (): Promise<void> => {
+const runIdentityBootstrap = async (dataSource: DataSource): Promise<void> => {
     const { BootstrapService } = await import('./identity/services/BootstrapService')
+    // The DataSource is passed in, not resolved.
+    //
+    // BootstrapService and AuditService both default to `getRunningExpressApp().AppDataSource`,
+    // which is correct for a service handling a request but wrong here: getRunningExpressApp()
+    // requires nodesPool and telemetry to be assigned, and neither exists yet during
+    // initDatabase(). Calling it here threw `getRunningExpressApp failed!` and, now that startup
+    // failures are fatal, took the whole server down before it ever listened. Both services accept
+    // an explicit dataSource for exactly this reason.
+    //
     // `allowNoIdentity`: seed roles and tenancy even with no account configured, rather than
     // refusing to start. See BootstrapService for why throwing there is the wrong trade.
-    const result = await new BootstrapService().run({ allowNoIdentity: true })
+    const result = await new BootstrapService({ dataSource }).run({ allowNoIdentity: true })
 
     const created = result.rolesCreated.length
     logger.info(
@@ -164,7 +173,7 @@ export class App {
             await this.AppDataSource.runMigrations({ transaction: 'each' })
             logger.info('🔄 [server]: Database migrations completed successfully')
 
-            await runIdentityBootstrap()
+            await runIdentityBootstrap(this.AppDataSource)
 
             // Initialize Identity Manager
             this.identityManager = await IdentityManager.getInstance()
