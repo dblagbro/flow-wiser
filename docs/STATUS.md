@@ -1,9 +1,9 @@
 # Status — building in the open
 
-**Last updated: 2026-08-05**
+**Last updated: 2026-08-06**
 
 This project is developed in public, including the unfinished parts. Work-in-progress is
-pushed to the `apache2-only` branch as it is written, before it compiles or runs.
+pushed as it is written, before it compiles or runs.
 
 That is deliberate, for three reasons:
 
@@ -18,47 +18,38 @@ That is deliberate, for three reasons:
 
 ## What actually works right now
 
+**`3.1.4-fw4` is released and is the build to deploy.** It is Apache-2.0-only, it boots,
+and a fresh install works. Earlier entries on this page said the Apache-2.0 work "does not
+run. It is not deployable." That was true when written and is no longer true.
+
 | Thing | State |
 | --- | --- |
-| **`main` — patched Flowise** | ✅ **Production-ready.** Released as `v3.1.4-fw3`, published at `dblagbro/flow-wiser` |
+| **`3.1.4-fw4` — Apache-2.0-only** | ✅ **Released.** Built from source at `dblagbro/flow-wiser` |
+| The 127 commercially licensed files | ✅ Deleted, and the build fails if any trace returns |
+| Authentication, sessions, SSO login methods | ✅ Shipped |
+| MFA — TOTP + hashed recovery codes | ✅ Shipped. Upstream had none |
+| RBAC — 82 permissions, server-side, deny-by-default | ✅ Shipped |
+| Multi-tenancy — organisations, workspaces, tenant key | ✅ Shipped |
+| Audit trail, encryption at rest with key rotation | ✅ Shipped |
+| Recovery CLI — nine commands, `/dev/tty` passwords only | ✅ Shipped |
+| Migration from an existing Flowise 3.x database | ✅ Shipped, verified against a production copy |
+| Fresh install on SQLite / Postgres / MySQL / MariaDB | ✅ Fixed and verified |
 | Docker image version pinning | ✅ Fixed and shipped |
-| `connect-sqlite3` boot crash (upstream #6688) | ✅ Root-caused, fixed, reported upstream |
+| `connect-sqlite3` boot crash (upstream #6688) | ✅ Root-caused, fixed, reported upstream — and now unreachable, the file that threw is deleted |
 | `NODE_VERSION=24` unbuildable default | ✅ Fixed |
-| `vm2` 3.11.2 → 3.11.5 (6 critical sandbox escapes) | ✅ Fixed and shipped |
-| Flow-Wiser branding, SPA route fixes | ✅ Shipped |
+| `vm2` 3.11.2 → 3.11.5 (6 critical sandbox escapes) | ✅ Fixed in the source tree as of `fw4`; before that, only in the npm-install Dockerfile |
 | Upstream archive (347 PRs, 698 issues, 116 advisories) | ✅ Captured before the 2026-08-10 lock |
 
-**If you want a working, patched Flowise today, use `main`.** It is the only branch you
-should deploy.
+## What is not done
 
-## What is being built — and does not work yet
-
-The `apache2-only` branch is replacing the 127 commercially-licensed files with original
-Apache-2.0 work. **It does not run. It is not deployable. Do not use it in production.**
-
-| Component | State | Notes |
+| Thing | State | Notes |
 | --- | --- | --- |
-| Interface specification | ✅ Complete | 2,174 lines, 53 endpoints, 82 permissions, 12 entities, 349 citations — all from Apache-2.0 sources |
-| RBAC catalog + middleware | ✅ Written | 669 LOC. Typechecked and behaviourally tested in isolation |
-| Identity entities + migrations | ✅ Written | 10 entities, 8 migrations ×4 engines. SQLite DDL executed against an in-memory DB |
-| SSO / MFA / audit / encryption metadata | 🔄 In progress | Extending the data layer |
-| Auth core (hashing, sessions, login) | ⬜ Not started | The long pole |
-| 53 HTTP endpoints + services | ⬜ Not started | |
-| **Wiring** | ❌ **Not done** | Entities are **not** registered in the global map; **no** route file points at the new RBAC yet |
-| Deleting the 127 files | ⬜ Not started | The final step |
-
-**Concretely, today:** the new code exists and compiles in isolation, but nothing calls
-it. The server still runs entirely on the outgoing stack. That is what "does not work
-yet" means — not "slightly buggy", but "not connected".
-
-## Why the branch is honest about being broken
-
-Some of these commits will not build as a whole tree. That is expected while the old and
-new stacks coexist: the entities are deliberately `identity_`-prefixed and unregistered
-precisely so the running server is unaffected until cut-over.
-
-Pushing only green commits would mean pushing nothing for weeks, then a single enormous
-drop nobody can review. We would rather be reviewable than tidy.
+| Five identity-administration endpoints | ⬜ `501` with a reason | `/user`, `/role`, `/organization`, `/organizationuser`, `/audit`. No call site exists in the Apache-2.0 client, so building them would mean inventing behaviour |
+| Forgotten-password flow | ⬜ `501` | No transactional email path in this build, so no token can be issued. The forced-password-change flow through the same URL does work |
+| Chatflow version history | ⬜ Designed, not built | [REQUIREMENTS-VERSIONING.md](REQUIREMENTS-VERSIONING.md) |
+| ReAct Agent + AWS Bedrock nodes | ⚠️ Non-fatal load failures | Inherited upstream dependency drift. The server runs; those two nodes do not load |
+| `vm2` | ⚠️ Pinned, not replaced | A fresh escape in essentially every release line. `isolated-vm`, or disabling custom-code nodes on internet-facing deployments, is the real fix |
+| MySQL migrations | ⚠️ Verified by inspection | No MySQL image will unpack on the build host. Byte-identical to the MariaDB files modulo collation; MariaDB is executed |
 
 ---
 
@@ -106,20 +97,22 @@ Apache-2.0-only build is published.
 
 ## Where the project is going
 
-Three capabilities upstream never shipped, all Apache 2.0:
+Three capabilities upstream never shipped, all Apache 2.0. Two of them are now in
+`3.1.4-fw4`:
 
-- **RBAC with real enforcement.** 21 permissions currently have *no* server-side check —
-  the client renders buttons as `null` rather than disabling them, so those checks are
+- ✅ **RBAC with real enforcement.** Upstream's 21 permissions had *no* server-side check —
+  the client rendered buttons as `null` rather than disabling them, so those checks were
   cosmetic. Ours enforces server-side, deny-by-default, workspace-scoped, audited.
-- **SSO and MFA.** The SSO *client* already exists in the Apache-2.0 UI (Google, Azure,
+- ✅ **SSO and MFA.** The SSO *client* already existed in the Apache-2.0 UI (Google, Azure,
   GitHub, Auth0) — only the server was proprietary. MFA never existed at all; TOTP with
   hashed recovery codes is genuinely new.
-- **Flow and prompt versioning with full history.** Git-backed, non-destructive restore:
+- ⬜ **Flow and prompt versioning with full history.** Git-backed, non-destructive restore:
   recovering an old version writes a *new* commit, so the version you moved away from
-  stays recoverable forever. See [REQUIREMENTS-VERSIONING.md](REQUIREMENTS-VERSIONING.md).
+  stays recoverable forever. Designed, not built. See
+  [REQUIREMENTS-VERSIONING.md](REQUIREMENTS-VERSIONING.md).
 
 Plus encryption at rest with honest threat modelling, and one unified append-only audit
-trail — who did what, when.
+trail — who did what, when. Both shipped.
 
 ## Following along
 

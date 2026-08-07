@@ -15,11 +15,11 @@ import {
 } from '../recovery-base'
 
 /**
- * `flow-wiser admin:reset-password --email <e>` (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise admin:reset-password --email <e>` (REQUIREMENTS-MIGRATION.md §7).
  *
  * The command `BootstrapService` points at: bootstrap deliberately never re-hashes the environment
  * password for an account that already exists ("Recovery for a genuinely lost password is
- * `flow-wiser admin:reset-password` (§7), which prompts rather than reading argv or the
+ * `flowise admin:reset-password` (§7), which prompts rather than reading argv or the
  * environment"). This is the other end of that sentence.
  *
  * Three things happen, and all three are required:
@@ -67,7 +67,7 @@ export const resetAdminPassword = async (input: ResetPasswordInput): Promise<Res
             message: `Recovery CLI could not reset the password for ${email}: no such account`,
             detail: { email }
         })
-        throw new RecoveryError(`No account with the address ${email}. Run 'flow-wiser admin:list' to see the accounts that exist.`)
+        throw new RecoveryError(`No account with the address ${email}. Run 'flowise admin:list' to see the accounts that exist.`)
     }
 
     const previousHash = user.credential ?? null

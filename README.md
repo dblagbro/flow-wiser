@@ -1,5 +1,47 @@
 <!-- markdownlint-disable MD030 -->
 
+# Flowise, actually open source — `3.1.4-fw4`
+
+```bash
+docker pull dblagbro/flow-wiser:3.1.4-fw4     # or :latest
+```
+
+Upstream Flowise was **open core**. 127 files — `packages/server/src/enterprise/` and
+`IdentityManager.ts` — carried a FlowiseAI Commercial License forbidding copying,
+publishing and distribution, and they were the ones holding authentication. So no Flowise
+fork could be redistributed, and no fork could delete them without shipping an
+unauthenticated server.
+
+**`3.1.4-fw4` is the first Flowise container anyone may freely redistribute.** Those files
+are gone, and authentication, RBAC, SSO, MFA, audit, encryption at rest and multi-tenancy
+have been reimplemented from scratch under Apache 2.0 — without ever reading them. The
+build now *fails* if any commercially licensed artifact appears anywhere on the image.
+
+It is also the first build on which a **fresh install actually works**. Getting a real
+server up and signing into it turned up six independent defects that unit tests had never
+reached — including an instance that bricked itself the moment the first administrator
+logged in, and a Postgres database that could never be created at all.
+
+| | |
+| --- | --- |
+| Redistributable | ✅ 100% Apache 2.0, no carve-outs |
+| Authentication | ✅ Local password, sessions, SSO, TOTP MFA with recovery codes |
+| Authorization | ✅ 82 permissions, deny-by-default, **enforced server-side** |
+| Multi-tenancy | ✅ Organisations and workspaces, tenant key on the row |
+| Recovery | ✅ Nine-command CLI, passwords read from `/dev/tty` only |
+| Fresh install | ✅ SQLite, Postgres, MySQL, MariaDB |
+
+📄 **[Release notes](docs/RELEASE-NOTES-3.1.4-fw4.md)** · **[CHANGELOG](CHANGELOG.md)** ·
+**[FORK.md](FORK.md)** — read before redistributing
+
+> ⚠️ **`3.1.4-fw1` through `3.1.4-fw3` are superseded and are *not* redistributable.** They
+> were built before the removal, from a Dockerfile that installs FlowiseAI's published npm
+> package, and so they contain the commercially licensed compiled output. The commercial
+> terms govern those images wherever you obtained them. If you are running one, move to
+> `fw4`.
+
+---
+
 # 🚨 If you run Flowise in Docker, read this first
 
 **Every official `flowiseai/flowise` image ships the `flowise@3.1.2` server — whatever tag you pulled.**
@@ -101,28 +143,43 @@ So the "3.1.3 works, 3.1.4 is broken" split everyone observed is an artifact of 
 ## Get a working, fully patched Flowise
 
 ```bash
-docker pull dblagbro/flow-wiser:3.1.4-fw3     # or :latest
+docker pull dblagbro/flow-wiser:3.1.4-fw4     # or :latest
+curl -s http://localhost:3000/api/v1/version  # {"version":"3.1.4-fw4"}
 ```
 
 ```
-flowise=3.1.4   flowise-components=3.1.4   connect-sqlite3=0.9.16   vm2=3.11.5
+flowise=3.1.4-fw4   flowise-components=3.1.4-fw4   flowise-ui=3.1.4-fw4   vm2=3.11.5
 ```
 
-Or build it yourself, and watch the assertions fire:
+Or build it yourself, from source, and watch the gates fire:
 
 ```bash
 git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
 docker build --no-cache --pull \
   --build-arg NODE_VERSION=20 \
-  --build-arg FLOWISE_VERSION=3.1.4 \
-  --build-arg CONNECT_SQLITE3_VERSION=0.9.16 \
-  --build-arg VM2_VERSION=3.11.5 \
-  -f docker/Dockerfile -t flow-wiser/flowise:3.1.4-fw3 docker/
+  --build-arg FLOWISE_VERSION=3.1.4-fw4 \
+  -t dblagbro/flow-wiser:3.1.4-fw4 .
 ```
 
-This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins *RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys*.
+That is the **root** `Dockerfile` — note the `.` context and the absence of `-f`. It
+compiles this repository, from which the 127 commercially licensed files are deleted, and
+it refuses to finish if any `dist/enterprise/` path or `IdentityManager` artifact turns up
+anywhere on the resulting filesystem.
 
-⚠️ **Licensing — applies to the `3.1.4-fw3` image only.** Like every Flowise container published to date, that image contains compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain the image. **The repository itself no longer contains those files** — they have been removed and reimplemented under Apache 2.0. An Apache-2.0-only image is the next build to be published. See [FORK.md](FORK.md).
+`docker/Dockerfile` is a different thing and does **not** build a release. It runs
+`npm install -g flowise@<version>`, which fetches FlowiseAI's published package — and that
+package still ships the commercially licensed compiled output. That is exactly how `fw1`
+through `fw3` came to contain it. It is kept because it reproduces and documents the three
+upstream container defects above, not because you should publish from it. It also cannot
+build `fw4`: that version exists only in this repository, never on npm.
+
+This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins *RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys*. As of `fw4` that pin lives in the source tree rather than only in the npm-install Dockerfile, so a source build gets it too; before `fw4` it did not.
+
+The `connect-sqlite3` boot crash cannot occur in `fw4` at all: it threw inside
+`dist/enterprise/middleware/passport/SessionPersistance.js`, one of the deleted files, and
+nothing in the tree imports `connect-sqlite3` any more.
+
+⚠️ **Licensing — `3.1.4-fw1` through `3.1.4-fw3` only.** Like every Flowise container published before 2026-08-06, those images contain compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain them. Flow-Wiser could not and did not relicense them. **`3.1.4-fw4` is clean**: the repository no longer contains those files, the release image is built from source, and the build fails if any trace of them reaches it. See [FORK.md](FORK.md).
 
 ---
 

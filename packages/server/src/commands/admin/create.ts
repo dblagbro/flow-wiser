@@ -25,7 +25,7 @@ import {
 } from '../recovery-base'
 
 /**
- * `flow-wiser admin:create --email <e> --role <r>` (REQUIREMENTS-MIGRATION.md §7).
+ * `flowise admin:create --email <e> --role <r>` (REQUIREMENTS-MIGRATION.md §7).
  *
  * The command that exists so an instance can never become un-administrable. Everything else in the
  * recovery CLI repairs an account; this one conjures a working login out of nothing but filesystem
@@ -115,7 +115,7 @@ export const createAdminAccount = async (input: CreateAdminInput): Promise<Creat
         const existing = await manager.findOne(User, { where: { email } })
         if (existing) {
             throw new RecoveryError(
-                `An account already exists for ${email}. Use 'flow-wiser admin:reset-password --email ${email}' to regain access to it; ` +
+                `An account already exists for ${email}. Use 'flowise admin:reset-password --email ${email}' to regain access to it; ` +
                     'admin:create never overwrites an existing credential.'
             )
         }
@@ -219,7 +219,7 @@ const resolveTenant = async (
     let organization: Organization | null
     if (requestedOrganizationId) {
         organization = await manager.findOne(Organization, { where: { id: requestedOrganizationId } })
-        if (!organization) throw new RecoveryError(`No organization with id ${requestedOrganizationId}. Run 'flow-wiser admin:list'.`)
+        if (!organization) throw new RecoveryError(`No organization with id ${requestedOrganizationId}. Run 'flowise admin:list'.`)
     } else {
         // "The default organization" is the OLDEST one — the same definition BootstrapService uses,
         // so the two cannot disagree about which tenant they are operating on.

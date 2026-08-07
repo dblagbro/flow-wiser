@@ -1,6 +1,6 @@
 {
     "name": "flowise",
-    "version": "3.1.4",
+    "version": "3.1.4-fw4",
     "private": true,
     "homepage": "https://flowiseai.com",
     "workspaces": [
@@ -101,7 +101,8 @@
             "@modelcontextprotocol/sdk": ">=1.25.2",
             "multer": "2.2.0",
             "basic-ftp": "5.2.1",
-            "convict": "6.2.5"
+            "convict": "6.2.5",
+            "vm2": "3.11.5"
         }
     },
     "engines": {

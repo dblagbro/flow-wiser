@@ -163,18 +163,7 @@ index 4795ec4b31e..ed25b752254 100644
          if (flags.DATABASE_PASSWORD) process.env.DATABASE_PASSWORD = flags.DATABASE_PASSWORD
          if (flags.DATABASE_SSL) process.env.DATABASE_SSL = flags.DATABASE_SSL
 diff --git a/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts b/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-index bd21dbae730..67e5ef36b51 100644
---- a/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-+++ b/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-@@ -68,6 +68,7 @@ export const initializeDBClientAndStore: any = () => {
-                 user: process.env.DATABASE_USER,
-                 password: process.env.DATABASE_PASSWORD,
-                 database: process.env.DATABASE_NAME,
-+                schema: process.env.DATABASE_SCHEMA,
-                 ssl: getDatabaseSSLFromEnv()
-             })
-             return new pgSession({
-
+[hunk removed by upstream-archive/strip-protected-hunks.py -- this file was under the FlowiseAI Commercial License and its content cannot be redistributed. The pull request still changed it; only the diff body is gone.]
 From eb9ee423177057bfd86111ecaf34c039a397d11a Mon Sep 17 00:00:00 2001
 From: Abdulaziz Alwaalan <AAlwaalan@masdr.sa>
 Date: Sat, 25 Oct 2025 02:55:19 +0300
@@ -637,19 +626,7 @@ index b5d42a40118..06996ee44e2 100644
                      idleTimeoutMillis: 120000,
                      // set the search_path for the migrations and queries to the desired schema
 diff --git a/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts b/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-index 67e5ef36b51..e9ea6d012d6 100644
---- a/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-+++ b/packages/server/src/enterprise/middleware/passport/SessionPersistance.ts
-@@ -74,7 +74,7 @@ export const initializeDBClientAndStore: any = () => {
-             return new pgSession({
-                 pool: pgPool, // Connection pool
-                 tableName: 'login_sessions',
--                schemaName: 'public',
-+                schemaName: process.env.DATABASE_SCHEMA || 'public',
-                 createTableIfMissing: true
-             })
-         }
-
+[hunk removed by upstream-archive/strip-protected-hunks.py -- this file was under the FlowiseAI Commercial License and its content cannot be redistributed. The pull request still changed it; only the diff body is gone.]
 From 7c0116e23b00a428d16fef9f2aeb3dd6c044c09b Mon Sep 17 00:00:00 2001
 From: Abdulaziz Alwaalan <AAlwaalan@masdr.sa>
 Date: Wed, 29 Oct 2025 15:50:43 +0300

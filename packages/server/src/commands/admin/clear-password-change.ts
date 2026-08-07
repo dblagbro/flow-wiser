@@ -11,7 +11,7 @@ import {
 } from '../recovery-base'
 
 /**
- * `flow-wiser admin:clear-password-change --email <e>` — "let this account back in without changing
+ * `flowise admin:clear-password-change --email <e>` — "let this account back in without changing
  * its password" (REQUIREMENTS-MIGRATION.md §6, §7).
  *
  * ── The failure this exists for ──────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ export const clearForcedPasswordChange = async (input: ClearPasswordChangeInput)
             message: `Recovery CLI could not clear the forced change for ${email}: no such account`,
             detail: { email }
         })
-        throw new RecoveryError(`No account with the address ${email}. Run 'flow-wiser admin:list' to see the accounts that exist.`)
+        throw new RecoveryError(`No account with the address ${email}. Run 'flowise admin:list' to see the accounts that exist.`)
     }
 
     const wasSet = user.mustChangePassword === true
@@ -147,7 +147,7 @@ export default class AdminClearPasswordChange extends RecoveryCommand {
             this.log(
                 `NOTE: ${result.email} has no local password${result.isSSO ? ' and is marked as an SSO account' : ''}, so it cannot sign in ` +
                     'with one. Clearing the flag was still the right move — this account had no way out over HTTP — but if it needs a ' +
-                    `password, run: flow-wiser admin:reset-password --email ${result.email}`
+                    `password, run: flowise admin:reset-password --email ${result.email}`
             )
         }
     }

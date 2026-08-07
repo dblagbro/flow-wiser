@@ -82,7 +82,7 @@ export class OrganizationService {
         for (const membership of memberships) {
             const organization = await manager.findOne(Organization, { where: { id: membership.organizationId } })
             // A membership pointing at a deleted organization is skipped rather than surfaced as a
-            // half-populated pair: `flow-wiser doctor` (MIGRATION §7) is where orphans get
+            // half-populated pair: `flowise doctor` (MIGRATION §7) is where orphans get
             // reported, not a read path that a login depends on.
             if (organization) pairs.push({ organization, membership })
         }

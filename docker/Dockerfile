@@ -1,3 +1,28 @@
+# ---------------------------------------------------------------------------
+# NOT the Dockerfile that builds a Flow-Wiser release. Use the one at the
+# repository root.
+#
+# This file installs FlowiseAI's published npm package. That package contains
+# the compiled `dist/enterprise/` output and `dist/IdentityManager.js`, which are
+# under the FlowiseAI Commercial License and cannot be redistributed. Every image
+# built from this file therefore carries commercially licensed material,
+# regardless of what has been deleted from this repository -- which is exactly
+# how 3.1.4-fw1 through 3.1.4-fw3 came to.
+#
+# It is retained because it documents and reproduces three real upstream
+# container defects (below), and because it is the only way to build an image of
+# an upstream release for comparison. It also cannot build 3.1.4-fw4 or anything
+# later: those versions exist only in this repository, never on npm, so
+# FLOWISE_VERSION has no value here that would produce a Flow-Wiser release.
+#
+# The Apache-2.0-only image is built from source:
+#
+#   docker build --no-cache --pull \
+#     --build-arg NODE_VERSION=20 \
+#     --build-arg FLOWISE_VERSION=3.1.4-fw4 \
+#     -t dblagbro/flow-wiser:3.1.4-fw4 .
+# ---------------------------------------------------------------------------
+
 # Node.js version (overridable via build-arg from CI)
 #
 # Upstream defaulted this to 24, but that default does not build: better-sqlite3

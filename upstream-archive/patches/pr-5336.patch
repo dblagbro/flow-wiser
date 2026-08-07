@@ -152,40 +152,7 @@ index b000c9ea3fb..a1ed241f5f7 100644
          if (typeof req.params === 'undefined' || !req.params.id) {
              throw new InternalFlowiseError(
 diff --git a/packages/server/src/enterprise/sso/AzureSSO.ts b/packages/server/src/enterprise/sso/AzureSSO.ts
-index 35c6d744f5e..442be92d11b 100644
---- a/packages/server/src/enterprise/sso/AzureSSO.ts
-+++ b/packages/server/src/enterprise/sso/AzureSSO.ts
-@@ -116,6 +116,11 @@ class AzureSSO extends SSOBase {
-     static async testSetup(ssoConfig: any) {
-         const { tenantID, clientID, clientSecret } = ssoConfig
- 
-+        // Validate tenantID before proceeding!
-+        if (!AzureSSO.isValidTenantID(tenantID)) {
-+            return { error: 'Invalid tenantID format.' }
-+        }
-+
-         try {
-             const tokenResponse = await axios.post(
-                 `https://login.microsoftonline.com/${tenantID}/oauth2/v2.0/token`,
-@@ -136,6 +141,18 @@ class AzureSSO extends SSOBase {
-         }
-     }
- 
-+    /**
-+     * Validate a Microsoft tenant ID (should be a UUID or domain ending with .onmicrosoft.com)
-+     */
-+    static isValidTenantID(tenantID: string): boolean {
-+        if (typeof tenantID !== 'string') return false;
-+        // UUID v4 regex (Azure tenant ID is often a GUID), case insensitive
-+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-+        // .onmicrosoft.com domain, loose check
-+        const domainRegex = /^[a-zA-Z0-9-]+\.onmicrosoft\.com$/;
-+        return uuidRegex.test(tenantID) || domainRegex.test(tenantID);
-+    }
-+
-     async refreshToken(ssoRefreshToken: string) {
-         const { tenantID, clientID, clientSecret } = this.ssoConfig
- 
+[hunk removed by upstream-archive/strip-protected-hunks.py -- this file was under the FlowiseAI Commercial License and its content cannot be redistributed. The pull request still changed it; only the diff body is gone.]
 diff --git a/packages/server/src/services/evaluations/index.ts b/packages/server/src/services/evaluations/index.ts
 index 9195ac26f7c..4acc4631708 100644
 --- a/packages/server/src/services/evaluations/index.ts

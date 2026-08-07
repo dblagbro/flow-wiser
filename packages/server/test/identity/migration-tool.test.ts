@@ -386,7 +386,7 @@ describe('migration tool — §5 hashes that cannot be verified', () => {
             // Disabled at the membership, which is where status lives (§F-1).
             const membership = oneOf(fixture.db, `SELECT * FROM "identity_organization_user" WHERE "userId" = ?`, [row.id])
             expect(membership.status).toBe('inactive')
-            expect(result.warnings.join('\n')).toContain('flow-wiser admin:reset-password --email member@example.org')
+            expect(result.warnings.join('\n')).toContain('flowise admin:reset-password --email member@example.org')
 
             const disabledEvents = rowsOf(fixture.db, `SELECT * FROM "identity_audit_event" WHERE "action" = ?`, [
                 'identity.migration.user.disabled'

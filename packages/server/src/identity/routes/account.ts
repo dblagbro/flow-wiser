@@ -146,8 +146,8 @@ export const createAccountRouter = (options: AccountRouterOptions = {}): Router 
                     detail:
                         'Resetting a forgotten password requires a transactional email path that is not configured in this build. ' +
                         'A signed-in user can change their own password by supplying the current one; an operator can clear a ' +
-                        'forced password change with `flow-wiser admin:clear-password-change`, or set a new password with ' +
-                        '`flow-wiser admin:reset-password`.'
+                        'forced password change with `flowise admin:clear-password-change`, or set a new password with ' +
+                        '`flowise admin:reset-password`.'
                 })
                 return
             }

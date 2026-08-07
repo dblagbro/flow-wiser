@@ -7,9 +7,21 @@ defined below.**
 Upstream Flowise was open core: 127 files were governed by a separate FlowiseAI
 Inc Commercial License rather than Apache 2.0. Those files —
 `packages/server/src/enterprise/` and `packages/server/src/IdentityManager.ts` —
-have been **deleted** from this fork and are not present in this repository or in
-any artifact built from it. Nothing was relicensed; no fork can relicense code it
-does not own.
+have been **deleted** from this fork and are not present in the working tree of
+any published branch, or in any artifact built from it. Nothing was relicensed;
+no fork can relicense code it does not own.
+
+Two qualifications, stated because the unqualified sentence above was not true
+until 2026-08-06. Fragments of those files survived in `upstream-archive/`, in
+the diff hunks of fifteen archived upstream pull requests, and were shipped in
+the `3.1.4-fw1` through `3.1.4-fw3` images; those hunks have been removed, and
+`upstream-archive/` is excluded from images. And this fork preserves the complete
+upstream history and all 307 release tags, so those files exist at historical
+commits and at the `pre-enterprise-deletion` tag under the terms that applied to
+them when FlowiseAI published them — which no fork can remove without destroying
+the history it exists to preserve. **The Apache-2.0-only unit is the current tree
+and the images built from it.** See `FORK.md` and
+`upstream-archive/MANIFEST.md`.
 
 What they did — authentication, RBAC, SSO and multi-tenancy — was reimplemented
 independently under Apache 2.0 in `packages/server/src/identity/`, derived only

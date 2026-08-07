@@ -4,7 +4,7 @@ import { MfaFactor, MfaFactorStatus, MfaRecoveryCode, User } from '../../databas
 import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, normaliseEmail, recordRecoveryEvent } from '../recovery-base'
 
 /**
- * `flow-wiser mfa:disable --email <e>` — "lost authenticator device"
+ * `flowise mfa:disable --email <e>` — "lost authenticator device"
  * (REQUIREMENTS-MIGRATION.md §7).
  *
  * The second factor is the one credential a helpdesk cannot re-issue over the phone. When the phone
@@ -65,7 +65,7 @@ export const disableMfaForAccount = async (input: MfaDisableInput): Promise<MfaD
             message: `Recovery CLI could not disable MFA for ${email}: no such account`,
             detail: { email }
         })
-        throw new RecoveryError(`No account with the address ${email}. Run 'flow-wiser admin:list' to see the accounts that exist.`)
+        throw new RecoveryError(`No account with the address ${email}. Run 'flowise admin:list' to see the accounts that exist.`)
     }
 
     // Loaded BEFORE the delete, so the trail can carry what is about to stop existing. `secret` is
