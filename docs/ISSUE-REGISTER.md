@@ -1,0 +1,115 @@
+# Issue and risk register
+
+**Date:** 2026-08-07 · **Assessed at:** `apache2-only`
+
+Severity is assigned on **demonstrated** impact, not on how alarming the defect sounds. Where a
+defect is latent rather than active, that is stated — overstating severity is as damaging to
+prioritisation as understating it.
+
+Legend — **S1** blocks release · **S2** must fix before wider use · **S3** should fix ·
+**S4** track only.
+
+---
+
+## S1 — Blocks release
+
+### I-01 · Published images `fw1`–`fw3` contain commercially licensed code
+**Status:** open, **legal not technical** · **Evidence:** `COPY . .` with no `.dockerignore` shipped
+71 MB of `upstream-archive/`, including 11,357 lines of licensed source, into every image built
+before 2026-08-07. `dblagbro/flow-wiser:latest` still points at `fw3`.
+**Impact:** the FlowiseAI Commercial License forbids distribution. These are public on Docker Hub now.
+**Action:** delete or deprecate the tags. **Requires operator decision — irreversible and outward-facing.**
+**Verification:** `docker manifest inspect` returns not-found for the removed tags.
+
+### I-02 · `doctor` exits 1 on any instance where content exists
+**Status:** open, **reproduced 2026-08-07** · **Evidence:** fresh instance, one chatflow created via
+the API → `chat_flow.organizationId` NULL while its workspace carries
+`6e9ea080-…`; `doctor` reports `[FAIL] Tenancy — denormalised tenant keys`, exit 1. Empty instance
+exits 0.
+**Root cause:** `controllers/chatflows/index.ts:175` sets `newChatFlow.workspaceId`; nothing anywhere
+sets `organizationId`. Migration `1780000000012` added the column to ten tables; no write path
+populates it.
+**Severity note — NOT a live tenant breach.** No production query reads `organizationId` on a content
+table. Verified: every content query scopes by `workspaceId` via `getWorkspaceSearchOptions`, and the
+three organisation-scoped paths resolve organisation → workspaces first
+(`services/chatflows/index.ts:224`, `assistants:219`, `apikey:100` joins `workspace.organizationId`).
+`workspaceId` **is** correctly written. So the column is currently dead weight and §3a's intended
+safety net does not exist — but nothing is being served to the wrong tenant today.
+`doctor`'s own message ("served to the wrong tenant by any query that filters on organization alone")
+describes a hypothetical query that does not exist; it should be reworded.
+**Impact:** `doctor` is unusable as a health gate, which is its entire purpose.
+**Action:** write `organizationId` on create/update across the ten §3a tables; backfill existing rows;
+reword the doctor finding.
+**Acceptance:** create content on a fresh instance → `doctor` exits 0; a row with a mismatched key is
+still detected (negative control).
+
+### I-03 · Versioning has zero automated tests
+**Evidence:** `find` over `packages/server/**/*.test.ts` matching `versioning` → 0.
+**Impact:** the feature contained a path-traversal arbitrary-file-write (fixed 2026-08-06) that no
+test would catch if reintroduced. Capture, diff, restore and tag are all unprotected.
+**Acceptance:** tests for slug sanitisation (including traversal payloads), the no-op-change check,
+word-segment diffs, and a restore round-trip asserting byte identity.
+
+---
+
+## S2 — Must fix before wider use
+
+### I-04 · `recovery-cli.test.ts` (30 tests) has never executed
+**Evidence:** 32 suites collected, 4 fail to **load**; summary still reports `844 passed`.
+**Root cause:** two independent blockers — `typeorm` mock lacked `ViewColumn` (**fixed 2026-08-07**),
+and the suite needs **real** TypeORM against a real SQLite file while `jest.config.js` globally mocks
+TypeORM for the 29 unit suites.
+**Action:** jest `projects` split — unit (mocked) vs integration (real). A `flowise-components`
+mapping alone was tried and **reverted**: it makes the suite load and then all 30 fail.
+**Acceptance:** `pnpm test` runs 32/32 suites; CI fails on a suite-load failure, not only on assertions.
+
+### I-05 · Node CI cannot validate the shipping artifact
+**Evidence:** `main.yml` pins Node `24.15.0`; the image must be Node 20 because Node 24 cannot compile
+`better-sqlite3`. Node CI has produced **one** result in project history: failure, on `main` at
+`a582a7d3` — an ancestor of current HEAD. It does not trigger on `apache2-only` at all.
+**Action:** trigger on `branches: ['**']`; matrix Node 20 (ships) and 24 (upstream parity), allowing
+24 to fail; fix or characterise the existing failure.
+**Acceptance:** green run on `apache2-only` at Node 20.
+
+### I-06 · The favicon fix lives only in the bind-mounted build
+**Evidence:** `ui-build/index.html` + `manifest.json` edited on the host; `packages/ui` source still
+emits the relative `href="favicon.ico"` that caused the site-wide leak.
+**Impact:** the next UI rebuild silently reintroduces it on voipguru.org.
+**Acceptance:** built-from-source `index.html` contains `/assets/favicon.ico`.
+
+---
+
+## S3 — Should fix
+
+| id | Issue | Evidence / note |
+|---|---|---|
+| I-07 | `POST /account/reset-password` has no rate limit | `/auth/login` has per-IP and per-account limiters. Narrower surface (needs a valid session *and* the current password) but still a guessing oracle. |
+| I-08 | `VersionStore.history()` is O(all commits) per request | One shared repo for every flow; an old flow's history slows as unrelated flows commit. |
+| I-09 | `expect` absent from the image | `admin:create` requires a TTY; the recovery path the boot log prints cannot run unattended. |
+| I-10 | `resetPassword.jsx` reads `error.response.data` unguarded | A network failure throws a TypeError over the real error. |
+| I-11 | `Docker Image CI - Docker Hub` would publish the wrong artifact | Builds `docker/Dockerfile` (npm path → commercial output), pushes to `flowiseai/flowise`, defaults to Node 24. Warning comment added; workflow not rewritten. |
+| I-12 | Checkpoint labels are slugified, not rejected | `../../../PWNED` → 200 as `usr-src-flowise-pwned-by-tag`. Safe, but silently renames. **Open decision.** |
+| I-13 | `doctor` tenancy message describes a query that does not exist | See I-02 severity note. Misleads an operator into believing data is being cross-served. |
+
+## S4 — Track only
+
+| id | Issue |
+|---|---|
+| I-14 | MySQL untestable on this host (`dev/ptmx` unpack error); MariaDB is the executed proxy |
+| I-15 | Mixed `workspaceId` types on Postgres — `custom_mcp_server` is `text`, `schedule_*` `varchar`, new columns `uuid`; a join to `identity_workspace.id` is a hard error |
+| I-16 | `migrate.ts` stamps `organizationId` on more tables than §3a lists — the two disagree |
+| I-17 | `1755066758601` relies on SQLite's double-quoted-identifier misfeature; would stamp the literal string `workspaceId` on a non-empty table |
+| I-18 | 5 identity-administration endpoints return 501 by design (no Apache-2.0 call site) |
+| I-19 | `MEMORY.md` carried a "≤140 lines / ≤17KB" rule linking to a nonexistent file; no evidence the operator set it. Remove. |
+
+---
+
+## Risks not yet defects
+
+- **Single-operator bus factor.** Every verification to date is manual and undocumented as a
+  runbook. `docs/PUBLISH-3.1.4-fw4.md` is the only exception.
+- **No evaluation harness.** Nothing detects a regression in prompt-diff quality, migration
+  fidelity, or boot health except a human running commands.
+- **Git history necessarily contains the licensed files.** All 307 upstream tags are preserved, so
+  the 127 files exist at historical commits. Stated in `LICENSE.md`/`FORK.md`; cannot be changed
+  without destroying the fork's provenance.
