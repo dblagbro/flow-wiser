@@ -45,7 +45,12 @@ jobs:
                   set -euo pipefail
                   fail=0
 
-                  live=$(find packages/server/src/enterprise -type f 2>/dev/null | wc -l)
+                  # `|| true` is load-bearing: with `set -o pipefail`, find exiting non-zero on a
+                  # MISSING directory fails the whole assignment, and `set -e` then aborts the step
+                  # before any check runs. So the guard failed precisely when the tree was clean.
+                  # Caught by running it in CI; a local run in a plain shell passed, because the
+                  # failure only exists under `bash -e` with pipefail.
+                  live=$( { find packages/server/src/enterprise -type f 2>/dev/null || true; } | wc -l )
                   if [ "$live" -ne 0 ]; then
                     echo "::error::packages/server/src/enterprise/ exists ($live files)"; fail=1
                   fi
@@ -68,13 +73,13 @@ jobs:
                       echo "::error::$f carries $n lines of commercially licensed source"
                       leaked=$((leaked + n))
                     fi
-                  done < <(find . -path ./node_modules -prune -o -name '*.patch' -print -o -name '*.diff' -print 2>/dev/null)
+                  done < <( { find . -path ./node_modules -prune -o \( -name '*.patch' -o -name '*.diff' \) -print 2>/dev/null || true; } )
 
                   if [ "$leaked" -gt 0 ]; then
                     echo "::error::$leaked line(s) of commercially licensed source in patch files"; fail=1
                   fi
 
-                  [ "$fail" -eq 0 ] && echo "Tree is clean: no commercially licensed source present."
+                  if [ "$fail" -eq 0 ]; then echo "Tree is clean: no commercially licensed source present."; fi
                   exit $fail
 
             # ── 2. Protected paths may be DELETED but never modified ──────────────────────────

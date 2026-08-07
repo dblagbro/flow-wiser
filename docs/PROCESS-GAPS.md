@@ -35,7 +35,31 @@ committing a violation to confirm the guard rejects it; checking `core.hooksPath
 at `7e7c5a9e` and fails at `c2086b45` with 9,715 licensed lines detected.
 
 **Prevention.** A control is not in place until it has been **observed failing on a known-bad
-input**. Add that as an acceptance criterion for every future guard.
+input AND passing on a known-good one, in the environment that actually runs it**. Both halves are
+required — see G1b.
+
+---
+
+## G1b — The rewritten guard failed on its first real run, because the tree was clean
+
+**Evidence.** The new guard was regression-tested locally: it passed at `7e7c5a9e` and failed at
+`c2086b45` with 9,715 licensed lines. Pushed, it ran on `apache2-only` for the first time in
+project history — and **failed**, emitting no `::error::` at all.
+
+**Root cause.** CI runs steps under `bash -e`, and the script sets `-o pipefail`.
+`find packages/server/src/enterprise ... | wc -l` returns non-zero when the directory is **absent**,
+which fails the command substitution, which aborts the step before any check executes. The guard
+therefore failed *precisely because the commercially licensed directory no longer exists*.
+
+My local regression test passed because I ran the logic in a plain interactive shell, without
+`-e` and without `pipefail`. **The logic was right; the environment was not reproduced.**
+
+**Impact.** Had this not been checked, the "fixed" guard would have been red on every push — the
+condition under which teams disable a guard rather than read it.
+
+**Prevention.** Test CI shell fragments under `bash -e` with `pipefail`, not in an interactive
+shell. Note the specific trap: with `pipefail`, `find` on a missing path fails the pipeline, so
+every "check that something is absent" is a `set -e` hazard.
 
 ---
 
