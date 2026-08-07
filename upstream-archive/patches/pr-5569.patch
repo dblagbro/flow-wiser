@@ -538,7 +538,8 @@ index 00000000000..cc7edc68ce2
 +<svg width="800px" height="800px" viewBox="0 -30.5 256 256" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" preserveAspectRatio="xMidYMid">
 +    <g>
 +        <path d="M118.249172,51.2326115 L118.249172,194.005605 L0,194.005605 L118.249172,51.2326115 Z M118.249172,2.84217094e-14 C118.249172,32.6440764 91.7686624,59.124586 59.124586,59.124586 C26.4805096,59.124586 0,32.6440764 0,2.84217094e-14 L118.249172,2.84217094e-14 Z M137.750828,194.005605 C137.750828,161.328917 164.198726,134.881019 196.875414,134.881019 C229.552102,134.881019 256,161.361529 256,194.005605 L137.750828,194.005605 Z M137.750828,142.740382 L137.750828,0 L256,0 L137.750828,142.740382 Z" fill="#03363D">
-+</path>
++
+</path>
 +    </g>
 +</svg>
 \ No newline at end of file
@@ -2131,7 +2132,8 @@ index cc7edc68ce2..00000000000
 -<svg width="800px" height="800px" viewBox="0 -30.5 256 256" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" preserveAspectRatio="xMidYMid">
 -    <g>
 -        <path d="M118.249172,51.2326115 L118.249172,194.005605 L0,194.005605 L118.249172,51.2326115 Z M118.249172,2.84217094e-14 C118.249172,32.6440764 91.7686624,59.124586 59.124586,59.124586 C26.4805096,59.124586 0,32.6440764 0,2.84217094e-14 L118.249172,2.84217094e-14 Z M137.750828,194.005605 C137.750828,161.328917 164.198726,134.881019 196.875414,134.881019 C229.552102,134.881019 256,161.361529 256,194.005605 L137.750828,194.005605 Z M137.750828,142.740382 L137.750828,0 L256,0 L137.750828,142.740382 Z" fill="#03363D">
--</path>
+-
+</path>
 -    </g>
 -</svg>
 \ No newline at end of file
@@ -3038,44 +3040,7 @@ index 05e76591f4b..00000000000
 -    getPathForUploads
 -}
 diff --git a/packages/server/src/enterprise/middleware/passport/index.ts b/packages/server/src/enterprise/middleware/passport/index.ts
-index dc76580301d..c8d0896cbe2 100644
---- a/packages/server/src/enterprise/middleware/passport/index.ts
-+++ b/packages/server/src/enterprise/middleware/passport/index.ts
-@@ -429,6 +429,34 @@ export const verifyToken = (req: Request, res: Response, next: NextFunction) =>
-     })(req, res, next)
- }
- 
-+export const verifyTokenForBullMQDashboard = (req: Request, res: Response, next: NextFunction) => {
-+    passport.authenticate('jwt', { session: true }, (err: any, user: LoggedInUser, info: object) => {
-+        if (err) {
-+            return next(err)
-+        }
-+
-+        // @ts-ignore
-+        if (info && info.name === 'TokenExpiredError') {
-+            if (req.cookies && req.cookies.refreshToken) {
-+                return res.redirect('/signin?retry=true')
-+            }
-+            return res.redirect('/signin')
-+        }
-+
-+        if (!user) {
-+            return res.redirect('/signin')
-+        }
-+
-+        const identityManager = getRunningExpressApp().identityManager
-+        if (identityManager.isEnterprise() && !identityManager.isLicenseValid()) {
-+            return res.redirect('/license-expired')
-+        }
-+
-+        req.user = user
-+        next()
-+    })(req, res, next)
-+}
-+
- const storeSSOUserPayload = (ssoToken: string, returnUser: any) => {
-     const app = getRunningExpressApp()
-     app.cachePool.addSSOTokenCache(ssoToken, returnUser)
+[hunk removed by upstream-archive/strip-protected-hunks.py -- this file was under the FlowiseAI Commercial License and its content cannot be redistributed. The pull request still changed it; only the diff body is gone.]
 diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
 index 258be4cbd53..f4aefc9182f 100644
 --- a/packages/server/src/index.ts

@@ -8,3 +8,30 @@ build
 
 packages/server/.env
 packages/ui/.env
+
+# Never ship any .env into an image. The three above were the only ones listed;
+# a fourth anywhere in the tree would have been copied in silently.
+.env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Local databases and secrets must never enter the build context either.
+*.sqlite
+*.sqlite3
+*.db
+**/*.pem
+**/*.key
+
+# Maintainer material, not runtime material.
+#
+# upstream-archive/ is 71 MB of upstream pull requests, issues, advisories and
+# discussions captured before the 2026-08-10 archival. It has no business in a
+# runtime image on size alone -- and 15 of the 347 archived patches carry diff
+# hunks against packages/server/src/enterprise/ and IdentityManager.ts, because
+# that is what those community PRs changed. Copying it in put fragments of
+# commercially licensed source into the image.
+upstream-archive
+.git
+.github
+.githooks

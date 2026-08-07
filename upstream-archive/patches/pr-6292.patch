@@ -1096,21 +1096,7 @@ index 22f42659e8e..fd90df13c08 100644
 +    GrantExternalOAuthManage1768100001000
  ]
 diff --git a/packages/server/src/enterprise/rbac/Permissions.ts b/packages/server/src/enterprise/rbac/Permissions.ts
-index 1fb9e6fccbf..093dbe3738f 100644
---- a/packages/server/src/enterprise/rbac/Permissions.ts
-+++ b/packages/server/src/enterprise/rbac/Permissions.ts
-@@ -126,6 +126,11 @@ export class Permissions {
-         workspaceCategory.addPermission(new Permission('workspace:import', 'Import Data within Workspace', false, true, true))
-         this.categories.push(workspaceCategory)
- 
-+        // Separate from `admin` so API key permission picker includes it (admin category is omitted for API_KEY type).
-+        const externalOAuthCategory = new PermissionCategory('externalOAuth')
-+        externalOAuthCategory.addPermission(new Permission('externalOAuth:manage', 'Manage External OAuth integrations', true, true, true))
-+        this.categories.push(externalOAuthCategory)
-+
-         const adminCategory = new PermissionCategory('admin')
-         adminCategory.addPermission(new Permission('users:manage', 'Manage Users', false, true, true))
-         adminCategory.addPermission(new Permission('roles:manage', 'Manage Roles', false, true, true))
+[hunk removed by upstream-archive/strip-protected-hunks.py -- this file was under the FlowiseAI Commercial License and its content cannot be redistributed. The pull request still changed it; only the diff body is gone.]
 diff --git a/packages/server/src/index.ts b/packages/server/src/index.ts
 index 897f67af4e1..98d0c550686 100644
 --- a/packages/server/src/index.ts

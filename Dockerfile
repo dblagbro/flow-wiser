@@ -80,12 +80,18 @@ RUN pnpm install && \
 # compiled enterprise output. If any dependency ever drags a copy in, this build
 # stops here rather than publishing an image the repository's Apache-2.0 claim
 # does not cover.
-RUN FOUND="$(find / -xdev \( -path '*/dist/enterprise/*' -o -name 'IdentityManager.js' -o -name 'IdentityManager.ts' -o -name 'IdentityManager.d.ts' \) -print 2>/dev/null)" \
+#
+# `upstream-archive` is named explicitly because it is the way this went wrong
+# once already: 15 of the 347 archived community pull requests carry diff hunks
+# against packages/server/src/enterprise/ and IdentityManager.ts -- that is what
+# those PRs changed -- and `COPY . .` put them in the image. It is excluded in
+# .dockerignore; this asserts the exclusion held.
+RUN FOUND="$(find / -xdev \( -path '*/enterprise/*' -o -name 'IdentityManager.*' -o -name 'upstream-archive' \) -print 2>/dev/null)" \
     && if [ -n "${FOUND}" ]; then \
          echo "FATAL: commercially licensed artifacts present in the image:" >&2; \
          echo "${FOUND}" >&2; exit 1; \
        fi \
-    && echo "CLEAN: no enterprise/ output and no IdentityManager artifact anywhere in the image"
+    && echo "CLEAN: no enterprise/ path, no IdentityManager artifact, no upstream-archive anywhere in the image"
 
 # Give the node user ownership of the application files
 RUN chown -R node:node .
