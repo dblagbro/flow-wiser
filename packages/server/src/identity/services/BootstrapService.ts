@@ -404,9 +404,46 @@ export class BootstrapService {
      * and it means a deployment that later grows a second organization does not have its bootstrap
      * wander to whichever row the engine happened to return first.
      */
+    /**
+     * Read the id of the oldest row in a LEGACY (pre-fork, commercially licensed) identity table.
+     *
+     * Returns null when the table is absent — a fresh install has no legacy tables at all — so the
+     * caller falls through to creating its own. Never throws: a malformed legacy table must not
+     * stop an instance booting.
+     */
+    private async legacyId(manager: EntityManager, table: 'organization' | 'workspace'): Promise<string | null> {
+        try {
+            const rows: { id?: string }[] = await manager.query(`SELECT id FROM "${table}" ORDER BY "createdDate" ASC LIMIT 1`)
+            return rows?.[0]?.id ?? null
+        } catch {
+            return null
+        }
+    }
+
+    /**
+     * ── Why this adopts the legacy organization id ───────────────────────────────────────────
+     *
+     * Upgrading a Flowise 3.x database leaves the old `organization` / `workspace` tables in place
+     * alongside the new `identity_*` ones. If the bootstrap mints fresh ids here, every existing
+     * row of content — which carries the OLD `workspaceId` — falls outside the new workspace and
+     * becomes invisible: 25 chatflows and 3 credentials still in the database, and an empty screen.
+     *
+     * Found by booting this build against a copy of a real production database. On a fresh install
+     * the query finds nothing and the behaviour is unchanged.
+     *
+     * Adopting the id is preferred over re-stamping the content: it touches no user data, so an
+     * upgrade that has to be rolled back leaves the flows exactly as they were.
+     */
     private async ensureOrganization(manager: EntityManager): Promise<Organization> {
         const existing = await manager.find(Organization, { order: { createdDate: 'ASC' }, take: 1 })
         if (existing.length > 0) return existing[0]
+
+        const adoptedId = await this.legacyId(manager, 'organization')
+        if (adoptedId) {
+            const adopted = await manager.save(manager.create(Organization, { id: adoptedId, name: DEFAULT_ORGANIZATION_NAME }))
+            logger.info(`👥 [bootstrap]: adopted the existing organization ${adoptedId} so migrated content stays in scope`)
+            return adopted
+        }
 
         const organization = await manager.save(manager.create(Organization, { name: DEFAULT_ORGANIZATION_NAME }))
         await this.audit.record({
@@ -437,6 +474,24 @@ export class BootstrapService {
             if (!byName.isOrgDefault) await manager.update(Workspace, { id: byName.id }, { isOrgDefault: true })
             byName.isOrgDefault = true
             return byName
+        }
+
+        // Same reasoning as ensureOrganization: adopt the legacy workspace id so content that
+        // already carries it stays in scope after an upgrade. Without this an upgraded instance
+        // shows an empty workspace while every flow sits in the database, unreachable.
+        const adoptedWorkspaceId = await this.legacyId(manager, 'workspace')
+        if (adoptedWorkspaceId) {
+            const adopted = await manager.save(
+                manager.create(Workspace, {
+                    id: adoptedWorkspaceId,
+                    name: DEFAULT_WORKSPACE_NAME,
+                    description: 'Adopted from the pre-fork workspace at upgrade',
+                    organizationId,
+                    isOrgDefault: true
+                })
+            )
+            logger.info(`👥 [bootstrap]: adopted the existing workspace ${adoptedWorkspaceId} so migrated content stays in scope`)
+            return adopted
         }
 
         const workspace = await manager.save(
