@@ -111,11 +111,13 @@ const ensurePostgresUuidExtension = async (dataSource: DataSource): Promise<void
  * failure would produce exactly the half-initialized server that `initDatabase`'s catch block used
  * to allow.
  */
-const runIdentityBootstrap = async (): Promise<void> => {
+const runIdentityBootstrap = async (dataSource: DataSource): Promise<void> => {
     const { BootstrapService } = await import('./identity/services/BootstrapService')
-    // `allowNoIdentity`: seed roles and tenancy even with no account configured, rather than
-    // refusing to start. See BootstrapService for why throwing there is the wrong trade.
-    const result = await new BootstrapService().run({ allowNoIdentity: true })
+    // The DataSource is passed EXPLICITLY. BootstrapService resolves it lazily through
+    // `getRunningExpressApp()` when it is not supplied — which is right for the services that run
+    // while serving requests, but this runs during `initDatabase`, long before the App instance is
+    // registered. Omitting it fails with `getRunningExpressApp failed!`, which names nothing useful.
+    const result = await new BootstrapService({ dataSource }).run({ allowNoIdentity: true })
 
     const created = result.rolesCreated.length
     logger.info(
@@ -164,7 +166,7 @@ export class App {
             await this.AppDataSource.runMigrations({ transaction: 'each' })
             logger.info('🔄 [server]: Database migrations completed successfully')
 
-            await runIdentityBootstrap()
+            await runIdentityBootstrap(this.AppDataSource)
 
             // Initialize Identity Manager
             this.identityManager = await IdentityManager.getInstance()
