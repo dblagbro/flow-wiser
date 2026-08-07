@@ -18,6 +18,7 @@ import { getErrorMessage } from '../../errors/utils'
 import { ScheduleBeat } from '../../schedule/ScheduleBeat'
 import documentStoreService from '../../services/documentstore'
 import scheduleService from '../../services/schedule'
+import { captureFlowDeletion, captureFlowVersion } from '../../versioning/capture'
 import {
     constructGraphs,
     decryptCredentialData,
@@ -161,6 +162,12 @@ const deleteChatflow = async (
         } catch (e) {
             logger.error(`[server]: Error deleting file storage for chatflow ${chatflowId}`)
         }
+
+        // Versioning — record the deletion as a commit, so the flow's history ENDS explicitly
+        // rather than merely stopping. The versions themselves survive: git keeps every prior
+        // commit, so a deleted flow remains fully recoverable from its history.
+        await captureFlowDeletion(chatflowId, chatflow?.name, undefined)
+
         return dbResponse
     } catch (error) {
         throw new InternalFlowiseError(
@@ -448,6 +455,11 @@ const saveChatflow = async (
         { status: FLOWISE_COUNTER_STATUS.SUCCESS }
     )
 
+    // Versioning §1 — automatic capture. Deliberately AFTER the row is committed and after
+    // telemetry, and deliberately not awaited for correctness: it is best-effort and never blocks
+    // or fails a save. See versioning/capture.ts.
+    await captureFlowVersion(dbResponse, undefined, { action: 'create' })
+
     return dbResponse
 }
 
@@ -549,6 +561,9 @@ const updateChatflow = async (
             }
         }
     }
+
+    // Versioning §1 — automatic capture. Best-effort; never blocks or fails the update.
+    await captureFlowVersion(dbResponse, undefined, { action: 'update' })
 
     return dbResponse
 }

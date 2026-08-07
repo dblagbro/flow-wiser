@@ -5,6 +5,7 @@ import assistantsRouter from './assistants'
 import attachmentsRouter from './attachments'
 import chatMessageRouter from './chat-messages'
 import chatflowsRouter from './chatflows'
+import flowVersionsRouter from './flow-versions'
 import chatflowsStreamingRouter from './chatflows-streaming'
 import chatflowsUploadsRouter from './chatflows-uploads'
 import componentsCredentialsRouter from './components-credentials'
@@ -77,6 +78,9 @@ router.use('/apikey', apikeyRouter)
 router.use('/assistants', assistantsRouter)
 router.use('/attachments', attachmentsRouter)
 router.use('/chatflows', chatflowsRouter)
+// Versioning — flow & prompt history (REQUIREMENTS-VERSIONING.md). Permissions are the
+// chatflow's own: history is the flow, not a separate object with separate authority.
+router.use('/flow-versions', flowVersionsRouter)
 router.use('/chatflows-streaming', chatflowsStreamingRouter)
 router.use('/chatmessage', chatMessageRouter)
 router.use('/chatflows-uploads', chatflowsUploadsRouter)
