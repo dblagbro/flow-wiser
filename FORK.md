@@ -65,10 +65,29 @@ That made **no** Flowise fork freely redistributable, this one included.
 
 ### What changed
 
-**Those 127 files have been deleted from this fork.** They are not in this repository, in any
-branch published from it, or in any artifact built from it. The functionality they provided —
+**Those 127 files have been deleted from this fork.** They are not in the working tree of any
+published branch, and not in any artifact built from it. The functionality they provided —
 authentication, SSO, RBAC, multi-tenancy — was reimplemented from scratch under Apache 2.0 in
 `packages/server/src/identity/`.
+
+Two qualifications, because the unqualified version of that sentence was not true and this
+document used to carry it:
+
+- **Fragments were in `upstream-archive/`, and shipped in `3.1.4-fw1` through `fw3`.** The
+  archive preserves the 347 open upstream pull requests as `git am`-able patches; fifteen of
+  them change those files, and a diff hunk carries the surrounding lines of the file it
+  patches. 196 hunks — 14,224 lines — were removed on 2026-08-06 by
+  [`upstream-archive/strip-protected-hunks.py`](upstream-archive/strip-protected-hunks.py),
+  which is committed so the operation is reproducible. Paths and diffstat entries were kept;
+  only content was removed. See
+  [`upstream-archive/MANIFEST.md`](upstream-archive/MANIFEST.md).
+- **Git history is a different question, and always will be.** This fork deliberately
+  preserves the complete upstream history and all 307 release tags, so those files exist at
+  historical commits and at the `pre-enterprise-deletion` tag, under the terms that applied to
+  them when FlowiseAI published them. That is not something a fork can remove without
+  destroying the history it exists to preserve. **The unit that is Apache-2.0-only, and the
+  unit you may redistribute, is the current tree and the images built from it** — not an
+  arbitrary checkout of an old commit.
 
 **Nothing was relicensed.** The copyright in those files is FlowiseAI's; no fork can relicense code
 it does not own, and declaring this repository Apache 2.0 while they remained would have been both

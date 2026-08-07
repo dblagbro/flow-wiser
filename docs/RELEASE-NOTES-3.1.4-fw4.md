@@ -93,6 +93,30 @@ CLI's errors and `doctor` findings said `flow-wiser admin:…`; the executable i
 Those messages print at precisely the moment the operator is locked out and has nothing
 else to go on, and they were uncopyable as written. All 44 of them now say `flowise`.
 
+## One more thing we found by checking instead of assuming
+
+Before publishing, the built image was scanned for commercial material rather than trusted
+on the strength of having deleted the files. It was not clean.
+
+`upstream-archive/` preserves the 347 open upstream pull requests as `git am`-able patches,
+captured before the 2026-08-10 archival. **Fifteen of them change files under
+`packages/server/src/enterprise/` or `IdentityManager.ts`** — that is what those pull
+requests were for — and a diff hunk carries the surrounding lines of the file it patches.
+196 hunks, 14,224 lines, in the tree and in every image built from it, including `fw1`
+through `fw3`.
+
+The hunk bodies are gone, removed by a committed, reproducible script that decides only on
+the file path in each `diff --git` header and never inspects hunk content. Paths and
+diffstat entries were kept, so the archive still records what each pull request touched.
+`upstream-archive/` is now excluded from images entirely, and the build fails if it appears
+in one.
+
+One qualification cannot be fixed and is stated rather than glossed: this fork preserves the
+complete upstream history and all 307 release tags, so those files exist at historical
+commits and at the `pre-enterprise-deletion` tag, under the terms that applied when
+FlowiseAI published them. No fork can remove that without destroying the history it exists
+to preserve. **The Apache-2.0-only unit is the current tree and the images built from it.**
+
 ## Security
 
 - **`vm2` is pinned to 3.11.5 in the source tree**, not only in the npm-install Dockerfile.

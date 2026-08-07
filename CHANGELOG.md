@@ -251,6 +251,46 @@ Corrected to `flowise` in all 44 places rather than adding a second bin alias: `
 is `flowise` and oclif renders its own usage and help lines from it, so an alias would
 leave the hand-written half and the generated half disagreeing.
 
+### Fixed — the repository was not actually 100% Apache 2.0, and the images carried the difference
+
+`FORK.md` and `LICENSE.md` both said the 127 commercially licensed files were "not in this
+repository … or in any artifact built from it." Both were wrong.
+
+`upstream-archive/patches/` preserves the 347 open upstream pull requests as `git am`-able
+mailboxes. **Fifteen of them change files under `packages/server/src/enterprise/` or
+`packages/server/src/IdentityManager.ts`** — that is what those pull requests were for — and
+a diff hunk carries the surrounding context lines of the file it patches. 196 hunks, 14,224
+lines of commercially licensed source, in the tree. `COPY . .` then put all 71 MB of the
+archive into every image built from the root `Dockerfile`.
+
+Found by scanning the built image for commercial material rather than assuming that deleting
+the files had been enough. It had not been; nothing had ever looked anywhere but at the
+files themselves.
+
+- `upstream-archive/strip-protected-hunks.py` removes the hunk bodies and is committed, so
+  the operation is reproducible and auditable rather than something that happened once to a
+  directory. It decides **only** on the path in a `diff --git a/… b/…` header — no hunk
+  content is inspected or matched on, because `docs/CLEANROOM-PROTOCOL.md` requires not
+  *reading* those files, not merely not copying them. Headers and diffstat entries are kept,
+  with a marker where each hunk was, so the archive still records what each pull request
+  touched. Every hunk against an Apache-2.0 path is untouched and still applies.
+- `.dockerignore` now excludes `upstream-archive`, `.git`, `.github` and `.githooks`, plus
+  `.env` anywhere in the tree, database files and key material. The three `.env` paths listed
+  before were enumerated by hand, so a fourth would have been copied in silently.
+- The `Dockerfile` gate now fails on any `enterprise/` path segment rather than only compiled
+  `dist/enterprise/`, and on `upstream-archive` itself.
+
+Two consequences, recorded in `upstream-archive/MANIFEST.md`: those fifteen patches are no
+longer faithful captures of their pull requests, and `pr-6706` — the `connect-sqlite3` fix by
+**PiedPiper911** — changed only a protected file and so now applies nothing. It could never
+have been applied to this fork regardless, since the file it patches does not exist here.
+
+A third qualification is not fixable and is now stated instead: this fork preserves the
+complete upstream history and all 307 release tags, so those files exist at historical
+commits and at the `pre-enterprise-deletion` tag. A fork cannot remove that without
+destroying the history it exists to preserve. The Apache-2.0-only unit is the current tree
+and the images built from it.
+
 ### Security
 
 - **`vm2` pinned to 3.11.5 in the source tree**, not only in the npm-install Dockerfile.
