@@ -108,10 +108,17 @@ having read.
   statement of changes).
 - You do not need, and cannot use, a `FLOWISE_EE_LICENSE_KEY`. There are no licence-gated features;
   there is nothing to sell.
+- **`3.1.4-fw4` and later are redistributable.** They are built from the root `Dockerfile`,
+  which compiles this repository, and the build fails outright if any `dist/enterprise/`
+  path or `IdentityManager` artifact is present anywhere on the image.
 - **Container images published before 2026-08-06** (`3.1.4-fw1` through `3.1.4-fw3`) were built
-  from the pre-removal tree and **do** contain the commercially licensed compiled output. The
-  commercial terms govern those images. Use a build made after the removal if you intend to
-  redistribute.
+  from `docker/Dockerfile`, which installs FlowiseAI's published npm package — and that
+  package contains the commercially licensed compiled output. Those images **do** contain
+  it, and the commercial terms govern them wherever you obtained them. They are superseded;
+  move to `3.1.4-fw4`.
+- **`docker/Dockerfile` cannot produce a redistributable image**, whatever this repository
+  contains, because the material arrives from npm rather than from the tree. Publish only
+  from the root `Dockerfile`.
 
 **This fork does not modify, weaken, or reinterpret the upstream commercial license.** It removed
 the files it covered instead.
@@ -152,8 +159,9 @@ OpenSearch, OpenTofu, Valkey, and OpenBao.
       repository is **100% Apache 2.0** and freely redistributable in full
 - [x] Replace the removed identity stack: authentication, RBAC, SSO, MFA, audit, encryption at
       rest, multi-tenancy, migration from an existing Flowise database, and a recovery CLI
-- [ ] Publish an Apache-2.0-only container image
+- [x] Publish an Apache-2.0-only container image — `3.1.4-fw4`, 2026-08-06
 - [ ] Chatflow version history
+- [ ] Replace `vm2` outright rather than pinning it
 - [ ] Triage and carry forward outstanding upstream security patches
 
 ## Contributing
