@@ -80,6 +80,20 @@ export const RecoveryAuditAction = {
     ADMIN_LIST: 'identity.recovery.admin.list',
     ADMIN_UNLOCK: 'identity.recovery.admin.unlock',
     /**
+     * Credential ciphertext was rewritten under a different key or format. Its own action for the
+     * same reason the others are: an investigator must be able to tell "the stored bytes changed"
+     * from "the secret itself changed". This command never alters a secret's VALUE — it re-wraps
+     * it — so folding it into a reset or a change action would send someone hunting for a
+     * disclosure that did not happen.
+     */
+    CREDENTIAL_ROTATE_ENCRYPTION: 'identity.recovery.credential.rotate_encryption',
+    /**
+     * Someone took a copy of the security log. Recorded because an export is itself a
+     * security-relevant act — PCI-DSS 10.5 and SOC 2 CC7.2 both care who obtained the trail, and a
+     * log that cannot say who read it is a weaker control than one that can.
+     */
+    AUDIT_EXPORT: 'identity.recovery.audit.export',
+    /**
      * Its OWN action, not a reuse of `ADMIN_RESET_PASSWORD`.
      *
      * Reusing the reset action would make the trail say a credential was replaced when it was not —

@@ -73,3 +73,23 @@ describe('filterDangerousBuiltIns', () => {
         }
     })
 })
+
+/**
+ * N3 (retest 2026-08-07) — `require('node:fs')` is an alias for `require('fs')`, so an exact-string
+ * denylist misses the prefixed spelling.
+ */
+describe('filterDangerousBuiltIns — node: prefix (N3)', () => {
+    beforeEach(() => {
+        delete process.env.TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS
+        jest.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => jest.restoreAllMocks())
+
+    it.each(['node:fs', 'node:child_process', 'node:process', 'node:net'])('removes %s', (dep) => {
+        expect(filterDangerousBuiltIns(['crypto', dep])).toEqual(['crypto'])
+    })
+
+    it('keeps a node:-prefixed SAFE builtin', () => {
+        expect(filterDangerousBuiltIns(['node:path'])).toEqual(['node:path'])
+    })
+})

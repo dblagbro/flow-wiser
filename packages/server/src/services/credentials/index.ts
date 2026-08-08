@@ -140,9 +140,24 @@ const getCredentialById = async (credentialId: string, workspaceId: string): Pro
             credential.credentialName,
             appServer.nodesPool.componentCredentials
         )
+        // SECURITY (assessment finding N7, 2026-08-07): this used to return the DECRYPTED values.
+        //
+        // The route requires `credentials:create` or `credentials:update`, which four of the six
+        // system roles hold — including `org-admin` and `user`. Both are explicitly designed NOT to
+        // see credential VALUES: BootstrapService documents org-admin as "Credential RECORDS but
+        // never their values — the §3 credential-value split", and `credentials:reveal` exists as a
+        // separate admin-only grant for exactly that reason. It was enforced on no route at all, so
+        // the split was documented and never implemented.
+        //
+        // Values are redacted here. `GET /:id/reveal` is the one path that discloses them, and it
+        // now requires `credentials:reveal` and writes an audit record.
+        const redactedDataObj: Record<string, any> = { ...decryptedCredentialData }
+        for (const key of Object.keys(redactedDataObj)) {
+            redactedDataObj[key] = REDACTED_CREDENTIAL_VALUE
+        }
         const returnCredential: ICredentialReturnResponse = {
             ...credential,
-            plainDataObj: decryptedCredentialData
+            plainDataObj: redactedDataObj
         }
         const dbResponse: any = omit(returnCredential, ['encryptedData'])
         if (workspaceId) {
@@ -234,14 +249,13 @@ const revealCredentialById = async (credentialId: string, workspaceId: string): 
         const decryptedCredentialData = await decryptCredentialData(credential.encryptedData)
         const componentCredentials = appServer.nodesPool.componentCredentials
         const inputs = componentCredentials[credential.credentialName]?.inputs ?? []
-        const plainDataObj: Record<string, any> = { ...decryptedCredentialData }
-        for (const key in plainDataObj) {
-            const inputParam = inputs.find((inp: any) => inp.name === key)
-            if (inputParam?.type !== 'url') {
-                plainDataObj[key] = REDACTED_CREDENTIAL_VALUE
-            }
-        }
-        return { plainDataObj }
+        // N7: this function REDACTED everything except url-typed inputs, despite being the
+        // endpoint named "reveal" — while the plain GET returned full plaintext. The two were
+        // inverted. `reveal` now does what it says, gated on `credentials:reveal` at the route and
+        // recorded in the audit trail, because disclosing a secret to a human is exactly the event
+        // §10 requires to be auditable.
+        void inputs
+        return { plainDataObj: decryptedCredentialData }
     } catch (error) {
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,

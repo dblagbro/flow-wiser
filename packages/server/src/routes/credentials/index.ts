@@ -11,7 +11,10 @@ router.get('/', checkPermission('credentials:view'), credentialsController.getAl
 router.get(['/', '/:id'], checkAnyPermission('credentials:create,credentials:update'), credentialsController.getCredentialById)
 
 // REVEAL
-router.get('/:id/reveal', checkAnyPermission('credentials:create,credentials:update'), credentialsController.revealCredentialById)
+// N7: disclosing a credential VALUE requires `credentials:reveal` — the admin-only grant that
+// tenancy §2 defines and that was, until now, enforced nowhere. `org-admin`, `super-user` and
+// `user` deliberately do not hold it.
+router.get('/:id/reveal', checkPermission('credentials:reveal'), credentialsController.revealCredentialById)
 
 // UPDATE
 router.put(['/', '/:id'], checkAnyPermission('credentials:create,credentials:update'), credentialsController.updateCredential)

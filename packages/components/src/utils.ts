@@ -192,8 +192,14 @@ export const filterDangerousBuiltIns = (requested: string[]): string[] => {
         return requested
     }
 
+    // N3 (assessment retest 2026-08-07): strip a leading `node:` before matching. Node accepts
+    // `require('node:fs')` as an alias for `require('fs')`, so an exact-string denylist would miss
+    // the prefixed spelling. Not reachable today — an attacker only controls requires WITHIN the
+    // allowlist — but it would silently stop protecting the moment an operator allowlisted a
+    // `node:`-prefixed module.
+    const canonical = (dep: string): string => dep.trim().replace(/^node:/, '')
     const normalised = requested.map((dep) => dep.trim()).filter((dep) => dep.length > 0)
-    const removed = normalised.filter((dep) => deniedBuiltInDep.includes(dep))
+    const removed = normalised.filter((dep) => deniedBuiltInDep.includes(canonical(dep)))
     if (removed.length > 0) {
         console.warn(
             `⚠️  [security] Refusing to expose ${removed.join(', ')} to the code sandbox. ` +
@@ -202,7 +208,7 @@ export const filterDangerousBuiltIns = (requested: string[]): string[] => {
                 `TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS=${DANGEROUS_BUILTIN_OVERRIDE} if that is genuinely intended.`
         )
     }
-    return normalised.filter((dep) => !deniedBuiltInDep.includes(dep))
+    return normalised.filter((dep) => !deniedBuiltInDep.includes(canonical(dep)))
 }
 
 /**
@@ -1095,6 +1101,61 @@ export const getVars = async (
 }
 
 /**
+ * Runtime-variable prefix. A runtime variable named `FOO` reads `FLOWISE_VAR_FOO` from the
+ * environment — never `FOO` itself.
+ *
+ * ── SECURITY (assessment finding N6, 2026-08-07) ─────────────────────────────────────────────
+ *
+ * This previously did `process.env[item.name]` with the variable NAME supplied by the user and no
+ * allowlist, then injected the result into code nodes AND prompt templates as `$vars.<name>`.
+ * Creating a variable is gated on `variables:create` — a discrete, grantable, NON-admin permission
+ * that `org-admin` and `user` both hold.
+ *
+ * So any authoring user could name a variable `JWT_AUTH_TOKEN_SECRET`, reference it in a flow, and
+ * read the token-signing secret out of the response. From there: forge a token for any user in any
+ * tenant. That is a complete break of the RBAC and tenant isolation this fork exists to provide,
+ * reachable by the least-privileged role that can author a flow.
+ *
+ * Not exploitable in a single-user deployment, where the only principal already owns the host. It
+ * becomes critical the moment a second user or workspace exists — which is the stated end state.
+ *
+ * ── Why a prefix rather than a denylist ──────────────────────────────────────────────────────
+ *
+ * A denylist of "secret-looking" names has to anticipate every secret the process will ever hold,
+ * including ones added by future code and by the operator's own compose file. It is wrong by
+ * default. A prefix inverts that: the environment must opt IN to being readable, and anything not
+ * deliberately exported for this purpose is invisible. An operator who wants a variable exposed
+ * renames it once; an attacker cannot rename the process's secrets.
+ *
+ * `FLOWISE_VAR_ALLOW_UNPREFIXED=true` restores the old behaviour for a single-user instance that
+ * depends on it. It is logged loudly, because on a multi-user instance it re-opens a full RBAC
+ * bypass.
+ */
+const RUNTIME_VAR_PREFIX = 'FLOWISE_VAR_'
+
+export const resolveRuntimeVariable = (name: string): string => {
+    const prefixed = process.env[`${RUNTIME_VAR_PREFIX}${name}`]
+    if (prefixed !== undefined) return prefixed
+
+    if (process.env.FLOWISE_VAR_ALLOW_UNPREFIXED === 'true') {
+        const raw = process.env[name]
+        if (raw !== undefined) {
+            console.warn(
+                `⚠️  [security] Runtime variable "${name}" resolved directly from the environment because ` +
+                    'FLOWISE_VAR_ALLOW_UNPREFIXED=true. On a multi-user instance this lets anyone who can create a ' +
+                    'variable read any process secret, including the token-signing key. Rename the variable to ' +
+                    `${RUNTIME_VAR_PREFIX}${name} and remove this override.`
+            )
+            return raw
+        }
+    }
+
+    // Absent rather than an error: a missing runtime variable has always resolved to '', and a flow
+    // that references one should not start failing differently because of this change.
+    return ''
+}
+
+/**
  * Prepare sandbox variables
  * @param {IVariable[]} variables
  */
@@ -1106,7 +1167,7 @@ export const prepareSandboxVars = (variables: IVariable[]) => {
 
             // read from .env file
             if (item.type === 'runtime') {
-                value = process.env[item.name] ?? ''
+                value = resolveRuntimeVariable(item.name)
             }
 
             Object.defineProperty(vars, item.name, {

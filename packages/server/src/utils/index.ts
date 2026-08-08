@@ -5,6 +5,7 @@
 import path from 'path'
 import fs from 'fs'
 import logger from './logger'
+import { decryptEnvelope, encryptEnvelope, isEnvelope } from './credentialEnvelope'
 import { v4 as uuidv4 } from 'uuid'
 import {
     IChatFlow,
@@ -1595,8 +1596,41 @@ export const getEncryptionKey = async (): Promise<string> => {
  * @returns {Promise<string>}
  */
 export const encryptCredentialData = async (plainDataObj: ICredentialDataDecrypted): Promise<string> => {
-    const encryptKey = await getEncryptionKey()
-    return AES.encrypt(JSON.stringify(plainDataObj), encryptKey).toString()
+    const plaintext = JSON.stringify(plainDataObj)
+
+    // Authenticated, versioned encryption (AES-256-GCM + HKDF, per-record nonce/salt/key-version).
+    // See utils/credentialEnvelope.ts for what this replaces and why the legacy crypto-js format
+    // could not satisfy SOC 2 CC6.1, HIPAA §164.312(a)(2)(iv)/(e)(2)(ii) or PCI-DSS 3.5–3.6.
+    //
+    // TOGGLE: CREDENTIAL_ENVELOPE_ENCRYPTION
+    //   unset / 'true'  → authenticated envelope (default; what a compliance claim rests on)
+    //   'false'         → legacy crypto-js format, for tracing an upgrade or reproducing a bug
+    //                     against a pre-fw6 deployment. Reading BOTH formats always works, so
+    //                     flipping this back and forth never strands data.
+    if (process.env.CREDENTIAL_ENVELOPE_ENCRYPTION === 'false') {
+        logger.warn(
+            '⚠️  [security] CREDENTIAL_ENVELOPE_ENCRYPTION=false — writing credentials in the legacy ' +
+                'unauthenticated crypto-js format. Ciphertext is malleable and carries no key version. ' +
+                'Intended for tracing only; do not leave this set.'
+        )
+        const encryptKey = await getEncryptionKey()
+        return AES.encrypt(plaintext, encryptKey).toString()
+    }
+
+    try {
+        return encryptEnvelope(plaintext)
+    } catch (error) {
+        // The keyring is unavailable (no IDENTITY_ENCRYPTION_KEY). Falling back keeps an instance
+        // that has not configured it working rather than making credentials unsavable — but it is
+        // loud, because the deployment is then NOT meeting the encryption claim.
+        logger.warn(
+            `⚠️  [security] Authenticated credential encryption unavailable (${getErrorMessage(error)}); ` +
+                'falling back to the legacy format. Set IDENTITY_ENCRYPTION_KEY to enable AES-256-GCM ' +
+                'with key versioning.'
+        )
+        const encryptKey = await getEncryptionKey()
+        return AES.encrypt(plaintext, encryptKey).toString()
+    }
 }
 
 /**
@@ -1612,6 +1646,22 @@ export const decryptCredentialData = async (
     componentCredentials?: IComponentCredentials
 ): Promise<ICredentialDataDecrypted> => {
     let decryptedDataStr: string
+
+    // Authenticated envelope (fw6+). Detected from the payload itself, so a database holding BOTH
+    // formats — which every upgraded deployment does until rotation completes — decrypts correctly
+    // either way. A tampered envelope throws here rather than yielding garbage, which is the whole
+    // reason for moving to AEAD.
+    if (isEnvelope(encryptedData)) {
+        try {
+            return JSON.parse(decryptEnvelope(encryptedData)) as ICredentialDataDecrypted
+        } catch (error) {
+            throw new InternalFlowiseError(
+                StatusCodes.INTERNAL_SERVER_ERROR,
+                'Credentials could not be decrypted. The record was encrypted with a key this instance does not have, ' +
+                    'or it has been modified since it was written.'
+            )
+        }
+    }
 
     if (USE_AWS_SECRETS_MANAGER && secretsManagerClient) {
         try {
