@@ -57,6 +57,11 @@ export const exportAuditTrail = async (input: {
     file: string
     from?: Date
     to?: Date
+    /** Inclusive seqNo bounds. The ONLY way to reproduce a digest — see the note on `toSeq`. */
+    fromSeq?: number
+    toSeq?: number
+    /** Suppress the export's own audit event, so a verification re-run does not alter the trail. */
+    quiet?: boolean
 }): Promise<ExportResult> => {
     const repo = input.dataSource.getRepository(AuditEvent)
     const hash = createHash('sha256')
@@ -65,7 +70,8 @@ export const exportAuditTrail = async (input: {
     let count = 0
     let first: number | null = null
     let last: number | null = null
-    let afterSeq = -1
+    // `fromSeq - 1` because the walk is strictly greater-than.
+    let afterSeq = typeof input.fromSeq === 'number' ? input.fromSeq - 1 : -1
 
     // Keyset pagination on seqNo rather than OFFSET: the trail is append-only, so a monotonic key
     // gives a stable window even while new events are being written during a long export.
@@ -77,6 +83,7 @@ export const exportAuditTrail = async (input: {
             .limit(PAGE)
         if (input.from) qb.andWhere('e.createdDate >= :from', { from: input.from })
         if (input.to) qb.andWhere('e.createdDate <= :to', { to: input.to })
+        if (typeof input.toSeq === 'number') qb.andWhere('e.seqNo <= :toSeq', { toSeq: input.toSeq })
 
         const page = await qb.getMany()
         if (page.length === 0) break
@@ -110,14 +117,21 @@ export const exportAuditTrail = async (input: {
         lastSeqNo: last,
         from: input.from ? input.from.toISOString() : null,
         to: input.to ? input.to.toISOString() : null,
+        // The bounds that make this reproducible. Verify with:
+        //   flowise audit:export --file <new> --from-seq <firstSeqNo> --to-seq <lastSeqNo> --verify
+        requestedFromSeq: input.fromSeq ?? null,
+        requestedToSeq: input.toSeq ?? null,
         algorithm: 'sha256',
         digest,
         // Stated in the artifact itself so nobody over-reads it later.
         digestCovers: 'the concatenation of each exported JSONL line, in seqNo order, each followed by a newline',
         integrityClaim:
-            'Re-exporting the same seqNo range must reproduce this digest. A mismatch means rows in that range were ' +
-            'modified or removed. This detects drift; it does not prevent an actor with database write access from ' +
-            'rewriting history and re-exporting.'
+            'Re-export the SAME seqNo range with --verify to reproduce this digest: ' +
+            `audit:export --file <new> --from-seq ${first ?? 0} --to-seq ${last ?? 0} --verify. ` +
+            'A mismatch means rows in that range were modified or removed. --verify is required because a normal ' +
+            'export records its own audit event, which would extend an unbounded range and change the digest. ' +
+            'This detects drift; it does not prevent an actor with database write access from rewriting history ' +
+            'and re-exporting.'
     }
     const manifestFile = `${input.file}.manifest.json`
     await new Promise<void>((resolve, reject) => {
@@ -127,14 +141,21 @@ export const exportAuditTrail = async (input: {
     })
 
     // The export is itself an auditable event: someone took a copy of the security log.
-    await recordRecoveryEvent(input.audit, input.actor, {
-        action: RecoveryAuditAction.AUDIT_EXPORT,
-        outcome: AuditOutcome.SUCCESS,
-        targetType: 'audit',
-        targetId: 'trail',
-        message: `Exported ${count} audit event(s) to ${input.file}`,
-        detail: { events: count, firstSeqNo: first, lastSeqNo: last, digest }
-    }).catch(() => undefined)
+    //
+    // BUT recording it CHANGES the trail — which is why an unbounded re-export can never reproduce
+    // an earlier digest: run two sees run one's own event. That made the integrity claim untestable
+    // in practice, which is worse than not making it. `--verify` passes `quiet` so a verification
+    // pass is a pure read.
+    if (!input.quiet) {
+        await recordRecoveryEvent(input.audit, input.actor, {
+            action: RecoveryAuditAction.AUDIT_EXPORT,
+            outcome: AuditOutcome.SUCCESS,
+            targetType: 'audit',
+            targetId: 'trail',
+            message: `Exported ${count} audit event(s) to ${input.file}`,
+            detail: { events: count, firstSeqNo: first, lastSeqNo: last, digest }
+        }).catch(() => undefined)
+    }
 
     return { file: input.file, manifestFile, events: count, firstSeqNo: first, lastSeqNo: last, digest, from: manifest.from, to: manifest.to }
 }
@@ -153,7 +174,13 @@ export default class AuditExport extends RecoveryCommand {
         ...RecoveryCommand.flags,
         file: Flags.string({ description: 'Destination path for the JSONL export', required: true }),
         from: Flags.string({ description: 'Only events at or after this date (ISO-8601)' }),
-        to: Flags.string({ description: 'Only events at or before this date (ISO-8601)' })
+        to: Flags.string({ description: 'Only events at or before this date (ISO-8601)' }),
+        'from-seq': Flags.integer({ description: 'Only events with seqNo at or above this. Use with --to-seq to reproduce a digest.' }),
+        'to-seq': Flags.integer({ description: 'Only events with seqNo at or below this.' }),
+        verify: Flags.boolean({
+            description: 'Verification run: do NOT record an audit event for this export, so the trail is unchanged.',
+            default: false
+        })
     }
 
     protected async runRecovery(): Promise<void> {
@@ -172,7 +199,10 @@ export default class AuditExport extends RecoveryCommand {
             actor: this.actor,
             file: flags.file,
             from: parseDate(flags.from, 'from'),
-            to: parseDate(flags.to, 'to')
+            to: parseDate(flags.to, 'to'),
+            fromSeq: flags['from-seq'],
+            toSeq: flags['to-seq'],
+            quiet: flags.verify
         })
 
         if (result.events === 0) {
@@ -184,6 +214,9 @@ export default class AuditExport extends RecoveryCommand {
         this.log(`  events   ${result.file}`)
         this.log(`  manifest ${result.manifestFile}`)
         this.log(`  sha256   ${result.digest}`)
-        this.log('\nRe-exporting the same range must reproduce that digest. A mismatch means rows were altered.')
+        this.log(
+            `\nVerify with:  flowise audit:export --file <new> --from-seq ${result.firstSeqNo} --to-seq ${result.lastSeqNo} --verify` +
+                '\nThat must reproduce the digest above. A mismatch means rows in the range were altered.'
+        )
     }
 }

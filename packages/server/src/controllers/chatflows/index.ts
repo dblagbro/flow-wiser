@@ -3,6 +3,7 @@ import { StatusCodes } from 'http-status-codes'
 import { QueryRunner } from 'typeorm'
 import { ChatFlow, EnumChatflowType } from '../../database/entities/ChatFlow'
 import { WorkspaceUserErrorMessage, WorkspaceUserService } from '../../identity/services/WorkspaceUserService'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { ChatflowType } from '../../Interface'
 import { ScheduleBeat } from '../../schedule/ScheduleBeat'
@@ -177,6 +178,9 @@ const saveChatflow = async (req: Request, res: Response, next: NextFunction) => 
         // flow containing a code node is unauthenticated code execution by design.
         assertPublicFlowHasNoCodeNode(newChatFlow.isPublic, newChatFlow.flowData)
         newChatFlow.workspaceId = workspaceId
+        // MIGRATION §3a denormalised tenant key. Resolved from the workspace so the two can never
+        // disagree. Until this was written, `doctor` failed on every instance holding content.
+        ;(newChatFlow as { organizationId?: string | null }).organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await chatflowsService.saveChatflow(
             newChatFlow,
             orgId,

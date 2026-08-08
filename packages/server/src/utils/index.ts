@@ -1624,7 +1624,7 @@ export const encryptCredentialData = async (plainDataObj: ICredentialDataDecrypt
         // that has not configured it working rather than making credentials unsavable — but it is
         // loud, because the deployment is then NOT meeting the encryption claim.
         logger.warn(
-            `⚠️  [security] Authenticated credential encryption unavailable (${getErrorMessage(error)}); ` +
+            `⚠️  [security] Authenticated credential encryption unavailable (${error instanceof Error ? error.message : String(error)}); ` +
                 'falling back to the legacy format. Set IDENTITY_ENCRYPTION_KEY to enable AES-256-GCM ' +
                 'with key versioning.'
         )

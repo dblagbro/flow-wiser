@@ -103,3 +103,44 @@ export const getActiveWorkspaceIdForRequest = (req: Request): string => {
     }
     return workspaceId
 }
+
+/**
+ * The organization a workspace belongs to — the denormalised tenant key of REQUIREMENTS-MIGRATION
+ * §3a.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────────────────────────────
+ *
+ * Migration `1780000000012` added `organizationId` to ten content tables so that a tenant-scoped
+ * query needs no join and a forgotten join cannot cross tenants. Nothing ever wrote it. Every row
+ * created since carried NULL, so `flowise doctor` reported a tenancy FAILURE on any instance where
+ * content existed — which is every real instance — and exited 1. A health gate that always fails is
+ * not a health gate.
+ *
+ * The column being unwritten was never a live breach: no query reads it, and `workspaceId` (which
+ * IS written) is what enforces isolation today. But §3a's safety net does not exist until the value
+ * is actually there, and an operator cannot tell a genuine cross-tenant row from an unwritten one
+ * while every row is NULL.
+ *
+ * Resolved from the workspace rather than taken from the request: `req.user.activeOrganizationId`
+ * is client-influenced only through the session, but the workspace→organization mapping is the
+ * authoritative relationship, and reading it here means the two can never disagree.
+ *
+ * Returns null rather than throwing when the workspace cannot be resolved. A missing tenant key is
+ * the status quo and is detected by `doctor`; failing the write would turn a diagnostic gap into an
+ * outage.
+ */
+export const resolveOrganizationIdForWorkspace = async (workspaceId?: string | null): Promise<string | null> => {
+    if (!workspaceId) return null
+    try {
+        // Required lazily to avoid a cycle: this module is imported by services that the app server
+        // itself pulls in during construction.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Workspace } = require('../../database/entities/identity')
+        const workspace = await getRunningExpressApp().AppDataSource.getRepository(Workspace).findOneBy({ id: workspaceId })
+        return workspace?.organizationId ?? null
+    } catch {
+        return null
+    }
+}
