@@ -1749,7 +1749,49 @@ export const executeJavaScriptCode = async (
     } = {}
 ): Promise<any> => {
     const { timeout = 300000, useSandbox = true, streamOutput, libraries = [], nodeVMOptions = {} } = options
-    const shouldUseE2BSandbox = useSandbox && process.env.E2B_APIKEY
+
+    // ── CODE_EXECUTION_MODE ──────────────────────────────────────────────────────────────────
+    //
+    //   'disabled'  refuse to run code nodes at all
+    //   'e2b'       require the E2B remote sandbox; fail closed if it is not configured
+    //   'vm2'       the in-process NodeVM (default — current behaviour)
+    //   unset       'e2b' when E2B_APIKEY is present, otherwise 'vm2'
+    //
+    // WHY 'disabled' EXISTS. vm2 is deprecated and unpatchable. Its published escapes are blocked
+    // by this configuration (`Proxy` removed from the sandbox, `eval: false` defeating the
+    // `Function('return process')` primitive every public escape relies on) rather than by the
+    // library — an independent assessment confirmed all four public techniques fail here. That is
+    // real, and it is still a mitigation resting on configuration.
+    //
+    // Many deployments never author a code node. For those, the entire class of risk is removable
+    // rather than mitigable, and no sandbox is stronger than not executing. This is the honest
+    // interim answer while a true replacement (isolated-vm, or E2B made first-class) is designed:
+    // neither is a drop-in — isolated-vm is a native module in a project where native builds are a
+    // known failure mode and it does not sandbox `require`; E2B moves execution off-host but adds a
+    // third-party dependency, egress and latency.
+    //
+    // WHY 'e2b' FAILS CLOSED. The previous behaviour silently fell back to vm2 when E2B_APIKEY was
+    // absent. A security assessment read the E2B code path as evidence that execution was off-host
+    // and rated the vm2 risk MOOT — while the key was unset and everything ran locally. An operator
+    // who asks for the remote sandbox must get it or an error, never a quiet downgrade.
+    const configuredMode = (process.env.CODE_EXECUTION_MODE || '').trim().toLowerCase()
+    const mode = configuredMode || (process.env.E2B_APIKEY ? 'e2b' : 'vm2')
+
+    if (mode === 'disabled') {
+        throw new Error(
+            'Code execution is disabled on this instance (CODE_EXECUTION_MODE=disabled). ' +
+                'This flow contains a node that runs user-supplied code. Remove the node, or set ' +
+                'CODE_EXECUTION_MODE to e2b (remote sandbox) or vm2 (in-process) to allow it.'
+        )
+    }
+    if (mode === 'e2b' && !process.env.E2B_APIKEY) {
+        throw new Error(
+            'CODE_EXECUTION_MODE=e2b but E2B_APIKEY is not set. Refusing to fall back to the in-process ' +
+                'sandbox: an operator who asked for off-host execution must not silently get local execution.'
+        )
+    }
+
+    const shouldUseE2BSandbox = mode === 'e2b' && useSandbox && process.env.E2B_APIKEY
 
     let timeoutMs = timeout
     if (process.env.SANDBOX_TIMEOUT) {

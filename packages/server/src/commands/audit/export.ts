@@ -81,8 +81,8 @@ export const exportAuditTrail = async (input: {
             .where('e.seqNo > :afterSeq', { afterSeq })
             .orderBy('e.seqNo', 'ASC')
             .limit(PAGE)
-        if (input.from) qb.andWhere('e.createdDate >= :from', { from: input.from })
-        if (input.to) qb.andWhere('e.createdDate <= :to', { to: input.to })
+        if (input.from) qb.andWhere('e.occurredAt >= :from', { from: input.from })
+        if (input.to) qb.andWhere('e.occurredAt <= :to', { to: input.to })
         if (typeof input.toSeq === 'number') qb.andWhere('e.seqNo <= :toSeq', { toSeq: input.toSeq })
 
         const page = await qb.getMany()

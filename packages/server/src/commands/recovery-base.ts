@@ -94,6 +94,12 @@ export const RecoveryAuditAction = {
      */
     AUDIT_EXPORT: 'identity.recovery.audit.export',
     /**
+     * Audit history was deleted under the retention policy. Recorded AFTER the delete so the record
+     * always falls outside the window it describes — a prune that erased the evidence of pruning
+     * would defeat the point of having a retention control at all.
+     */
+    AUDIT_PRUNE: 'identity.recovery.audit.prune',
+    /**
      * Its OWN action, not a reuse of `ADMIN_RESET_PASSWORD`.
      *
      * Reusing the reset action would make the trail say a credential was replaced when it was not —

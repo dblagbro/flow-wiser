@@ -93,6 +93,41 @@ const ensurePostgresUuidExtension = async (dataSource: DataSource): Promise<void
 }
 
 /**
+ * State plainly, at boot, which sandbox will execute code-node code.
+ *
+ * A security assessment of this instance concluded that the vm2 risk was "MOOT" because it read the
+ * E2B code path as evidence that execution happened off-host — while `E2B_APIKEY` was unset and
+ * everything ran locally in vm2. Nobody had lied; the posture was simply not observable without
+ * reading source and checking an environment variable.
+ *
+ * A control an operator cannot see is a control they cannot verify, so the boot log now says it
+ * outright.
+ */
+const logCodeExecutionPosture = (): void => {
+    const configured = (process.env.CODE_EXECUTION_MODE || '').trim().toLowerCase()
+    const mode = configured || (process.env.E2B_APIKEY ? 'e2b' : 'vm2')
+
+    if (mode === 'disabled') {
+        logger.info('🔒 [server]: Code execution DISABLED (CODE_EXECUTION_MODE=disabled). Flows containing code nodes will fail.')
+        return
+    }
+    if (mode === 'e2b') {
+        if (process.env.E2B_APIKEY) {
+            logger.info('🧪 [server]: Code execution via the E2B REMOTE sandbox — code runs off-host.')
+        } else {
+            logger.error('❌ [server]: CODE_EXECUTION_MODE=e2b but E2B_APIKEY is unset. Code nodes will FAIL rather than run locally.')
+        }
+        return
+    }
+    logger.warn(
+        '⚠️  [server]: Code execution uses the IN-PROCESS vm2 sandbox. vm2 is deprecated and its escapes are ' +
+            'unpatchable; the published techniques are blocked by configuration here (Proxy removed, eval:false), ' +
+            'not by the library. Anyone who can author a flow can run code in this process. ' +
+            'Set CODE_EXECUTION_MODE=disabled if this deployment does not need code nodes, or =e2b to run off-host.'
+    )
+}
+
+/**
  * Seed the six system roles, the default tenancy, and any environment-supplied administrator.
  *
  * `BootstrapService` has existed, fully written and documented, with **no caller anywhere**. So on
@@ -174,6 +209,7 @@ export class App {
             logger.info('🔄 [server]: Database migrations completed successfully')
 
             await runIdentityBootstrap(this.AppDataSource)
+            logCodeExecutionPosture()
 
             // Initialize Identity Manager
             this.identityManager = await IdentityManager.getInstance()
