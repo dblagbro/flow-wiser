@@ -329,3 +329,18 @@ rejected until checks pass, so an emergency fix needs a PR or a deliberate, logg
 is the intended cost. The previous setting logged `Bypassed rule violations` and let the push through,
 which is a receipt, not a gate.
 
+### Verification of these controls, 2026-08-09
+
+Written down because a control nobody has watched fail is a control nobody has tested.
+
+- **`release-gate.yml`, both directions.** Dispatched against a commit whose CI was green
+  (`3fea7f17`) and one whose CI was red (`67f4ab89`). Run 31339550626 passed; run 31339559213
+  failed with `Commit 67f4ab89… did not pass CI`. Failing for the right reason, not merely failing.
+- **`assert-test-discovery.js`.** Reproducing the G10 condition makes it exit 1 and name
+  `packages/server/test/identity/recovery-cli.test.ts`. Confirmed running inside Node CI on
+  `c5bfae0b`: 155 discovered / 155 on disk across five packages.
+- **`enforce_admins`.** `git push --dry-run` is NOT a test of this — it reported success against a
+  protected branch. Dry-run does not evaluate protection rules, so anyone using it to confirm a
+  branch is protected will get a false all-clear.
+
+
