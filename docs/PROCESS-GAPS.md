@@ -185,3 +185,43 @@ existing image's test suite over a rebuild when only test config changed.
 - **Fatal-by-design startup.** Making `initDatabase` rethrow turned a confusing half-started server
   into an immediate, named failure, and caught the DataSource bug instantly.
 - **Positive controls** (G3), now standing practice.
+
+---
+
+## G9 · CI was red for three days and every release shipped anyway
+
+**What happened.** `pnpm install --frozen-lockfile` failed on every commit from `2993cc72`
+(2026-08-05 22:38) to `b4f20a62` (2026-08-09 03:36). The cause was one line: the flow-versioning
+work added `isomorphic-git@^1.27.1` to `packages/server/package.json` and never regenerated
+`pnpm-lock.yaml`. Three security releases — fw5, fw6, fw7 — were built, published and deployed
+across that window, including two that were handed to an external assessment team.
+
+**Why it went unnoticed.** The signal existed and was ignored. Node CI reported failure on all ten
+intervening runs. I was reading the clean-room guard, which was green, and treating that as *the*
+gate because it was the one I had written and cared about. A workflow I did not author became
+background noise.
+
+The local build never reproduced it. The Docker build does not use `--frozen-lockfile`, so the image
+resolved `isomorphic-git` fresh and worked; the container running in production is genuinely fine.
+Only the reproducible-install path was broken — which is precisely the path that matters least
+day-to-day and most when someone else tries to build the project.
+
+**Why this is the same shape as G1b.** In G1b the clean-room guard passed for a reason unrelated to
+the thing it was supposed to check. Here a red gate was disregarded for a reason unrelated to what it
+was reporting. Both are the same error: treating a check's *status* as information about the
+*project* rather than about the check. A gate is only worth having if a red one stops something.
+
+**What it cost.** Nothing in production, by luck rather than design. But "the published source does
+not install from its own lockfile" is a bad property for a fork whose entire pitch is that it is a
+trustworthy continuation, and worse while an external team is auditing the repository.
+
+**Fix applied.** Lockfile regenerated with pnpm 10.26.0 — the version CI pins — adding
+`isomorphic-git@1.41.0` and four transitive dependencies. The diff was reviewed to confirm nothing
+else moved.
+
+**Fix still needed.** A release must not be tagged while any required workflow on that commit is
+red. Right now nothing enforces that; I check by remembering to look, which is exactly what failed
+here. Branch protection requiring Node CI and the clean-room guard would make this structural
+instead of behavioural.
+
+---
