@@ -34,6 +34,14 @@ jobs:
             - run: pnpm build
               env:
                   NODE_OPTIONS: '--max_old_space_size=4096'
+            # Before running the tests, assert that every test file on disk is one Jest will
+            # actually run. A suite that is never discovered produces no failures, and no failures
+            # is indistinguishable from success — which is how 30 recovery-CLI tests stayed dead
+            # for weeks (G10). Placed ahead of the run so the diagnosis is "these files are not
+            # discovered" rather than a test count that looks fine.
+            - name: Assert no test file is silently undiscovered
+              run: node scripts/assert-test-discovery.js
+
             - run: pnpm test:coverage
             - name: Cypress install
               run: pnpm cypress install

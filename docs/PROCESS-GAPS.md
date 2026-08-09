@@ -290,3 +290,42 @@ checked in rather than stored as repository secrets so a fork can still get a gr
 looked like the whole problem while it was on top. This is the real lesson of G9 and G10 — a build
 that has been red for a while is not one bug, and "I fixed the failure" is not the same claim as
 "the build is green."
+
+---
+
+## Controls added 2026-08-09 — what now enforces G9 and G10
+
+Both gaps ended with "fix still needed", which is a note to nobody. These are the mechanisms.
+
+| Gap | Was | Now |
+|---|---|---|
+| G9 · released on a red build | nothing looked | branch protection on `main` (required: `guard`, `build (ubuntu-latest, …)`, `enforce_admins` ON, force-push and deletion blocked) + `release-gate.yml` |
+| G10 · a suite that never ran | nothing looked | `scripts/assert-test-discovery.js`, run inside Node CI |
+
+**`release-gate.yml` — honest about its limits.** It cannot stop a tag being created: Actions runs
+after the ref is written and a hosted repository has no pre-receive hook. What it does is attach a
+red X to the tag, and — on `release: published` with a red commit — revert the release to a draft.
+That second part is a real gate rather than a notification: nothing is destroyed, notes and assets
+survive, and it stops being something a user can find. **Docker Hub is not covered**, because nothing
+in CI pushes there; Flow-Wiser images are built and pushed by hand. That is stated in the workflow
+rather than left to be assumed.
+
+**`assert-test-discovery.js` — why not a test-count floor.** A floor has to be revised every time
+someone legitimately deletes a test, so it drifts downward until it asserts nothing, and it cannot
+tell "we removed 30 tests on purpose" from "30 tests stopped being discovered". Comparing the
+filesystem against `jest --listTests` — Jest's own answer, not a re-implementation of its resolution
+— asks the real question. Exclusions are allowed but must be declared with a reason, because an
+undeclared exclusion is the entire defect.
+
+**It was tested against the actual failure**, not just written. Reproducing the G10 condition
+(recovery-cli ignored by one project and unmatched by the other) makes it exit 1 and name the file.
+The first attempt at that negative test passed when it should have failed — the mutation let the
+other project pick the file up — which is worth recording: a control nobody has watched fail is a
+control nobody has tested.
+
+**`enforce_admins` is ON.** It was off for one day while CI was being repaired, because turning it on
+with a red build would have locked out the fixes. The cost is real: direct pushes to `main` are now
+rejected until checks pass, so an emergency fix needs a PR or a deliberate, logged un-protection. That
+is the intended cost. The previous setting logged `Bypassed rule violations` and let the push through,
+which is a receipt, not a gate.
+
