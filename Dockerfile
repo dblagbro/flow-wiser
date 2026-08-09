@@ -2,7 +2,7 @@
 #
 #   docker build --no-cache --pull \
 #     --build-arg NODE_VERSION=20 \
-#     --build-arg FLOWISE_VERSION=3.1.4-fw6 \
+#     --build-arg FLOWISE_VERSION=3.1.4-fw7 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 #
 #   docker run -d -p 3000:3000 dblagbro/flow-wiser:3.1.4-fw4

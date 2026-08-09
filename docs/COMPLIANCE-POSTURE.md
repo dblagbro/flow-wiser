@@ -12,7 +12,7 @@ processed or transmitted. **No amount of code makes software "SOC 2 compliant."*
 do is avoid being the thing that blocks the audit, and provide the evidence the auditor asks for.
 That is the bar this document measures against.
 
-**Last verified:** 2026-08-07 against `3.1.4-fw6`.
+**Last verified:** 2026-08-08 against `3.1.4-fw7`, deployed and running.
 
 ---
 
@@ -87,10 +87,10 @@ An instance that has not run the rotation still holds legacy records, and
 | Secrets never in the trail | **Implemented** | Central redactor drops any key whose name matches a secret-shaped pattern |
 | Credential disclosure recorded | **Implemented** | `credential.decrypt` written on every use, by reference, never by value |
 | Export for review | **Implemented** | `flowise audit:export` → JSONL plus a SHA-256 manifest with the seqNo range covered |
-| Tamper **evidence** | **Implemented** | Re-exporting a range must reproduce the digest; a mismatch proves rows changed |
+| Tamper **evidence** | **Implemented** | `audit:export --from-seq --to-seq --verify` reproduces the digest; a mismatch proves rows changed. Verified on production: digest reproduced exactly |
 | Tamper **proofing** | **Gap** | Stated plainly: an actor with database write access could rewrite history and re-export. A hash-chained or externally-shipped log would be required, and is not implemented |
 | Export is itself audited | **Implemented** | `identity.recovery.audit.export` records who took a copy of the log |
-| Retention period enforcement | **Gap** | No automatic pruning or archival. Events accumulate indefinitely; retention is currently a manual decision |
+| Retention period enforcement | **Available** | `flowise audit:prune` — default 400 days, refuses below the 365 PCI-DSS 10.7 requires, refuses to delete without `--i-have-exported`. Off until run; no automatic schedule |
 | Log review cadence | **Organisational** | The export exists to make review possible; performing it is a process |
 | Alerting on security events | **Gap** | No alerting integration. Events are recorded, not pushed |
 
@@ -108,7 +108,10 @@ An instance that has not run the rotation still holds legacy records, and
 | Public flows cannot execute code | **Implemented** | Publishing a flow containing a code-execution node is refused |
 | SQL injection | **Implemented** | TypeORM-parameterised throughout; raw SQL only in migrations and in `doctor` with whitelisted identifiers |
 | Dependency currency | **Deployment** | Reviewed 2026-08-07, no vulnerable pins found. Continuous scanning is a **Gap** — no `npm audit` gate in CI |
-| Sandbox uses a supported runtime | **Gap** | `vm2` is deprecated and unpatchable. Escapes are blocked by configuration (`Proxy` removed, `eval:false`), not by the library. Replacement with `isolated-vm` or the E2B remote sandbox is outstanding |
+| Sandbox uses a supported runtime | **Gap** | `vm2` is deprecated and unpatchable. Escapes are blocked by configuration (`Proxy` removed, `eval:false`), not by the library — an independent assessment confirmed all four public techniques fail. Replacement with `isolated-vm` or E2B is outstanding |
+| Code execution can be disabled entirely | **Available** | `CODE_EXECUTION_MODE=disabled`. For a deployment with no code-execution nodes the risk class is removable rather than mitigable |
+| Off-host code execution | **Available** | `CODE_EXECUTION_MODE=e2b` with `E2B_APIKEY`. **Fails closed** — an unset key errors rather than silently running locally |
+| Sandbox posture is observable | **Implemented** | The boot log states which sandbox executes code and warns when it is `vm2`. Added because an assessment concluded execution was off-host when it was not |
 
 ---
 
@@ -124,16 +127,16 @@ table exists so that "we turned it off to debug" is a recorded decision rather t
 | `FLOWISE_VAR_ALLOW_UNPREFIXED=true` | off | Runtime variables resolve arbitrary `process.env`. On a multi-user instance this is a full RBAC bypass |
 | `HTTP_SECURITY_CHECK=false` | on | SSRF deny list disabled |
 | `IDENTITY_COOKIE_SECURE=false` | on in production | Session cookies may travel over plaintext |
+| `CODE_EXECUTION_MODE=vm2` | vm2 (or e2b if a key is set) | In-process execution. `disabled` removes the risk entirely; `e2b` moves it off-host |
+| `FLOWISE_VAR_ALLOW_UNPREFIXED=true` | off | Runtime variables resolve arbitrary `process.env` — a full RBAC bypass on a multi-user instance |
 
 ---
 
 ## What is missing, in the order it should be fixed
 
-1. **Audit retention policy and pruning** — events accumulate indefinitely. Frameworks specify a
-   retention period (PCI-DSS 10.7: one year, three months immediately available). Needs a documented
-   period and an enforcement mechanism.
-2. **`vm2` replacement** — the only control that is configuration rather than architecture.
-3. **HSTS at the edge** — one line, closes the first-visit downgrade window.
+1. **`vm2` replacement** — the only control that is configuration rather than architecture.
+2. **HSTS at the edge** — one line, closes the first-visit downgrade window.
+3. **Automatic retention scheduling** — `audit:prune` exists but nothing runs it on a schedule.
 4. **Dependency scanning in CI** — currently a point-in-time review.
 5. **Alerting** — events are recorded but nothing is notified.
 6. **Hash-chained audit log** — would upgrade tamper *evidence* to tamper *proofing*.

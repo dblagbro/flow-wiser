@@ -28,6 +28,131 @@ first.
 
 ---
 
+## [3.1.4-fw7] — 2026-08-08
+
+Adds a code-execution kill switch, audit retention, and fixes a runtime bug that shipped in fw6.
+
+### Fixed
+
+**`audit:export --from` / `--to` failed at runtime.** Both filters referenced `e.createdDate`; the
+column is `occurredAt`. TypeScript could not catch it because the reference lives inside a
+query-builder string, so it compiled clean and shipped. It surfaced only when `audit:prune` made the
+same mistake in a *typed* context, where the compiler did reject it.
+
+Worth recording: "0 TypeScript errors" verified the typed call sites and silently skipped the
+string-embedded query. A compile pass is not coverage of anything expressed as a string.
+
+### Added
+
+**`CODE_EXECUTION_MODE`** — `disabled` | `e2b` | `vm2`. Defaults to previous behaviour.
+
+- **`e2b` now fails closed.** Previously the remote sandbox was selected only by the presence of
+  `E2B_APIKEY`, and its absence fell back silently to the in-process sandbox. That is exactly how an
+  independent assessment concluded code ran off-host and rated the `vm2` risk moot, while the key was
+  unset and everything ran locally. An operator who asks for off-host execution now gets it or an
+  error.
+- **`disabled`** removes the risk class rather than mitigating it. A deployment with no code-execution
+  nodes has no reason to carry an in-process sandbox at all, and no sandbox is stronger than not
+  executing.
+
+**Boot-time sandbox posture.** The server states which sandbox will execute code and warns explicitly
+when it is `vm2`. The assessment above reached a wrong conclusion because the posture was not
+observable without reading source and checking an environment variable.
+
+**`flowise audit:prune`** — retention enforcement. Default 400 days; refuses below the 365 days
+PCI-DSS 10.7 requires unless `--force`; refuses to delete without `--i-have-exported`, because
+deleted audit rows are unrecoverable. Its own audit record is written *after* the delete, so a prune
+can never fall inside the window it describes and erase the evidence of pruning.
+
+### Still open
+
+`vm2` remains deprecated and unpatchable. Its published escapes are blocked here by configuration —
+`Proxy` removed from the sandbox, `eval: false` defeating the `Function('return process')` primitive
+every public technique relies on — and an independent assessment confirmed all four fail. That is
+real, and it is still a mitigation resting on configuration rather than architecture.
+
+`isolated-vm` was deliberately not rushed in: it is a native module in a project where native builds
+are already why Node 24 is unusable, and it does not sandbox `require`, so library-using flows would
+break. It deserves its own change.
+
+---
+
+## [3.1.4-fw6] — 2026-08-08
+
+Fixes three findings from a security retest, and reworks credential encryption so the product can
+support standard compliance claims.
+
+### Fixed
+
+**Runtime variables read arbitrary `process.env`** (HIGH on a multi-user instance). A runtime
+variable resolved `process.env[name]` with the name supplied by the user and no allowlist, then
+injected the result into code nodes *and* prompt templates. Creating one is gated on
+`variables:create` — a non-admin permission that `org-admin` and `user` both hold. Any authoring user
+could name a variable `JWT_AUTH_TOKEN_SECRET`, reference it in a flow, read the token-signing key,
+and forge tokens for any user in any tenant.
+
+Runtime variables now require a `FLOWISE_VAR_` prefix. A prefix rather than a denylist because a
+denylist must anticipate every secret the process will ever hold — including ones added later and by
+the operator's own configuration — so it is wrong by default. A prefix inverts that: the environment
+must opt in.
+
+**`GET /credentials/:id` returned decrypted plaintext.** The route requires `credentials:create` or
+`credentials:update`, which **four of the six system roles hold**, including `org-admin` and `user` —
+both explicitly designed to see credential *records* but never *values*. And `credentials:reveal`,
+the admin-only grant that split exists for, was enforced on **no route at all**. The two endpoints
+were also inverted: `/:id/reveal` redacted while the plain `GET` revealed.
+
+`GET` now redacts. `/:id/reveal` genuinely reveals, requires `credentials:reveal`, and is audited.
+`admin` and `super-admin` hold it; `super-user`, `org-admin`, `user` and `read-only` do not — so a
+super-user can audit the entire system without ever holding a key, which is what the design always
+claimed.
+
+**`node:`-prefixed builtins bypassed the sandbox denylist.** `require('node:fs')` is an alias for
+`require('fs')`, and the denylist matched exact strings. Not reachable in the shipped configuration,
+but it would have stopped protecting silently the moment an operator allowlisted a `node:`-prefixed
+module.
+
+**Upgrading a Flowise 3.x database hid every flow.** The bootstrap minted a new workspace while
+existing content carried the pre-fork `workspaceId`, so an upgraded instance showed an empty screen
+with all data intact but out of scope. It now adopts the legacy organization and workspace ids —
+adoption rather than re-stamping, so a rollback leaves user data untouched.
+
+**The denormalised tenant key was never written.** Migration `1780000000012` added `organizationId`
+to ten content tables and nothing populated it, so `doctor` reported a tenancy failure on any
+instance holding content and exited 1. A health gate that always fails is not a health gate. It is
+now resolved from the workspace, so the two can never disagree.
+
+**The audit integrity claim could not be verified.** The manifest said "re-export the same range to
+reproduce this digest", but there was no way to pin a range, and every export appends its own audit
+event — so an unbounded re-export could never match. A control that cannot be exercised is worse than
+none, because it reads as evidence. `--from-seq` / `--to-seq` pin the range and `--verify` runs as a
+pure read.
+
+### Changed — credential encryption
+
+Credentials used `crypto-js` AES with a single static passphrase: no authentication, MD5-based key
+derivation, no key version, no algorithm agility. Each of those independently disqualifies SOC 2
+CC6.1, HIPAA §164.312(a)(2)(iv) and PCI-DSS 3.5–3.6.
+
+Now AES-256-GCM with HKDF-SHA-256 and per-record nonce, salt and key version, reusing the AEAD the
+identity layer already had. **Both formats decrypt**, detected from the payload, so an upgraded
+database holding a mix works either way and each record migrates on its next save.
+
+`flowise credential:rotate-encryption` makes rotation a procedure rather than an incident: dry run by
+default, every record proven to round-trip before any write, one transaction, and a single failure
+aborts the entire run — a half-rotated table is worse than an unrotated one, because some flows work
+and the failures look random.
+
+### Added
+
+`flowise audit:export` — JSONL plus a SHA-256 manifest over an explicit `seqNo` range, for review and
+evidence retention. The manifest states the limit of its own claim: this is tamper *evidence*, not
+tamper *proofing*. An actor with database write access could rewrite history and re-export cleanly.
+
+`docs/COMPLIANCE-POSTURE.md` — control mapping for SOC 2, HIPAA and PCI with evidence and named gaps.
+
+---
+
 ## [3.1.4-fw5] — 2026-08-07
 
 **Security release.** Fixes an independently assessed, empirically confirmed vulnerability that

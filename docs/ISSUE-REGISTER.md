@@ -1,6 +1,6 @@
 # Issue and risk register
 
-**Date:** 2026-08-07 · **Assessed at:** `apache2-only`
+**Date:** 2026-08-08 · **Assessed at:** `apache2-only` · **Running:** `3.1.4-fw7`
 
 Severity is assigned on **demonstrated** impact, not on how alarming the defect sounds. Where a
 defect is latent rather than active, that is stated — overstating severity is as damaging to
@@ -57,6 +57,36 @@ version but did not make the sandbox safe.
 
 ---
 
+## Security retest 2026-08-07 → remediated in `3.1.4-fw6` / `fw7`
+
+| id | Finding | Status |
+|---|---|---|
+| N6 | Runtime variables read arbitrary `process.env` — any `variables:create` holder could read the token-signing secret and forge tokens for any tenant | **FIXED** — `FLOWISE_VAR_` prefix required |
+| N7 | `GET /credentials/:id` returned plaintext to 4 of 6 roles; `credentials:reveal` enforced on no route; the two endpoints were inverted | **FIXED** — GET redacts, `/reveal` requires the permission |
+| N3 | `node:`-prefixed builtins bypassed the sandbox denylist | **FIXED** — canonicalised before matching |
+| N1 | Weak credential-encryption key | **DROPPED** at operator direction — deployment concern on a dev/test box, not a product defect |
+| N2 | `0.0.0.0:3000` LAN binding | **DROPPED** by the assessors — app auth holds regardless |
+| N4/N5 | Override switches and the Origin gate | Informational; documented in `COMPLIANCE-POSTURE.md` |
+
+### Two claims in the retest report that were WRONG
+The report stated `vm2` had been removed from the image and that the E2B remote sandbox was active.
+Verified false on 2026-08-07: `vm2@3.11.5` is present and referenced in the built `utils.js`, and
+`E2B_APIKEY` was unset, so execution was local. Their conclusion on unauthenticated RCE still holds,
+but the "vm2 → MOOT" verdict rests on a false premise. `3.1.4-fw7` now states the sandbox posture in
+the boot log so this is not re-derivable incorrectly.
+
+### I-20 · `audit:export --from` / `--to` failed at runtime — **FIXED in fw7**
+Both filters referenced `e.createdDate`; the column is `occurredAt`. Inside a query-builder string,
+so TypeScript could not catch it and it shipped in fw6. Found only when `audit:prune` made the same
+mistake in a typed context. **Lesson:** a green compile does not cover anything expressed as a string.
+
+### I-21 · 12 deleted credentials still referenced by 9 flows — **OPEN, operator data**
+`doctor` reports 21 references across 9 flows, including `devin-resume-chatGPT-current` and
+`therabot-staging-ES-vector`. Those flows will fail at runtime on a missing credential. Not a code
+defect; left reported rather than suppressed. **This is why `doctor` still exits 1.**
+
+---
+
 ## S1 — Blocks release
 
 ### I-01 · Published images `fw1`–`fw3` contain commercially licensed code
@@ -67,8 +97,8 @@ before 2026-08-07. `dblagbro/flow-wiser:latest` still points at `fw3`.
 **Action:** delete or deprecate the tags. **Requires operator decision — irreversible and outward-facing.**
 **Verification:** `docker manifest inspect` returns not-found for the removed tags.
 
-### I-02 · `doctor` exits 1 on any instance where content exists
-**Status:** open, **reproduced 2026-08-07** · **Evidence:** fresh instance, one chatflow created via
+### I-02 · `doctor` exits 1 on any instance where content exists — **FIXED in 3.1.4-fw6**
+**Status:** CLOSED 2026-08-08. `resolveOrganizationIdForWorkspace` writes the key on create; 25/25 production rows backfilled; `doctor`'s tenancy check now passes. **Original report follows.** · reproduced 2026-08-07 · **Evidence:** fresh instance, one chatflow created via
 the API → `chat_flow.organizationId` NULL while its workspace carries
 `6e9ea080-…`; `doctor` reports `[FAIL] Tenancy — denormalised tenant keys`, exit 1. Empty instance
 exits 0.
