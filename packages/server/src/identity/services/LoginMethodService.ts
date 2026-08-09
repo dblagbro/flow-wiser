@@ -69,7 +69,6 @@ export class LoginMethodService {
     /** Lazy `require` — a static import of `getRunningExpressApp` would drag in the server entrypoint. */
     private getDataSource(): DataSource {
         if (this.injectedDataSource) return this.injectedDataSource
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
         return getRunningExpressApp().AppDataSource
     }

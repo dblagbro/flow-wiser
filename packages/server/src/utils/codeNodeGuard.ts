@@ -76,7 +76,10 @@ export const scanForCodeExecutionNodes = (flowData: string | null | undefined): 
     const hits: string[] = []
     for (const node of parsed.nodes as Record<string, any>[]) {
         const data = (node?.data ?? {}) as Record<string, any>
-        const identity = [data.name, data.type, data.category, node?.type].filter((v) => typeof v === 'string').join(' ').toLowerCase()
+        const identity = [data.name, data.type, data.category, node?.type]
+            .filter((v) => typeof v === 'string')
+            .join(' ')
+            .toLowerCase()
 
         let matched = CODE_EXECUTION_NODE_MARKERS.some((marker) => identity.includes(marker))
 

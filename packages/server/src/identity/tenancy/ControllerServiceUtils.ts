@@ -134,9 +134,7 @@ export const resolveOrganizationIdForWorkspace = async (workspaceId?: string | n
     try {
         // Required lazily to avoid a cycle: this module is imported by services that the app server
         // itself pulls in during construction.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { Workspace } = require('../../database/entities/identity')
         const workspace = await getRunningExpressApp().AppDataSource.getRepository(Workspace).findOneBy({ id: workspaceId })
         return workspace?.organizationId ?? null

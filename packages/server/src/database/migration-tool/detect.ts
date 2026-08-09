@@ -34,7 +34,7 @@
  * and the shapes read by `migrate.ts` were recovered from a real production database, not from the
  * sources that created them.
  */
-import { columnExists, countRows, Database, listTables, quote, tableExists } from './db'
+import { columnExists, countRows, Database, listTables, quote } from './db'
 
 /**
  * The two eras of §1, plus the two states either side of them that a real tool meets and a

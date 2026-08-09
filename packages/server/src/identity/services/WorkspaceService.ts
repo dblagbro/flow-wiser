@@ -59,7 +59,6 @@ export class WorkspaceService {
      */
     private getDataSource(): DataSource {
         if (this.injectedDataSource) return this.injectedDataSource
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
         return getRunningExpressApp().AppDataSource
     }

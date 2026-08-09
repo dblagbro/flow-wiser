@@ -36,7 +36,6 @@ interface SqliteHandle {
     close(): void
 }
 type SqliteModule = { DatabaseSync: new (filename: string, options?: { readOnly?: boolean }) => SqliteHandle }
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { DatabaseSync } = require('node:sqlite') as SqliteModule
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -362,7 +361,6 @@ export const fakeQueryRunner = (db: TestDatabase): any => ({
 
 /** Run the four shipping identity migrations, in order, against `db`. */
 export const applyIdentityMigrations = async (db: TestDatabase): Promise<void> => {
-    /* eslint-disable @typescript-eslint/no-var-requires */
     const runner = fakeQueryRunner(db)
     const modules = [
         ['../../../src/database/migrations/sqlite/1780000000000-AddIdentityTables', 'AddIdentityTables1780000000000'],

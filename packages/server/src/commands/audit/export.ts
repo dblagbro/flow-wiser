@@ -76,11 +76,7 @@ export const exportAuditTrail = async (input: {
     // Keyset pagination on seqNo rather than OFFSET: the trail is append-only, so a monotonic key
     // gives a stable window even while new events are being written during a long export.
     for (;;) {
-        const qb = repo
-            .createQueryBuilder('e')
-            .where('e.seqNo > :afterSeq', { afterSeq })
-            .orderBy('e.seqNo', 'ASC')
-            .limit(PAGE)
+        const qb = repo.createQueryBuilder('e').where('e.seqNo > :afterSeq', { afterSeq }).orderBy('e.seqNo', 'ASC').limit(PAGE)
         if (input.from) qb.andWhere('e.occurredAt >= :from', { from: input.from })
         if (input.to) qb.andWhere('e.occurredAt <= :to', { to: input.to })
         if (typeof input.toSeq === 'number') qb.andWhere('e.seqNo <= :toSeq', { toSeq: input.toSeq })
@@ -157,7 +153,16 @@ export const exportAuditTrail = async (input: {
         }).catch(() => undefined)
     }
 
-    return { file: input.file, manifestFile, events: count, firstSeqNo: first, lastSeqNo: last, digest, from: manifest.from, to: manifest.to }
+    return {
+        file: input.file,
+        manifestFile,
+        events: count,
+        firstSeqNo: first,
+        lastSeqNo: last,
+        digest,
+        from: manifest.from,
+        to: manifest.to
+    }
 }
 
 export default class AuditExport extends RecoveryCommand {

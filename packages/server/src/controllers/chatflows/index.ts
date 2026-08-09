@@ -232,7 +232,14 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
         const rateLimiterManager = RateLimiterManager.getInstance()
         await rateLimiterManager.updateRateLimiter(updateChatFlow)
 
-        const apiResponse = await chatflowsService.updateChatflow(chatflow, updateChatFlow, orgId, workspaceId, subscriptionId, req.user?.id)
+        const apiResponse = await chatflowsService.updateChatflow(
+            chatflow,
+            updateChatFlow,
+            orgId,
+            workspaceId,
+            subscriptionId,
+            req.user?.id
+        )
         return res.json(apiResponse)
     } catch (error) {
         next(error)

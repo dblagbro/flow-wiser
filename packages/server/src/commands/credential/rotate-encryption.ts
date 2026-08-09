@@ -128,10 +128,7 @@ export default class CredentialRotateEncryption extends RecoveryCommand {
     static description =
         'Re-encrypt stored credentials under the current key, upgrading legacy records to authenticated AES-256-GCM. Dry run unless --apply.'
 
-    static examples = [
-        '<%= config.bin %> credential:rotate-encryption',
-        '<%= config.bin %> credential:rotate-encryption --apply'
-    ]
+    static examples = ['<%= config.bin %> credential:rotate-encryption', '<%= config.bin %> credential:rotate-encryption --apply']
 
     static flags = {
         ...RecoveryCommand.flags,

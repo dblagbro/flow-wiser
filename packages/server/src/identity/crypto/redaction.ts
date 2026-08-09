@@ -202,7 +202,7 @@ export const SECRET_VALUE_PATTERNS: readonly { name: string; pattern: RegExp; re
         replacement: REDACTION_MARKER
     },
     /** `scheme://user:password@host` — credentials in a connection string, the classic accidental log line */
-    { name: 'url-userinfo', pattern: /\b([a-z][a-z0-9+.\-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, replacement: `$1${REDACTION_MARKER}@` },
+    { name: 'url-userinfo', pattern: /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, replacement: `$1${REDACTION_MARKER}@` },
     { name: 'bearer-token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, replacement: `Bearer ${REDACTION_MARKER}` },
     { name: 'basic-auth', pattern: /\bBasic\s+[A-Za-z0-9+/=]{8,}/gi, replacement: `Basic ${REDACTION_MARKER}` },
     /** JWT — three base64url segments; the header of a real one always starts `eyJ` */

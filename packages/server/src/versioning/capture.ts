@@ -72,11 +72,11 @@ const resolveActor = async (actorUserId?: string | null): Promise<CaptureActor |
     try {
         // Required lazily: this module is imported by the chatflow service, which the CLI commands
         // pull in transitively — and the CLI has no running Express app to ask for a DataSource.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../utils/getRunningExpressApp')
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { User } = require('../database/entities/identity')
-        const user = await getRunningExpressApp().AppDataSource.getRepository(User).findOne({ where: { id: actorUserId } })
+        const user = await getRunningExpressApp()
+            .AppDataSource.getRepository(User)
+            .findOne({ where: { id: actorUserId } })
         if (!user) return undefined
         return { name: user.name || user.email, email: user.email }
     } catch {
