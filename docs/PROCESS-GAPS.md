@@ -275,3 +275,18 @@ that got fixed. Suite passes 30/30. Package total went from 937 tests to 974.
 **Fix still needed.** Nothing detects a suite that exists but never runs. A collected-test-count
 floor in CI, or a check that every `*.test.ts` on disk appears in the run report, would have caught
 this in a day instead of never.
+
+**Postscript — a fourth layer.** With install, lint, build and the unit tests all green, the job
+failed one step further on: Cypress starts the server with `pnpm start` and no environment, so it
+died at boot with `KeyringError: no encryption key configured`. That is the keyring behaving exactly
+as designed — it never invents a key, because a generated key silently strands every credential
+written under the previous one — but the Cypress step was configured before the identity layer
+existed and was never given one. It has been failing that way ever since, invisible behind the three
+failures above it. The same missing variable took the site down during the fw5 deploy. Fixed by
+setting throwaway `IDENTITY_ENCRYPTION_KEY` and `FLOWISE_SESSION_PEPPER` values in the workflow,
+checked in rather than stored as repository secrets so a fork can still get a green build.
+
+**Count the layers: four.** Each one had to be removed before the next was even visible, and each
+looked like the whole problem while it was on top. This is the real lesson of G9 and G10 — a build
+that has been red for a while is not one bug, and "I fixed the failure" is not the same claim as
+"the build is green."
