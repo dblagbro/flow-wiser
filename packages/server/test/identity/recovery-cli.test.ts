@@ -14,26 +14,22 @@
  * tested on its own at the bottom of this file.
  *
  * ── Running them ─────────────────────────────────────────────────────────────────────────────
- * `packages/server/jest.config.js` sets `roots: ['<rootDir>/src']` and maps `typeorm` to a decorator
- * mock, so `pnpm test` picks up neither this file nor the existing `totp-rfc6238.test.ts` next to it
- * — and could not use a real TypeORM if it did. Until that config grows a second project, run them
- * explicitly from `packages/server`:
+ * `pnpm test` runs them. That was not true until 2026-08-09, and the gap is worth recording because
+ * it lasted three days and nobody could see it.
  *
- *     npx jest --silent --rootDir . --roots test/identity --testRegex 'recovery-cli\.test\.ts$' \
- *       --moduleNameMapper '{"^uuid$":"<rootDir>/node_modules/uuid/dist/index.js",\
- *                            "^flowise-components$":"<rootDir>/__mocks__/flowise-components.ts"}' \
- *       --transform '{"^.+\\.tsx?$":["ts-jest",{"diagnostics":false}]}'
+ * This docblock used to say the suite had to be run by hand, with three `npx jest` overrides, because
+ * `jest.config.js` mapped `typeorm` to a decorator mock for every file. That was accurate but it was
+ * also an instruction nobody follows, so these 30 tests — the only proof that MIGRATION §7 holds —
+ * never ran in CI once. They were committed, counted as coverage, and silently dead.
  *
- * The three overrides, and why each is needed rather than nice to have:
- *   - `uuid` v10 ships ESM only; the repo's own config already redirects it to the CJS build.
- *   - `flowise-components` is stubbed (`__mocks__/flowise-components.ts`) because `utils/logger`
- *     imports it at module load, which drags `jsdom` — and an ESM dependency Jest cannot parse —
- *     into a database test that has no use for a DOM.
- *   - `diagnostics: false` because `src/identity/services/AuditService.ts:248` currently has a
- *     pre-existing type error (`seqNo` is typed `string` but the SQLite driver returns a number)
- *     that is owned by the identity layer, not by this work. Type-correctness of the commands
- *     themselves is enforced separately by `tsc --noEmit`, which reports zero errors under
- *     `src/commands/`.
+ * Worse, they were dead for a reason that had nothing to do with the mock: a pnpm override forced an
+ * ESM-only `@tootallnate/once` into a CJS require chain, so the suite failed to PARSE. That error
+ * masked the mock problem, and a broken lockfile upstream of both meant `pnpm install` failed before
+ * jest ever started — three failures stacked so that fixing any one of them changed nothing visible.
+ *
+ * `jest.config.js` now declares two projects, and this file is in the `real-orm` one: no typeorm
+ * mapping, real DataSource, real migration chain, real SQLite. If a suite here ever needs the stub
+ * again, move it rather than reintroducing a global mapping.
  */
 import fs from 'fs'
 import os from 'os'
@@ -500,11 +496,11 @@ describe('doctor', () => {
 
     beforeAll(async () => {
         // MIGRATION §3a's denormalisation ("organizationId written directly onto every tenant-scoped
-        // resource row") has no migration yet, so the column is added here to stand in for it. This
-        // is exactly the shape doctor has to police once that migration lands — and the check below
-        // also proves doctor reports the column's ABSENCE rather than silently passing.
+        // resource row") used to have no migration, so this fixture added the column by hand to
+        // stand in for one. 1780000000012-AddTenancyColumnsToCoreTables now creates it, and running
+        // the ALTER as well fails with `duplicate column name: organizationId`. The migration is the
+        // thing under test, so the fixture defers to it rather than racing it.
         const runner = dataSource.createQueryRunner()
-        await runner.query('ALTER TABLE "chat_flow" ADD COLUMN "organizationId" varchar')
         // `chat_flow` still declares FOREIGN KEY ("workspaceId") REFERENCES "workspace"("id"), and
         // the `workspace` table no longer exists after the Apache-2.0 cut-over. SQLite enforces
         // foreign keys at INSERT time, so every write to chat_flow fails with
@@ -568,17 +564,44 @@ describe('doctor', () => {
         const check = report.checks.find((entry) => entry.name === 'Tenancy — denormalised tenant keys')
 
         expect(check?.status).toBe('fail')
-        expect(check?.summary).toMatch(/1 row\(s\) carry a tenant key that disagrees/)
+        // TWO rows, not one. The fixture builds two distinct tenancy defects: the orphaned flow
+        // below, and the credential inserted with no workspace at all (see the raw INSERT above,
+        // which exists because the entity declares a `workspaceId` the Apache-2.0 chain never
+        // creates). Both are rows whose tenant key does not resolve, so doctor counts both. The
+        // original expectation of 1 counted only the flow; it was never exercised, because this
+        // suite could not load until the @tootallnate/once override was corrected.
+        expect(check?.summary).toMatch(/2 row\(s\) carry a tenant key that disagrees/)
         expect(check?.details.join('\n')).toContain(ORPHAN_FLOW_ID)
         expect(check?.details.join('\n')).toContain(OTHER_ORGANIZATION_ID)
+        // The second defect is named too, and as a credential rather than a flow.
+        expect(check?.details.join('\n')).toMatch(/credential .*: workspace \(null\) does not exist/)
         // The healthy flow is not flagged.
         expect(check?.details.join('\n')).not.toContain(HEALTHY_FLOW_ID)
-        // And the tables that carry NO tenant key at all are reported, not silently passed —
-        // "no column, no mismatches, therefore healthy" is the false clean bill of health a
-        // diagnostic must never give. On a fresh Flow-Wiser database nine of the ten tenant-scoped
-        // tables have lost their workspaceId with the commercial migrations, and doctor says so.
-        expect(check?.details.join('\n')).toContain('tables without a workspaceId column')
-        expect(check?.details.join('\n')).toContain('credential')
+        // This used to assert the opposite. "No column, no mismatches, therefore healthy" is the
+        // false clean bill of health a diagnostic must never give, and on a fresh Flow-Wiser
+        // database nine of the ten tenant-scoped tables had lost their workspaceId to the
+        // commercial migrations — so doctor reported them under 'tables without a workspaceId
+        // column' and this test demanded that line.
+        //
+        // 1780000000012-AddTenancyColumnsToCoreTables restores the column on all ten, so the line is
+        // correctly absent. What still matters is that doctor is looking at all ten rather than
+        // quietly narrowing its scope, which is what the 'tables checked' line proves.
+        const tenancyDetails = check?.details.join('\n') ?? ''
+        expect(tenancyDetails).not.toContain('tables without a workspaceId column')
+        for (const table of [
+            'chat_flow',
+            'credential',
+            'tool',
+            'assistant',
+            'document_store',
+            'variable',
+            'apikey',
+            'dataset',
+            'evaluation',
+            'custom_template'
+        ]) {
+            expect(tenancyDetails).toContain(table)
+        }
     })
 
     it('detects the deliberately broken credential reference, and counts every shape of it', async () => {
@@ -603,12 +626,18 @@ describe('doctor', () => {
 
         expect(byName.get('Schema — identity tables')?.status).toBe('ok')
 
-        // The dangling `chat_flow -> workspace` foreign key left behind by the cut-over: every
-        // INSERT into chat_flow fails at run time while every SELECT succeeds.
+        // The dangling `chat_flow -> workspace` foreign key left behind by the cut-over used to make
+        // every INSERT into chat_flow fail at run time while every SELECT succeeded — an instance
+        // that looks healthy until someone saves a flow. This assertion expected that failure.
+        //
+        // 1780000000012-AddTenancyColumnsToCoreTables now rebuilds chat_flow without that foreign
+        // key when `workspace` is genuinely absent, so the check passes. The expectation is flipped
+        // rather than deleted: the point is no longer "doctor sees the defect" but "the defect is
+        // gone AND doctor still looks", and a check that silently stopped running would otherwise be
+        // indistinguishable from a repair.
         const foreignKeys = byName.get('Schema — foreign keys')
-        expect(foreignKeys?.status).toBe('fail')
-        expect(foreignKeys?.details.join('\n')).toContain('chat_flow')
-        expect(foreignKeys?.details.join('\n')).toContain('workspace (table does not exist)')
+        expect(foreignKeys?.status).toBe('ok')
+        expect(foreignKeys?.details.join('\n')).not.toContain('workspace (table does not exist)')
 
         // WARN, not OK: the accounts above were created by `admin:create`, which seeds only the
         // roles it is asked for. doctor noticing that three of the six §3 roles are absent is the
@@ -639,12 +668,15 @@ describe('doctor', () => {
 
     it('exits with failures counted, and audits the run', async () => {
         const report = await runDoctor({ ...context(), target: 'test' })
-        expect(report.failures).toBeGreaterThanOrEqual(3)
+        // Two, not three: the foreign-key check above no longer fails, because the migration that
+        // rebuilds chat_flow removed the defect it was counting.
+        expect(report.failures).toBeGreaterThanOrEqual(2)
 
         const rows = await auditRowsFor(RecoveryAuditAction.DOCTOR)
         expect(rows.length).toBeGreaterThanOrEqual(1)
         const detail = JSON.parse(rows[0].detail as string)
-        expect(detail.failures).toBeGreaterThanOrEqual(3)
+        // Two for the same reason as report.failures above: the foreign-key defect is repaired.
+        expect(detail.failures).toBeGreaterThanOrEqual(2)
         expect(detail.checks.map((check: { name: string }) => check.name)).toContain('Tenancy — denormalised tenant keys')
     })
 })

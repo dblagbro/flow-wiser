@@ -35,7 +35,7 @@ overrides:
   ws: 8.18.3
   xlsx: 0.18.5
   request>uuid: ^3.4.0
-  '@tootallnate/once': '>=3.0.1'
+  '@tootallnate/once': '>=2.0.1 <3'
   tmp: '>=0.2.4'
   '@elastic/transport': '>=8.9.3'
   '@modelcontextprotocol/sdk': '>=1.25.2'
@@ -179,7 +179,7 @@ importers:
         version: 4.21.24(@babel/runtime@7.26.10)(@codemirror/autocomplete@6.14.0(@codemirror/language@6.10.1)(@codemirror/state@6.4.1)(@codemirror/view@6.26.3)(@lezer/common@1.2.1))(@codemirror/language@6.10.1)(@codemirror/lint@6.5.0)(@codemirror/search@6.5.6)(@codemirror/state@6.4.1)(@codemirror/theme-one-dark@6.1.2)(@codemirror/view@6.26.3)(codemirror@6.0.1(@lezer/common@1.2.1))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       axios:
         specifier: 1.15.0
-        version: 1.15.0(debug@4.4.3)
+        version: 1.15.0(debug@4.3.4)
       dompurify:
         specifier: ^3.2.6
         version: 3.3.3
@@ -556,7 +556,7 @@ importers:
         version: 4.3.2(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       axios:
         specifier: 1.15.0
-        version: 1.15.0(debug@4.4.3)
+        version: 1.15.0(debug@4.3.4)
       cheerio:
         specifier: ^1.0.0-rc.12
         version: 1.0.0-rc.12
@@ -836,7 +836,7 @@ importers:
         version: 3.31.0(react@18.2.0)
       axios:
         specifier: 1.15.0
-        version: 1.15.0(debug@4.4.3)
+        version: 1.15.0(debug@4.3.4)
       date-fns:
         specifier: ^3.6.0
         version: 3.6.0
@@ -942,7 +942,7 @@ importers:
         version: 6.11.0
       '@google-cloud/logging-winston':
         specifier: ^6.0.0
-        version: 6.0.0(winston@3.12.0)
+        version: 6.0.0(encoding@0.1.13)(winston@3.12.0)
       '@keyv/redis':
         specifier: ^4.2.0
         version: 4.3.3
@@ -1014,7 +1014,7 @@ importers:
         version: 0.4.1
       axios:
         specifier: 1.15.0
-        version: 1.15.0(debug@4.4.3)
+        version: 1.15.0(debug@4.3.4)
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -1119,7 +1119,7 @@ importers:
         version: 1.2.0
       multer-cloud-storage:
         specifier: ^4.0.0
-        version: 4.0.0
+        version: 4.0.0(encoding@0.1.13)
       multer-s3:
         specifier: ^3.0.1
         version: 3.0.1(@aws-sdk/client-s3@3.1065.0)
@@ -1396,7 +1396,7 @@ importers:
         version: 4.21.24(@babel/runtime@7.26.10)(@codemirror/autocomplete@6.14.0(@codemirror/language@6.10.1)(@codemirror/state@6.4.1)(@codemirror/view@6.26.3)(@lezer/common@1.2.1))(@codemirror/language@6.10.1)(@codemirror/lint@6.5.0)(@codemirror/search@6.5.6)(@codemirror/state@6.4.1)(@codemirror/theme-one-dark@6.1.2)(@codemirror/view@6.26.3)(codemirror@6.0.1(@lezer/common@1.2.1))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       axios:
         specifier: 1.15.0
-        version: 1.15.0(debug@4.4.3)
+        version: 1.15.0(debug@4.3.4)
       clsx:
         specifier: ^1.1.1
         version: 1.2.1
@@ -8088,8 +8088,8 @@ packages:
   '@tokenizer/token@0.3.0':
     resolution: {integrity: sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==}
 
-  '@tootallnate/once@3.0.1':
-    resolution: {integrity: sha512-VyMVKRrpHTT8PnotUeV8L/mDaMwD5DaAKCFLP73zAqAtvF0FCqky+Ki7BYbFCYQmqFyTe9316Ed5zS70QUR9eg==}
+  '@tootallnate/once@2.0.1':
+    resolution: {integrity: sha512-HqmEUIGRJ5fSXchkVgR5F7qn48bDBzv0kWj/Kfu5e6uci4UlEeng4331LnBkWffb++Ei3FOVLxo8JJWMFBDMeQ==}
     engines: {node: '>= 10'}
 
   '@tootallnate/quickjs-emscripten@0.23.0':
@@ -24755,7 +24755,7 @@ snapshots:
       - encoding
       - supports-color
 
-  '@google-cloud/common@5.0.2':
+  '@google-cloud/common@5.0.2(encoding@0.1.13)':
     dependencies:
       '@google-cloud/projectify': 4.0.0
       '@google-cloud/promisify': 4.1.0
@@ -24770,9 +24770,9 @@ snapshots:
       - encoding
       - supports-color
 
-  '@google-cloud/logging-winston@6.0.0(winston@3.12.0)':
+  '@google-cloud/logging-winston@6.0.0(encoding@0.1.13)(winston@3.12.0)':
     dependencies:
-      '@google-cloud/logging': 11.2.0
+      '@google-cloud/logging': 11.2.0(encoding@0.1.13)
       google-auth-library: 9.15.1(encoding@0.1.13)
       lodash.mapvalues: 4.6.0
       winston: 3.12.0
@@ -24781,9 +24781,9 @@ snapshots:
       - encoding
       - supports-color
 
-  '@google-cloud/logging@11.2.0':
+  '@google-cloud/logging@11.2.0(encoding@0.1.13)':
     dependencies:
-      '@google-cloud/common': 5.0.2
+      '@google-cloud/common': 5.0.2(encoding@0.1.13)
       '@google-cloud/paginator': 5.0.2
       '@google-cloud/projectify': 4.0.0
       '@google-cloud/promisify': 4.1.0
@@ -24886,7 +24886,7 @@ snapshots:
 
   '@hey-api/client-axios@0.2.12(axios@1.15.0)':
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
 
   '@hono/node-server@1.19.14(hono@4.12.15)':
     dependencies:
@@ -26328,7 +26328,7 @@ snapshots:
     dependencies:
       '@langchain/community': 0.3.49(8519c8ad9c1eae73197ab79e3cd34dc9)
       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       mem0ai: 2.1.16(@anthropic-ai/sdk@0.73.0(zod@4.3.6))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@1.14.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@qdrant/js-client-rest@1.18.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(groq-sdk@1.1.2)(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
       uuid: 10.0.0
       zod: 3.22.4
@@ -26487,7 +26487,7 @@ snapshots:
 
   '@mendable/firecrawl-js@1.25.1':
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       typescript-event-target: 1.1.1
       zod: 3.25.76
       zod-to-json-schema: 3.25.1(zod@3.25.76)
@@ -29353,7 +29353,7 @@ snapshots:
 
   '@tokenizer/token@0.3.0': {}
 
-  '@tootallnate/once@3.0.1': {}
+  '@tootallnate/once@2.0.1': {}
 
   '@tootallnate/quickjs-emscripten@0.23.0': {}
 
@@ -30836,7 +30836,7 @@ snapshots:
       '@crawlee/types': 3.8.1
       agentkeepalive: 4.5.0
       async-retry: 1.3.3
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       content-type: 1.0.5
       ow: 0.28.2
       tslib: 2.6.2
@@ -32182,7 +32182,7 @@ snapshots:
       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6))
       '@langchain/openai': 1.2.5(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))
       ai: 4.3.19(react@18.2.0)(zod@4.3.6)
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       chalk: 4.1.2
       cli-progress: 3.12.0
       commander: 12.1.0
@@ -34582,7 +34582,7 @@ snapshots:
       '@microsoft/fetch-event-source': 2.0.1
       '@ts-stack/markdown': 1.5.0
       '@types/dompurify': 3.2.0
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       cors: 2.8.5
       cross-env: 7.0.3
       device-detector-js: 3.0.3
@@ -35674,7 +35674,7 @@ snapshots:
 
   http-proxy-agent@4.0.1:
     dependencies:
-      '@tootallnate/once': 3.0.1
+      '@tootallnate/once': 2.0.1
       agent-base: 6.0.2
       debug: 4.4.3(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -35682,7 +35682,7 @@ snapshots:
 
   http-proxy-agent@5.0.0:
     dependencies:
-      '@tootallnate/once': 3.0.1
+      '@tootallnate/once': 2.0.1
       agent-base: 6.0.2
       debug: 4.4.3(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -37582,7 +37582,7 @@ snapshots:
       '@langchain/groq': 1.0.4(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(encoding@0.1.13)
       '@langchain/mistralai': 1.0.4(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@langchain/ollama': 1.2.2(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.18.3(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.3.6)))
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       cheerio: 1.0.0-rc.12
       handlebars: 4.7.8
       typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.11.4)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@24.13.2)(typescript@5.5.2))
@@ -38508,7 +38508,7 @@ snapshots:
       '@types/jest': 29.5.14
       '@types/pg': 8.11.2
       '@types/sqlite3': 3.1.11
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       groq-sdk: 1.1.2
       neo4j-driver: 5.27.0
       ollama: 0.5.11
@@ -39187,7 +39187,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  multer-cloud-storage@4.0.0:
+  multer-cloud-storage@4.0.0(encoding@0.1.13):
     dependencies:
       '@google-cloud/storage': 7.16.0(encoding@0.1.13)
       '@types/express': 5.0.1
@@ -39974,7 +39974,7 @@ snapshots:
 
   passport-auth0@1.4.4:
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       passport-oauth: 1.0.0
       passport-oauth2: 1.8.0
     transitivePeerDependencies:
@@ -40729,7 +40729,7 @@ snapshots:
 
   posthog-node@3.6.3:
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       rusha: 0.8.14
     transitivePeerDependencies:
       - debug
@@ -42000,7 +42000,7 @@ snapshots:
 
   retry-axios@2.6.0(axios@1.15.0):
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
 
   retry-request@7.0.2(encoding@0.1.13):
     dependencies:
@@ -44760,7 +44760,7 @@ snapshots:
 
   wikipedia@2.1.2:
     dependencies:
-      axios: 1.15.0(debug@4.4.3)
+      axios: 1.15.0(debug@4.3.4)
       infobox-parser: 3.6.4
     transitivePeerDependencies:
       - debug

@@ -225,3 +225,53 @@ here. Branch protection requiring Node CI and the clean-room guard would make th
 instead of behavioural.
 
 ---
+
+---
+
+## G10 · A test suite was committed, counted as coverage, and never once executed
+
+**What happened.** `packages/server/test/identity/recovery-cli.test.ts` holds 30 tests covering all
+eight recovery CLI commands and `doctor` — the only evidence that REQUIREMENTS-MIGRATION §7 ("every
+identity operation must be performable without a working UI and without a working login") actually
+holds. It has never run in CI. Not once, in any build, since it was written.
+
+**Three independent failures stacked.** That is why it stayed invisible, and why fixing any one of
+them changed nothing observable:
+
+1. `pnpm install --frozen-lockfile` failed (G9), so jest never started.
+2. A pnpm override forced an ESM-only `@tootallnate/once` into a CJS require chain, so the suite
+   failed to *parse* — reported as "Test suite failed to run", which reads like an environment
+   grumble rather than 30 missing tests.
+3. `jest.config.js` mapped `typeorm` to a decorator mock for every file, so the suite's real
+   `DataSource` was a stub without `initialize()`. Every test would have died on its first fixture
+   line even if it had parsed.
+
+Each layer had to be removed before the next became visible. Three days of green-looking local work
+sat on top of it.
+
+**The file said so, and that was not enough.** Its docblock openly documented that `pnpm test` would
+not pick it up and gave a hand-run `npx jest` invocation with three overrides. That is a comment
+asking a human to remember something, which is not a control. Written-down knowledge that a check is
+disabled reads, at a glance, exactly like a check that is enabled.
+
+**What it hid.** Once the suite ran, five assertions failed — all of them encoding schema defects
+that `1780000000012-AddTenancyColumnsToCoreTables` had since *repaired* (the dangling
+`chat_flow → workspace` foreign key, and nine tables missing `workspaceId`). So the tests were not
+merely absent; they had silently drifted into asserting a broken state as correct. Had they run at
+the time, they would have failed the moment that migration landed and forced the question then.
+
+**Also wrong, and worth naming separately:** the `@tootallnate/once` override was incorrect on its own
+terms. The advisory it exists for (GHSA-vpq2-c234-7xj6) patches *two* release lines, 2.0.1 and 3.0.1;
+the override jumped to `>=3.0.1`, an ESM-only major that neither consumer
+(`http-proxy-agent@4`, `@5`, which declare `1` and `2`) was written against. `>=2.0.1 <3` satisfies
+the advisory and stays CJS. A security pin that breaks the build is a security pin that gets worked
+around.
+
+**Fix applied.** Override corrected; `jest.config.js` split into `stubbed-orm` and `real-orm`
+projects so a suite needing a real database gets one; the five stale assertions flipped to assert the
+repaired state rather than deleted, so a check that stops running stays distinguishable from a defect
+that got fixed. Suite passes 30/30. Package total went from 937 tests to 974.
+
+**Fix still needed.** Nothing detects a suite that exists but never runs. A collected-test-count
+floor in CI, or a check that every `*.test.ts` on disk appears in the run report, would have caught
+this in a day instead of never.
