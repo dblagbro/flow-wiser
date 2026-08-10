@@ -1,6 +1,6 @@
 # Issue and risk register
 
-**Date:** 2026-08-08 · **Assessed at:** `apache2-only` · **Running:** `3.1.4-fw7`
+**Date:** 2026-08-09 · **Assessed at:** `main` · **Running:** `3.1.4-fw8`
 
 Severity is assigned on **demonstrated** impact, not on how alarming the defect sounds. Where a
 defect is latent rather than active, that is stated — overstating severity is as damaging to
@@ -54,6 +54,31 @@ flows are public* are host-RCE-equivalent trust boundaries.
 **Correction to a prior claim:** `3.1.4-fw4` described the `vm2` 3.11.5 pin as closing six critical
 sandbox escapes. 3.11.5 is the final release of a deprecated package; the pin moved off a worse
 version but did not make the sandbox safe.
+
+---
+
+## Closed in `3.1.4-fw8`
+
+| id | Issue | Resolution |
+|---|---|---|
+| I-22 | `pnpm install --frozen-lockfile` failed on every commit from 2026-08-05 | Lockfile regenerated; `isomorphic-git` had been added without it |
+| I-23 | 45 lint errors, incl. 19 directives for `@typescript-eslint/no-var-requires`, a rule this repo never defined | Directives removed; formatting applied |
+| I-24 | `@tootallnate/once` pinned to an ESM-only major by a security override | `>=2.0.1 <3` — satisfies GHSA-vpq2-c234-7xj6 and stays CJS |
+| I-25 | 30 recovery-CLI tests had never executed | jest `projects` split; suite passes 30/30 |
+| I-26 | Cypress started the server with no encryption key | Throwaway CI values in the workflow |
+| I-27 | HSTS absent at the edge | Set and verified externally |
+| I-28 | Edge served a stale config since 2026-08-07, silently reverting an authorised change | `docker restart nginx`; recorded as G11 |
+
+## Open — carried into QA
+
+| id | Issue | Why it is still open |
+|---|---|---|
+| I-21 | 12 dangling credential references across 9 flows | Operator data, not a code defect. Why `doctor` exits 1 |
+| I-29 | `vm2` is deprecated and remains the default execution path | Escapes blocked by configuration, not architecture. `CODE_EXECUTION_MODE=disabled` removes the risk class |
+| I-30 | Docker Hub publication is ungated | Nothing in CI pushes images; the release gate cannot cover a manual push |
+| I-31 | Edge configuration drift is undetected | Nothing diffs `nginx -T` against the file on disk |
+| I-32 | Audit tamper-*proofing*, alerting, data classification absent | Tamper *evidence* exists; the rest is unimplemented |
+| I-33 | Two expired TLS certificates share this edge (since 2026-03-18) | Unrelated to Flow-Wiser, but the reason HSTS omits `includeSubDomains` |
 
 ---
 

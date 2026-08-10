@@ -12,7 +12,7 @@ processed or transmitted. **No amount of code makes software "SOC 2 compliant."*
 do is avoid being the thing that blocks the audit, and provide the evidence the auditor asks for.
 That is the bar this document measures against.
 
-**Last verified:** 2026-08-08 against `3.1.4-fw7`, deployed and running.
+**Last verified:** 2026-08-09 against `3.1.4-fw7`, deployed and running. HSTS verified on the wire.
 
 ---
 
@@ -42,9 +42,17 @@ That is the bar this document measures against.
 | Published example keys refused | **Implemented** | Keyring rejects known `.env.example` values |
 | Encryption in transit (client ↔ server) | **Deployment** | TLS terminated at the reverse proxy. The application is not intended to be exposed directly |
 | Session cookies `Secure` + `HttpOnly` + `SameSite` | **Implemented** | Verified on the wire; driven by `NODE_ENV=production` or `IDENTITY_COOKIE_SECURE` |
-| HSTS | **Gap** | Not set at the edge. A first visit can be downgraded before the redirect |
+| HSTS | **Implemented** | `Strict-Transport-Security: max-age=31536000` on every HTTPS server block at the edge, and repeated inside each location that sets its own `add_header` — in nginx a location with any `add_header` discards all inherited ones, so a server-level header alone covers most paths and silently misses the rest. Verified on the wire for `/`, `/chatflows`, `/credentials`, `/api/v1/version` and both override locations |
 | Encryption in transit (app ↔ database) | **Deployment** | Local SQLite has no wire. A remote Postgres deployment must enable TLS in its connection settings |
 | Key stored separately from data | **Deployment** | Supported via `IDENTITY_ENCRYPTION_KEY_FILE` (mode 0400/0600 enforced) or a KMS/Vault reference |
+
+**HSTS scope — deliberately no `includeSubDomains`, no `preload`.** Every host that serves HTTPS here is
+named explicitly in the edge server blocks, so each one sends HSTS for itself; the coverage is the same.
+`includeSubDomains` would additionally pin subdomains nobody has enumerated, for a year, in a cache no
+operator can reach — and two other domains on this same edge have had expired certificates since
+2026-03-18, which is exactly the state where HSTS turns a warning users can click through into an outage
+they cannot. `preload` requires `includeSubDomains` and is effectively irreversible, so it is not set.
+Raising either is a deliberate decision to make later, not a default to drift into.
 
 **Legacy-format note.** Records written before `3.1.4-fw6` used `crypto-js` AES with a static
 passphrase: unauthenticated, MD5-based key derivation, no key version. Both formats are readable;
@@ -135,11 +143,10 @@ table exists so that "we turned it off to debug" is a recorded decision rather t
 ## What is missing, in the order it should be fixed
 
 1. **`vm2` replacement** — the only control that is configuration rather than architecture.
-2. **HSTS at the edge** — one line, closes the first-visit downgrade window.
-3. **Automatic retention scheduling** — `audit:prune` exists but nothing runs it on a schedule.
-4. **Dependency scanning in CI** — currently a point-in-time review.
-5. **Alerting** — events are recorded but nothing is notified.
-6. **Hash-chained audit log** — would upgrade tamper *evidence* to tamper *proofing*.
+2. **Automatic retention scheduling** — `audit:prune` exists but nothing runs it on a schedule.
+3. **Dependency scanning in CI** — currently a point-in-time review.
+4. **Alerting** — events are recorded but nothing is notified.
+5. **Hash-chained audit log** — would upgrade tamper *evidence* to tamper *proofing*.
 
 ## Organisational controls — accounted for, not implemented here
 

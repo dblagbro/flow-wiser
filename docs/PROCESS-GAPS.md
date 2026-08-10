@@ -343,4 +343,40 @@ Written down because a control nobody has watched fail is a control nobody has t
   protected branch. Dry-run does not evaluate protection rules, so anyone using it to confirm a
   branch is protected will get a false all-clear.
 
+---
+
+## G11 · The edge served a stale config for two days, and `nginx -s reload` reported success throughout
+
+**What happened.** Adding HSTS to the edge produced no header. The config on disk was correct, the
+syntax test passed, and `nginx -s reload` returned success — and the running configuration was
+unchanged. `nginx -T`, which dumps what is actually loaded, showed one HSTS line where the file had
+nineteen.
+
+The nginx container bind-mounts `nginx.conf` as a **file**, not a directory. A file bind mount is
+resolved to an inode when the container starts. Rewriting the file on the host created a new inode,
+so the container went on serving the old one. The container's view had been stale since 2026-08-07:
+1710 lines against 1729 on disk. `docker restart nginx` re-resolved it.
+
+**What that hid, and this is the serious part.** The only functional difference between the two was
+the IP allowlist on the admin API paths — the one removed on 2026-08-07 at the operator's explicit
+direction, on the reasoning that RBAC is now the control and the allowlist was breaking external
+administration. **That change never took effect.** For two days the edge was still denying those
+paths to non-LAN clients while the documentation, the commit, and I all recorded it as applied.
+
+**Why nobody noticed, including me.** Every verification curl was run from this host, whose source
+address is inside `192.168.18.0/24` — an entry in the allowlist being tested. The test could not
+fail. It is the same defect as the `git push --dry-run` check earlier the same day and as G1b: a
+verification that cannot distinguish the two outcomes is not a verification, and it reports success
+either way. Testing an IP-based control from an allowed IP is the clearest possible instance.
+
+**Fixes.**
+- `docker restart nginx` after editing a file bind mount. A reload is not enough, because reload
+  re-reads a path the kernel has already bound to the wrong inode.
+- Verify with `nginx -T | grep`, never with `nginx -t`. The first reports what is running; the
+  second only reports that a file parses.
+- Verify a network-scoped control from outside that network, or do not claim it is verified.
+
+**Still open.** Nothing detects edge drift. The container can be stale for days with every local
+signal green. A periodic diff of `nginx -T` against the file on disk would close it; it does not
+exist yet.
 
