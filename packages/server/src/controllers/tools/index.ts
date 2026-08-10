@@ -28,9 +28,11 @@ const createTool = async (req: Request, res: Response, next: NextFunction) => {
         if (body.schema !== undefined) toolBody.schema = body.schema
         if (body.func !== undefined) toolBody.func = body.func
         toolBody.workspaceId = workspaceId
-        // MIGRATION §3a denormalised tenant key — see the note in the credentials controller.
-        // Without it `doctor` reports every row created through the API as a tenancy failure.
-        body.organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
+        // MIGRATION §3a denormalised tenant key. Assigned to the ALLOWLISTED object, not to
+        // `body` — the allowlist exists so a client cannot set id/workspaceId, and writing the
+        // tenant key onto the discarded `body` meant it was silently never persisted. That is
+        // how the first attempt at this fix shipped looking correct and doing nothing.
+        toolBody.organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await toolsService.createTool(toolBody, orgId)
         return res.json(apiResponse)
     } catch (error) {

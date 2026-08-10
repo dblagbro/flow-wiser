@@ -248,7 +248,7 @@ can never fall inside the window it describes and erase the evidence of pruning.
 ### Still open
 
 `vm2` remains deprecated and unpatchable. Its published escapes are blocked here by configuration —
-`Proxy` removed from the sandbox, `eval: false` defeating the `Function('return process')` primitive
+`eval: false` defeating the `Function('return process')` primitive (NOTE: this entry also claimed `Proxy` was removed from the sandbox — it was not, until 3.1.4-fw10; see that entry)
 every public technique relies on — and an independent assessment confirmed all four fail. That is
 real, and it is still a mitigation resting on configuration rather than architecture.
 
@@ -403,7 +403,7 @@ Reported by the assessment, confirmed by inspection — recorded so nobody re-fi
 - **SSRF from code nodes** (suspected) — already mitigated. `httpSecurity.ts` denies
   `169.254.169.254`, all RFC1918 ranges, `localhost` and `::1` by default, across redirect chains.
 - **vm2 command execution** — the four public escape techniques are blocked by the shipped config:
-  `Proxy` is removed from the sandbox and `eval: false` disables code-generation-from-strings,
+  `eval: false` disables code-generation-from-strings (this entry also claimed `Proxy` was removed — it was not implemented until 3.1.4-fw10),
   defeating the `Function('return process')` primitive every published escape relies on.
 - **Path traversal / arbitrary file read** via `get-upload-file` — UUID and format validated.
 - **Unauthenticated MCP code execution** — route-level `authenticateToken` applies despite the
