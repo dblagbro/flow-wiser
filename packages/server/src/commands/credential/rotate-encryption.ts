@@ -68,6 +68,45 @@ export const rotateCredentialEncryption = async (input: {
         currentVersion = null
     }
 
+    // ── Prove the key can actually READ before trusting the version number ──────────────────
+    //
+    // The skip test below compares key VERSIONS. That is correct for deciding what needs
+    // rewriting, and catastrophically wrong as a proxy for "the key is right": a completely
+    // different key at the same version number (1, the default) matches every record, so nothing
+    // is decrypted and the command reports "Every credential is already encrypted under the
+    // current key. Nothing to do." — exit 0 — on an instance whose data is unrecoverable.
+    //
+    // That is the exact situation an operator is in after restoring a backup without its key,
+    // and this is the command they run to check. QA reproduced it: 305 rows, wrong key, clean
+    // bill of health. So before any row is skipped, one row per distinct key version must
+    // actually decrypt.
+    const probeFailures: { version: number | null; reason: string }[] = []
+    const versionsSeen = new Set<number | null>()
+    for (const row of rows) {
+        if (!isEnvelope(row.encryptedData)) continue
+        const version = envelopeKeyVersion(row.encryptedData)
+        if (versionsSeen.has(version)) continue
+        versionsSeen.add(version)
+        try {
+            await decryptCredentialData(row.encryptedData)
+        } catch (error) {
+            probeFailures.push({ version, reason: error instanceof Error ? error.message : String(error) })
+        }
+    }
+    if (probeFailures.length > 0) {
+        for (const failure of probeFailures) {
+            result.failed.push({
+                id: '(key probe)',
+                name: `key version ${failure.version ?? 'unknown'}`,
+                reason:
+                    `a stored credential encrypted under key version ${failure.version ?? 'unknown'} could not be decrypted ` +
+                    `with the key this process is holding — ${failure.reason}. The key is absent, wrong, or a retired ` +
+                    `version was not supplied. NOTHING has been read or written.`
+            })
+        }
+        return result
+    }
+
     for (const row of rows) {
         const wasLegacy = !isEnvelope(row.encryptedData)
         if (wasLegacy) result.legacy++

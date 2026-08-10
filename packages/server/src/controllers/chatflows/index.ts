@@ -246,8 +246,50 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
     }
 }
 
+/**
+ * The authorisation ladder for the two `/public-*` endpoints, in ONE place.
+ *
+ * These endpoints are reachable without a session — that is their purpose, because an embedded
+ * chat widget has no session. What decides access is the flow's own `isPublic` flag, and after
+ * that, workspace membership.
+ *
+ * It lives here as a shared function because the two endpoints previously implemented this
+ * separately and then drifted: `/public-chatflows/:id` enforced the ladder correctly while
+ * `/public-chatbotConfig/:id` enforced nothing at all, and returned the full `flowData` of a
+ * private flow to anyone who knew its UUID. Two copies of a security check are one copy and one
+ * liability; there is now no second copy to forget.
+ *
+ * Returns `null` when the caller is allowed to proceed. Otherwise it has already written the
+ * response and the caller must return immediately.
+ */
+const denyUnlessPublicOrOwned = async (
+    req: Request,
+    res: Response,
+    chatflow: { isPublic?: boolean | null; workspaceId?: string }
+): Promise<Response | null> => {
+    // Public flows are public. This is the widget's path.
+    if (chatflow.isPublic) return null
+
+    // Not public: from here on a caller must be signed in AND in the owning workspace.
+    if (!req.user) return res.status(StatusCodes.UNAUTHORIZED).json({ message: GeneralErrorMessage.UNAUTHORIZED })
+
+    const queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+    try {
+        const workspaceUser = await new WorkspaceUserService().readWorkspaceUserByUserId(req.user.id, queryRunner)
+        if (workspaceUser.length === 0)
+            return res.status(StatusCodes.NOT_FOUND).json({ message: WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND })
+        const workspaceIds = workspaceUser.map((user) => user.workspaceId)
+        if (!workspaceIds.includes(chatflow.workspaceId as string))
+            return res.status(StatusCodes.BAD_REQUEST).json({ message: 'You are not in the workspace that owns this chatflow' })
+        return null
+    } finally {
+        await queryRunner.release()
+    }
+}
+
 const getSinglePublicChatflow = async (req: Request, res: Response, next: NextFunction) => {
-    let queryRunner: QueryRunner | undefined
+    // No queryRunner here any more: denyUnlessPublicOrOwned owns the connection it needs and
+    // releases it in its own finally, so there is one place that can leak it instead of two.
     try {
         if (typeof req.params === 'undefined' || !req.params.id) {
             throw new InternalFlowiseError(
@@ -257,22 +299,21 @@ const getSinglePublicChatflow = async (req: Request, res: Response, next: NextFu
         }
         const chatflow = await chatflowsService.getChatflowById(req.params.id)
         if (!chatflow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+
+        // A public flow is served with its flowData sanitised — this endpoint's own behaviour,
+        // not part of the access decision, so it stays here.
         if (chatflow.isPublic)
             return res.status(StatusCodes.OK).json({ ...chatflow, flowData: sanitizeFlowDataForPublicEndpoint(chatflow.flowData) })
-        if (!req.user) return res.status(StatusCodes.UNAUTHORIZED).json({ message: GeneralErrorMessage.UNAUTHORIZED })
-        queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
-        const workspaceUserService = new WorkspaceUserService()
-        const workspaceUser = await workspaceUserService.readWorkspaceUserByUserId(req.user.id, queryRunner)
-        if (workspaceUser.length === 0)
-            return res.status(StatusCodes.NOT_FOUND).json({ message: WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND })
-        const workspaceIds = workspaceUser.map((user) => user.workspaceId)
-        if (!workspaceIds.includes(chatflow.workspaceId))
-            return res.status(StatusCodes.BAD_REQUEST).json({ message: 'You are not in the workspace that owns this chatflow' })
+
+        // The access decision itself is shared with getSinglePublicChatbotConfig. This function
+        // used to own the only correct copy of it; that is exactly how the other endpoint came
+        // to have no copy at all.
+        const denied = await denyUnlessPublicOrOwned(req, res, chatflow)
+        if (denied) return denied
+
         return res.status(StatusCodes.OK).json(chatflow)
     } catch (error) {
         next(error)
-    } finally {
-        if (queryRunner) await queryRunner.release()
     }
 }
 
@@ -284,6 +325,21 @@ const getSinglePublicChatbotConfig = async (req: Request, res: Response, next: N
                 `Error: chatflowsController.getSinglePublicChatbotConfig - id not provided!`
             )
         }
+
+        // This endpoint returns the flow's chatbot configuration AND its sanitised `flowData` —
+        // the node graph, the models chosen, which credential TYPES are wired. It had no access
+        // check of any kind, so every private flow's definition was readable by anyone holding
+        // its UUID. Found in QA against a live instance: 48 KB of a flow with `isPublic = 0`,
+        // returned to an unauthenticated request from the public internet.
+        //
+        // The lookup has to happen before the ladder, because the ladder decides on `isPublic`
+        // and `workspaceId`. A missing flow answers 404 before any of that, which is the same
+        // answer an unauthorised caller gets for a flow that exists — so this is not an oracle.
+        const chatflow = await chatflowsService.getChatflowById(req.params.id)
+        if (!chatflow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+        const denied = await denyUnlessPublicOrOwned(req, res, chatflow)
+        if (denied) return denied
+
         const apiResponse = await chatflowsService.getSinglePublicChatbotConfig(req.params.id)
         return res.json(apiResponse)
     } catch (error) {
