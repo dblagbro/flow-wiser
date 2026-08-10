@@ -31,6 +31,33 @@ const createCredential = async (requestBody: any) => {
 }
 
 // Delete all credentials from chatflowid
+/**
+ * Does this credential belong to this workspace?
+ *
+ * A membership test, deliberately returning a boolean rather than the credential: the callers that
+ * need this are decrypting the credential for their own use and must not be tempted to take the row
+ * from here and skip their own scoping.
+ *
+ * Exists because `getCredentialData` in packages/components resolves `findOneBy({ id })` with no
+ * workspace predicate — correct for its own callers, which have already established scope, and a
+ * cross-tenant IDOR for any caller that has not. GHSA-8gj2-2cvc-6xx7 was exactly that: an
+ * unauthenticated endpoint passing a body-supplied id straight through.
+ */
+const credentialBelongsToWorkspace = async (credentialId: string, workspaceId: string): Promise<boolean> => {
+    if (!credentialId || !workspaceId) return false
+    try {
+        const appServer = getRunningExpressApp()
+        const found = await appServer.AppDataSource.getRepository(Credential).findOneBy({
+            id: credentialId,
+            workspaceId
+        })
+        return !!found
+    } catch (error) {
+        // Fail closed: an error here means ownership is indeterminate.
+        return false
+    }
+}
+
 const deleteCredentials = async (credentialId: string, workspaceId: string): Promise<any> => {
     try {
         const appServer = getRunningExpressApp()
@@ -265,6 +292,7 @@ const revealCredentialById = async (credentialId: string, workspaceId: string): 
 }
 
 export default {
+    credentialBelongsToWorkspace,
     createCredential,
     deleteCredentials,
     getAllCredentials,

@@ -2018,6 +2018,19 @@ export const createCodeExecutionSandbox = (
     additionalSandbox: ICommonObject = {}
 ): ICommonObject => {
     const sandbox: ICommonObject = {
+        // `Proxy` and `Reflect` are shadowed because the published vm2 escapes build a Proxy whose
+        // traps run with host privileges — it is the primitive the elttam technique turns into RCE.
+        //
+        // Worth recording how this got here: docs/COMPLIANCE-POSTURE.md, docs/BASELINE, the issue
+        // register and two CHANGELOG entries all stated "Proxy removed from the sandbox" as a
+        // shipped mitigation. It was not. The only occurrence of the word `Proxy` in this file was a
+        // COMMENT saying it had been removed. An advisory sweep found the gap, and the claim was
+        // about to be published to customers as evidence the sandbox was hardened.
+        //
+        // This does not make vm2 safe — it is deprecated and unpatchable, and the real answer
+        // remains CODE_EXECUTION_MODE=disabled or =e2b. It makes the documented mitigation true.
+        Proxy: undefined,
+        Reflect: undefined,
         $input: input,
         util: undefined,
         Symbol: undefined,

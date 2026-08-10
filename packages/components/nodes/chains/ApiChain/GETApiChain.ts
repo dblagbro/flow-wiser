@@ -1,6 +1,7 @@
 import { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { PromptTemplate } from '@langchain/core/prompts'
-import { APIChain } from '@langchain/classic/chains'
+// Local implementation: routes the LLM-generated URL through secureFetch. See getCore.ts.
+import { APIChain } from './getCore'
 import { getBaseClasses } from '../../../src/utils'
 import { ICommonObject, INode, INodeData, INodeParams, IServerSideEventStreamer } from '../../../src/Interface'
 import { ConsoleCallbackHandler, CustomChainHandler, additionalCallbacks } from '../../../src/handler'

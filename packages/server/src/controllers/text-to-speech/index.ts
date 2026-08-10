@@ -3,6 +3,7 @@ import { convertTextToSpeechStream } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import chatflowsService from '../../services/chatflows'
+import credentialsService from '../../services/credentials'
 import textToSpeechService from '../../services/text-to-speech'
 import { databaseEntities } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
@@ -71,7 +72,37 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
             voice = providerConfig.voice
             model = providerConfig.model
         } else {
-            // Use TTS config from request body
+            // TTS config supplied in the request body — the builder's "preview this voice" path.
+            //
+            // GHSA-8gj2-2cvc-6xx7 / GHSA-5fw2-mwhh-9947. `/api/v1/text-to-speech/generate` is in
+            // WHITELIST_URLS so the embedded widget can speak a PUBLIC chatflow's replies without a
+            // session. The branch above enforces that: no session means the chatflow must be public.
+            //
+            // This branch had no such check. Omitting `chatflowId` skipped the isPublic gate
+            // entirely, and the body's `credentialId` went straight to `getCredentialData`, which
+            // resolves `findOneBy({ id })` with NO workspace predicate — so an unauthenticated
+            // caller who knew any credential UUID could have the server decrypt it and spend against
+            // the owner's OpenAI/ElevenLabs key. Confirmed live against a production host: HTTP 200
+            // and synthesis began, with no session, no API key and no permission.
+            //
+            // There is no legitimate anonymous use of this branch. Choosing an arbitrary credential
+            // is an authoring action, so it requires a session, and the credential must belong to a
+            // workspace the caller is actually in — otherwise this is a cross-tenant credential IDOR
+            // for any signed-in user.
+            if (!req.user?.activeWorkspaceId) {
+                throw new InternalFlowiseError(
+                    StatusCodes.UNAUTHORIZED,
+                    `Error: textToSpeechController.generateTextToSpeech - a session is required to supply a credential directly. ` +
+                        `Anonymous callers must reference a public chatflow via chatflowId.`
+                )
+            }
+            const ownsCredential = await credentialsService.credentialBelongsToWorkspace(bodyCredentialId, req.user.activeWorkspaceId)
+            if (!ownsCredential) {
+                throw new InternalFlowiseError(
+                    StatusCodes.UNAUTHORIZED,
+                    `Error: textToSpeechController.generateTextToSpeech - credential does not belong to this workspace!`
+                )
+            }
             provider = bodyProvider
             credentialId = bodyCredentialId
             voice = bodyVoice
