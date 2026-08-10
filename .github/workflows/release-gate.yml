@@ -54,12 +54,22 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
                   REPO: ${{ github.repository }}
+                  EVENT_NAME: ${{ github.event_name }}
+                  PUSH_SHA: ${{ github.sha }}
+                  # Bound through `env`, never interpolated into the script body. A git tag may
+                  # legally contain `$`, backticks and parentheses — `git tag 'v1$(id)'` is accepted
+                  # — so `${{ github.event.release.tag_name }}` inside a `run:` string is command
+                  # injection by anyone who can cut a release. It executed in THIS step, which
+                  # writes the sha the verdict is computed from, so the gate could be made to bless
+                  # a red commit. Found by QA on the day this workflow was written.
+                  TAG_NAME: ${{ github.event.release.tag_name }}
+                  INPUT_REF: ${{ inputs.ref }}
               run: |
                   set -euo pipefail
-                  case "${{ github.event_name }}" in
-                    push)              REF="${{ github.sha }}" ;;
-                    release)           REF="$(gh api "repos/$REPO/git/refs/tags/${{ github.event.release.tag_name }}" --jq '.object.sha')" ;;
-                    workflow_dispatch) REF="$(gh api "repos/$REPO/commits/${{ inputs.ref }}" --jq '.sha')" ;;
+                  case "$EVENT_NAME" in
+                    push)              REF="$PUSH_SHA" ;;
+                    release)           REF="$(gh api "repos/$REPO/git/refs/tags/$TAG_NAME" --jq '.object.sha')" ;;
+                    workflow_dispatch) REF="$(gh api "repos/$REPO/commits/$INPUT_REF" --jq '.sha')" ;;
                   esac
                   # An annotated tag points at a tag object, not a commit. Dereference it, or every
                   # check lookup silently finds nothing and this gate passes by accident — the exact
@@ -111,11 +121,17 @@ jobs:
                     if [ -z "$line" ]; then FAILED="$FAILED\n  MISSING  $prefix* — no such check ran"; continue; fi
                     name="$(printf '%s' "$line" | cut -f1)"
                     conclusion="$(printf '%s' "$line" | cut -f3)"
-                    # `skipped` and `neutral` are how a conditional check reports "not applicable";
-                    # treating them as failure would make the gate unusable. Anything else is failure.
+                    # ONLY `success` counts. `skipped` used to be accepted here on the reasoning
+                    # that it means "a conditional check that does not apply" — but a check can be
+                    # made to report `skipped` by adding `if: false` to its job, and the clean-room
+                    # guard's protected paths did not cover `.github/workflows/**`. So a PR could
+                    # disable the guard that is supposed to police it, and both this gate and branch
+                    # protection would report green because nothing ever reported failure.
+                    #
+                    # A required check that did not run is a required check that did not pass.
                     case "$conclusion" in
-                      success|skipped|neutral) echo "  OK       $name ($conclusion)" ;;
-                      *)                       FAILED="$FAILED\n  FAILED   $name ($conclusion)" ;;
+                      success) echo "  OK       $name ($conclusion)" ;;
+                      *)       FAILED="$FAILED\n  FAILED   $name ($conclusion — only 'success' satisfies a required check)" ;;
                     esac
                   done
 
@@ -147,8 +163,10 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
                   REPO: ${{ github.repository }}
+                  TAG_NAME: ${{ github.event.release.tag_name }}
+                  RELEASE_ID: ${{ github.event.release.id }}
               run: |
                   set -euo pipefail
-                  gh api -X PATCH "repos/$REPO/releases/${{ github.event.release.id }}" -F draft=true >/dev/null
-                  echo "::warning::Release ${{ github.event.release.tag_name }} was reverted to a draft because its commit did not pass CI."
-                  echo "Reverted **${{ github.event.release.tag_name }}** to a draft — its commit did not pass CI." >> "$GITHUB_STEP_SUMMARY"
+                  gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -F draft=true >/dev/null
+                  echo "::warning::Release $TAG_NAME was reverted to a draft because its commit did not pass CI."
+                  echo "Reverted **$TAG_NAME** to a draft — its commit did not pass CI." >> "$GITHUB_STEP_SUMMARY"

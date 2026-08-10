@@ -1,0 +1,53 @@
+# Bug log — QA of 3.1.4-fw8-rc2
+
+**Run:** 2026-08-09/10 · **Candidate:** `3.1.4-fw8-rc2` · **Fixes on:** `fix/open-core-route-gating` (PR #8)
+
+Full detail per finding lives in the domain reports; this is the register.
+
+| ID | Finding | Severity | Status |
+|---|---|---|---|
+| SEC-01 | /api/v1/public-chatbotConfig returns full flowData of a NON-public flow, unauthenticated | **CRITICAL** | FIXED — shared auth ladder; NOT YET DEPLOYED |
+| UI-01 | First login is impossible: password-change gate blocks the SPA document; every 403 maps to /unauthorized | **BLOCKER** | FIXED |
+| OPS-01 | credential:rotate-encryption reports 'nothing to do' when the key is WRONG | **HIGH** | FIXED — trial decrypt per key version |
+| OPS-03 | doctor has no encryption-key check; a wrong-key restore passes 9/9 | **HIGH** | FIXED — new Crypto check |
+| API-03 | `read-only` can execute flows, upsert vectors, delete chat history | **HIGH** | FIXED — guards on 4 routers |
+| UI-02 | /sso-config white-screens the entire app on an empty loginmethod response | **HIGH** | FIXED — normalised + real error boundary |
+| STATIC-03 | Mandatory secrets absent from every .env.example; fresh install cannot issue sessions | **HIGH** | FIXED |
+| INFRA-06 | README compose quickstart pulls upstream's non-redistributable image | **HIGH** | FIXED |
+| STATIC-01 | path-to-regexp pinned 8 majors below what express-5 consumers declare | **HIGH** | FIXED — scoped to express@4 |
+| OPS-02 | Undocumented `flowise user <email> <password>`: argv password, no audit row | **HIGH** | FIXED — command removed |
+| SEC-B-02 | `::` absent from the SSRF deny list; routes to loopback | **HIGH** | FIXED + negative test |
+| CI-01 | release-gate: tag name interpolated into shell; `skipped` counted as success | **HIGH** | FIXED |
+| CI-02 | Clean-room guard's protected paths did not cover `.github/workflows/**`, so a PR could disable the guard policing it | **HIGH** | **PARTIAL** — release gate no longer accepts `skipped`; branch protection still treats a skipped required check as passing. Needs CODEOWNERS on `.github/**`. See G12 |
+| SEC-A-01 | argon2 redaction stops at the first comma; salt and digest survive | **MEDIUM** | FIXED + negative test |
+| API-01 | chatflows-streaming has no auth or ownership check | **MEDIUM** | OPEN |
+| API-09 | Unauthenticated POST /leads persists into a private flow | **MEDIUM** | OPEN |
+| OPS-04 | Credentials written with organizationId NULL; doctor goes red after normal use | **HIGH** | OPEN — production currently clean |
+| OPS-09 | audit:export --verify prints a digest and exits 0 either way | **MEDIUM** | OPEN |
+| INFRA-02 | Missing FLOWISE_SESSION_PEPPER starts a live-but-unusable server | **HIGH** | OPEN |
+| INFRA-04 | pnpm as PID 1: clean stop exits 1, zombies unreaped | **MEDIUM** | OPEN |
+| INFRA-03 | No HEALTHCHECK in image or compose | **MEDIUM** | OPEN |
+| SEC-B-01 | MCP Streamable-HTTP transport skips the SSRF guard on redirects/rebinding | **HIGH** | OPEN |
+| SEC-B-08 | Production compose is mode 664 with three literal secrets | **MEDIUM** | OPEN — operator action |
+| PERF-03 | 28,639 unauthorized requests produced 4 log lines and 0 audit rows | **MEDIUM** | OPEN |
+| UI-04 | No visible focus indicator on primary navigation (WCAG 2.4.7) | **HIGH** | OPEN |
+| UI-06 | Disabled button text 1.06:1 in dark mode (AA needs 4.5:1) | **HIGH** | OPEN |
+| SEC-B-03 | docker-image-dockerhub.yml armed, pushes to upstream's namespace | **MEDIUM** | OPEN |
+| CRED-01 | Production password written to 11 files on disk during QA | **HIGH** | SCRUBBED — rotate the password |
+
+## Counts
+
+- Findings recorded: **27**
+- Fixed in PR #8: **13**
+- Open: **13**
+
+## The pattern underneath
+Four separate controls could not fail: the release gate (`skipped` accepted, tag-name injection),
+`audit:export --verify` (exits 0 regardless), `credential:rotate-encryption` (compared key versions,
+not key identity), and the Dockerfile version assertion (only fires when the argument the docs omit
+is passed). Three verifications performed during the work had the same defect: `git push --dry-run`
+against a protected branch, the IP allowlist tested from inside the allowlist, and the release gate
+tested only with a cooperative tag name.
+The rule adopted in response: **a guard ships with a test that feeds it the bad input and asserts
+refusal.** See `packages/server/test/security/negative-controls.test.ts`.
+

@@ -296,33 +296,60 @@ Download and Install [NodeJS](https://nodejs.org/en/download) >= 20.0.0
 
 ## 🐳 Docker
 
+### Docker — quickest path
+
+Two values are **required**. The server will not issue sessions without them and will not invent
+them, because a generated encryption key silently strands every credential written under the
+previous one. Generate your own; the keyring rejects published example strings.
+
+```bash
+docker run -d --name flow-wiser -p 3000:3000 \
+  -e IDENTITY_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e FLOWISE_SESSION_PEPPER="$(openssl rand -base64 32)" \
+  -v flow-wiser-data:/root/.flowise \
+  dblagbro/flow-wiser:3.1.4-fw8
+```
+
+**Record both values somewhere safe and separate from your backups.** They live only in the
+environment, so a backup of `/root/.flowise` alone cannot restore a working instance.
+
+Then create the first administrator — there is no self-registration:
+
+```bash
+docker exec -it flow-wiser flowise admin:create --email you@example.com --role super-admin
+```
+
+The password is prompted for on the terminal only; it is never accepted as a flag, a pipe, or an
+environment variable. Open [http://localhost:3000](http://localhost:3000).
+
 ### Docker Compose
 
-1. Clone the Flowise project
-2. Go to `docker` folder at the root of the project
-3. Copy `.env.example` file, paste it into the same location, and rename to `.env` file
-4. `docker compose up -d`
-5. Open [http://localhost:3000](http://localhost:3000)
-6. You can bring the containers down by `docker compose stop`
+> ⚠️ The `docker/` directory is **upstream's** compose file and pins `flowiseai/flowise:latest` —
+> the non-redistributable image this fork exists to replace (see [FORK.md](FORK.md)). It is kept
+> for reproducing upstream's images, not for running Flow-Wiser. Write your own compose file using
+> the `docker run` invocation above as the reference.
 
-### Docker Image
+### Building the image yourself
 
-1. Build the image locally:
+`NODE_VERSION=20` is not optional — Node 24 cannot compile `better-sqlite3`. Passing
+`FLOWISE_VERSION` makes the build assert that the tag matches what the tree declares, so a
+mislabelled image cannot be produced:
+
+1. Build:
 
     ```bash
-    docker build --no-cache -t flowise .
+    docker build --no-cache --pull \
+      --build-arg NODE_VERSION=20 \
+      --build-arg FLOWISE_VERSION=3.1.4-fw8 \
+      -t dblagbro/flow-wiser:3.1.4-fw8 .
     ```
 
-2. Run image:
+2. Run it with the same `-e`/`-v` flags shown above.
+
+3. Stop:
 
     ```bash
-    docker run -d --name flowise -p 3000:3000 flowise
-    ```
-
-3. Stop image:
-
-    ```bash
-    docker stop flowise
+    docker stop flow-wiser
     ```
 
 ## 👨‍💻 Developers

@@ -209,8 +209,24 @@ export const SECRET_VALUE_PATTERNS: readonly { name: string; pattern: RegExp; re
     { name: 'jwt', pattern: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, replacement: REDACTION_MARKER },
     /** bcrypt modular-crypt hash — §10: password hashes are "recorded by reference, never by value" */
     { name: 'bcrypt-hash', pattern: /\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}/g, replacement: REDACTION_MARKER },
-    /** argon2 PHC string, for the day PREFERRED_ALGORITHM moves (passwords.ts) */
-    { name: 'argon2-hash', pattern: /\$argon2(?:id|i|d)\$[^\s"',)}\]]+/g, replacement: REDACTION_MARKER },
+    /**
+     * argon2 PHC string, for the day PREFERRED_ALGORITHM moves (passwords.ts).
+     *
+     * The comma matters. The original class was `[^\s"',)}\]]+`, which excludes `,` — and every
+     * real argon2 string carries `m=65536,t=3,p=4`, so the match stopped at the first comma and
+     * left the salt and the digest in clear text. It redacted a comma-free argon2 string perfectly,
+     * which is exactly why it survived review and why the test for it is a NEGATIVE one.
+     *
+     * `$` is included because PHC uses it as the field separator; the run still terminates on
+     * whitespace, quotes and brackets so it cannot swallow the rest of a log line.
+     */
+    { name: 'argon2-hash', pattern: /\$argon2(?:id|i|d)\$[^\s"')}\]]+/g, replacement: REDACTION_MARKER },
+    /**
+     * libpq keyword/value connection string — `host=db user=x password=secret dbname=y`.
+     * The URL form (`postgres://u:p@h`) was already covered by `url-userinfo`; this space-delimited
+     * form is what actually appears in a driver error message, and it passed through untouched.
+     */
+    { name: 'libpq-password', pattern: /\bpassword\s*=\s*[^\s;'"]+/gi, replacement: 'password=' + REDACTION_MARKER },
     { name: 'aws-access-key-id', pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: REDACTION_MARKER },
     /** Provider key prefixes common in credentials stored by flow nodes (OpenAI-style, GitHub, Slack) */
     { name: 'prefixed-api-key', pattern: /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}\b/g, replacement: REDACTION_MARKER },

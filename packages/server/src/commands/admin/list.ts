@@ -21,7 +21,8 @@ import { LockoutState, RecoveryAuditAction, RecoveryCommand, RecoveryContext, lo
  * runs: "who can actually get into this instance?"
  *
  * ── Why it shows more than a list of addresses ───────────────────────────────────────────────
- * The Apache-2.0 `flowise user` command prints email addresses and a count. That answers "does this
+ * The Apache-2.0 `flowise user` command — removed in this release, see below — printed email
+ * addresses and a count. That answers "does this
  * address exist", which is almost never the question during a lockout. The question is "why can
  * nobody log in", and the answers are all in the columns below: the account is `inactive`, or it is
  * locked out, or it holds a role with no authority, or it is SSO-only and the provider is down, or
