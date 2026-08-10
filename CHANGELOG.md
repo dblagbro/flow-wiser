@@ -28,6 +28,95 @@ first.
 
 ---
 
+## [3.1.4-fw9] — 2026-08-10
+
+The remaining thirteen findings from the `fw8` QA regression. `fw8` fixed the nine that blocked a
+release; this closes the rest, plus a production data defect found while investigating a broken
+canvas.
+
+### Unauthenticated surfaces
+
+- **The MCP Streamable-HTTP transport validated a hostname once and never again.** It called
+  `checkDenyList(url)` and then handed the URL to the SDK with no custom `fetch`, so the SDK
+  followed redirects and re-resolved DNS itself — neither checked. The SSE fallback *in the same
+  function* already passed `secureFetch`, which walks redirects manually and pins the validated IP.
+  The guard existed; the path that normally runs did not use it.
+- **`/chatflows-streaming/:id`** loaded and parsed any flow's `flowData` by UUID with no ownership
+  check, leaking existence (200 vs a 500 naming the internal service) and node-graph detail.
+- **`POST /leads`** accepted anonymous writes onto private flows and persisted them into the owner's
+  lead list. Capturing a lead is the widget's job, so anonymous is legitimate — but only against a
+  flow that is actually published.
+
+### Tenancy
+
+Credentials, tools, variables and assistants set `workspaceId` on create and never the denormalised
+`organizationId`. Chatflows got this in `fw6`; the other four were missed. The consequence is that
+`flowise doctor` goes **red on a fresh instance after ordinary use** — QA reproduced it at 305/305.
+Production is clean today only because its rows predate the API write path.
+
+### Operations
+
+- **`audit:export --verify` could not fail.** It printed a digest and exited 0 whether or not it
+  matched; on deliberately tampered data it printed the *different* digest with no warning. The
+  tamper-evidence control worked only if an operator compared 64 hex characters by eye. `--expect
+  <sha256>` now exits 3 on mismatch.
+- **A missing `FLOWISE_SESSION_PEPPER` no longer starts a server nobody can log into.** It logged an
+  error and kept serving. The code's stated reason for warning rather than throwing was that
+  `initDatabase` swallowed the exception — that catch now rethrows, so the reasoning was stale and
+  the behaviour is corrected to match it.
+- **`HEALTHCHECK` added.** There was none, while compose pairs `restart: always` with no health
+  condition — which never restarts a hung-but-alive process.
+- **`node` execs as PID 1.** `pnpm start` put four processes under PID 1, so `docker stop` returned
+  ExitCode 1 with `ELIFECYCLE` instead of 0/143 and nothing reaped orphans. Every clean stop looked
+  like a crash, which is what makes a real crash unremarkable.
+
+### Observability
+
+28,639 unauthorized requests produced **four log lines and zero audit rows**. Denials are now counted
+and summarised once per window — a smoke alarm rather than per-denial logging, which would turn an
+auth incident into a log-flood incident and hand an attacker a cheap way to fill the disk.
+
+### Supply chain
+
+`docker-image-dockerhub.yml` was dispatchable and pushes to `flowiseai/flowise` — **upstream's**
+namespace — with this fork's token, building the non-redistributable image. The project's one
+documented licence incident was a button press away, gated only by a comment. Every job now carries
+`if: false`. `CODEOWNERS` added for `.github/**` and the security-critical paths.
+
+### Accessibility, measured rather than eyeballed
+
+- **Focus indicators.** None existed anywhere in the theme; tabbing the whole sidebar reported
+  `outline: none`. Applied globally at `:focus-visible` — the defect was that each component had to
+  remember — so pointer users still see nothing. Ring contrast 5.72:1 to 8.52:1 against the surfaces
+  it lands on, against WCAG 1.4.11's 3:1.
+- **Disabled text.** `text.disabled` was undefined, so MUI fell back to its *light-theme*
+  `rgba(0,0,0,0.26)`. On the dark background that is **1.06:1** — black on near-black. Now 6.03:1
+  dark and 4.62:1 light, both clearing AA.
+
+### One production flow could not be opened
+
+`"[object Object]" is not valid JSON`. SQLite storage classes are per **value**, not per column, so a
+row whose `flowData` was once written as bytes is stored `BLOB` even though the column is declared
+`text` — and the driver returns a Buffer, which serialises to an object. 24 of 25 rows were `text`;
+one was `blob`.
+
+Fixed at both levels: a column transformer normalises Buffer→string on every read path, and the
+single production row was converted with `CAST(... AS TEXT)` behind a `typeof(flowData)='blob'`
+guard, after a consistent `.backup`. Content md5 identical before and after.
+
+The transformer matters more than the data fix — no migration can stop an import or a raw `INSERT`
+reintroducing it silently.
+
+### Known open, and why
+
+`/vector/upsert/` dual-auth is a design change (valid API key **or** session with permission), not a
+guard — adding one blind would break every key-based integration. `CODEOWNERS` does nothing until
+"Require review from Code Owners" is enabled on `main`. The production compose is now `640` but still
+holds literal secrets. The brand primary is 3.12:1 against white and changing it is a brand decision,
+not a defect to fix quietly.
+
+---
+
 ## [3.1.4-fw8] — 2026-08-10
 
 **The line in the sand**, and the first release to be gated on a full QA regression rather than
