@@ -28,84 +28,95 @@ first.
 
 ---
 
-## [3.1.4-fw8] — 2026-08-09
+## [3.1.4-fw8] — 2026-08-10
 
-**The line in the sand.** Everything before this was released while the build was red. This is the
-first version whose released commit passes CI, and it exists so QA has a baseline whose evidence
-holds rather than one whose claims must be taken on trust. `docs/BASELINE-3.1.4-fw8.md` states in
-full what is verified, how, and what is explicitly not fixed.
+**The line in the sand**, and the first release to be gated on a full QA regression rather than
+released and then examined. `docs/BASELINE-3.1.4-fw8.md` states what is verified and by which check;
+`docs/bug-log.md` lists all 27 findings with status; `docs/release-readiness.md` states what is still
+open.
 
-**No product code changed between fw7 and fw8.** What changed is that the claims about it became
-checkable.
+A deep QA pass across seven domains — static/build, API, sandbox+crypto, web security+supply chain,
+containers/infra, ops/CLI/backup-restore, performance, and UI/accessibility — found 27 issues. Nine
+were release blockers. All nine are fixed here.
 
-### The build was red for four days and three releases shipped anyway
+### The one that was live
 
-Node CI failed from 2026-08-05 to 2026-08-09. fw5, fw6 and fw7 were tagged, released and deployed in
-that window, two of them while an external security team held the repository. Four independent
-failures were stacked so each was invisible until the one above it was removed:
+`GET /api/v1/public-chatbotConfig/:id` returned the **complete flow definition** — node graph, model
+choices, which credential types are wired — for flows explicitly marked `isPublic = 0`, to
+unauthenticated callers on the public internet. Confirmed against the running production instance:
+48,523 bytes, HTTP 200, no credentials required. No credential *values* were exposed.
 
-- **`pnpm-lock.yaml` was stale.** The flow-versioning work added `isomorphic-git` and never
-  regenerated it, so `--frozen-lockfile` — what CI runs, and what anyone cloning the repository runs
-  — failed before jest started. Production was unaffected; the Docker build does not use that flag.
-- **45 lint errors**, including 19 `eslint-disable` directives naming
-  `@typescript-eslint/no-var-requires` — a rule this repository has never defined, since the root
-  config registers the parser but not the plugin. They suppressed nothing and errored for naming an
-  unknown rule.
-- **`@tootallnate/once` was pinned to an ESM-only major.** GHSA-vpq2-c234-7xj6 patches two release
-  lines, 2.0.1 and 3.0.1; the override jumped to `>=3.0.1`, which neither consumer
-  (`http-proxy-agent@4` and `@5`, declaring `1` and `2`) was written against. Node 20.19+ can
-  `require()` ESM so production never noticed; jest's CJS registry cannot, so two suites failed to
-  parse. Corrected to `>=2.0.1 <3` — satisfies the advisory and stays CJS.
-- **Cypress started the server with no encryption key** and died at boot with `KeyringError`. The
-  keyring never invents a key, deliberately. Cypress predates the identity layer and was never given
-  one.
+Its sibling `/public-chatflows/:id` had the correct check, which is what proves this was an omission
+rather than a decision. Both endpoints now share **one** authorization function, because two copies
+of a security check is one copy and one liability — and that is precisely how one of them came to
+have no copy at all.
 
-### 30 tests that had never run
+### `read-only` was not read-only
 
-`packages/server/test/identity/recovery-cli.test.ts` — the only evidence that
-REQUIREMENTS-MIGRATION §7 holds — was committed, counted as coverage, and had never executed once.
-Beneath the failures above, the global `typeorm` decorator mock left its real `DataSource` a stub
-with no `initialize()`. `jest.config.js` now declares two projects so a database-backed suite gets a
-real ORM.
+A user holding only `*:view` could run flows (`internal-prediction` — LLM spend, and in-process code
+execution when the flow contains a code node), write embeddings, generate agentflows, and DELETE
+conversation history with a 200. Guards added to four routers, with read/abort/delete separated by
+severity. `/vector/upsert/` is deliberately left unguarded: it is the API-key surface external
+integrations call, and making it "valid key OR session with permission" is a design change rather
+than a guard.
 
-It had also rotted while dead: five assertions were asserting schema defects that
-`1780000000012-AddTenancyColumnsToCoreTables` had already **repaired**. Those were flipped to assert
-the fixed state rather than deleted, so a check that silently stops running stays distinguishable
-from a defect that got fixed. Test count 937 → **974**.
+### A fresh install could not be installed, and then could not be used
 
-### HSTS at the edge
+Neither `IDENTITY_ENCRYPTION_KEY` nor `FLOWISE_SESSION_PEPPER` appeared in **any** `.env.example`,
+while the server hard-refuses to issue sessions without the pepper. The README's Compose quickstart
+pointed at `docker/`, which pins `flowiseai/flowise:latest` — the non-redistributable upstream image
+this fork exists to replace.
 
-`Strict-Transport-Security: max-age=31536000`, deliberately without `includeSubDomains` and without
-`preload`. Every HTTPS host at this edge is named in the server blocks and sends HSTS for itself, so
-coverage is identical, while `includeSubDomains` would pin unenumerated subdomains for a year in a
-cache no operator can reach — and two other domains sharing this proxy have had expired certificates
-since 2026-03-18. Repeated inside all 14 locations that set their own `add_header`, because nginx
-discards every inherited `add_header` in such a location.
+And once past that, the first login was impossible: `admin:create` sets `mustChangePassword`, the
+password-change middleware is mounted globally so it answered the browser's **document** request for
+`/reset-password` with 403 JSON, and the client mapped every 403 to `/unauthorized` — leaving the
+server's own `redirectTo` hint as unreachable code. The account could only be recovered from the
+host. That was the out-of-box experience.
 
-Applying it exposed that the edge container had been serving a **stale configuration since
-2026-08-07**: `nginx.conf` is bind-mounted as a file, and a file bind mount is pinned to an inode at
-container start. `nginx -s reload` reported success the entire time. The only functional difference
-was the IP allowlist removed on 2026-08-07 at the operator's direction — that change had never taken
-effect, and every check of it had been issued from inside the allowlisted network.
+### Silent unrecoverability
 
-### Controls, so none of this can recur quietly
+Restoring a backup without its encryption key — or with a different key carrying the same version
+number, which a default of `1` makes likely — produced an instance that started cleanly, passed
+`doctor` 9 of 9, and reported "nothing to do" from `credential:rotate-encryption`. The first symptom
+would be a 500 days later, possibly after the good backup had aged out of retention.
 
-- **Branch protection** on `main` with `enforce_admins`: direct pushes are rejected, not logged as
-  bypassed.
-- **`release-gate.yml`**, on tag push and release publication. It cannot prevent a tag being created
-  — Actions runs after the ref is written — so it marks the tag red and reverts a published release
-  to a draft. Docker Hub is **not** covered, because nothing in CI pushes there.
-- **`scripts/assert-test-discovery.js`**, comparing every test file on disk against
-  `jest --listTests`. A test-count floor was rejected: it drifts downward as tests are legitimately
-  deleted and cannot distinguish a deliberate removal from a suite that stopped being discovered.
+`doctor` now performs a **real decrypt** of one record per distinct key version, and rotation probes
+before it trusts a version number. Verified on 305 credentials: wrong key fails and exits 1, right
+key passes and rotates normally.
 
-Each was tested against the failure it exists to catch, not merely written.
+### Also fixed
+
+- **`::`** was missing from the SSRF deny list and routes to loopback — `curl http://[::]:3100/`
+  reached a live service. `100.64.0.0/10` and `198.18.0.0/15` added with it.
+- The **argon2** redaction pattern excluded `,`, and every real PHC string contains
+  `m=65536,t=3,p=4` — so matching stopped at the first comma and salt and digest survived in clear.
+- `path-to-regexp` was pinned **eight majors** below what express-5 consumers declare, breaking route
+  registration for the Brave-MCP node and the MCP OAuth router. Third bad override found in a day.
+- `flowise user <email> <password>` removed: argv password, no audit row, working login.
+- `/sso-config` blanked the **entire application** on an empty API response. Fixed at source, and
+  every protected route now sits behind a real React error boundary — the existing `ErrorBoundary`
+  was a display component that cannot catch a thrown render or effect.
+
+### The pattern, and the rule adopted because of it
+
+Four controls in this repository **could not fail**: the release gate (accepted `skipped` as success,
+and interpolated a tag name into a shell command — a git tag may legally contain `$(...)`),
+`audit:export --verify` (prints a digest, exits 0 either way), `credential:rotate-encryption`
+(compared key versions, not key identity), and the Dockerfile version assertion (only fires when
+given the argument the docs omit). Three verifications performed during the work had the same defect:
+`git push --dry-run` against a protected branch, an IP allowlist tested from inside the allowlist,
+and the release gate tested only with a cooperative tag.
+
+**A guard now ships with a test that feeds it the bad input and asserts refusal.** See
+`packages/server/test/security/negative-controls.test.ts` — written first, watched fail, then fixed.
 
 ### Known open
 
-`vm2` remains the default execution path. 12 dangling credential references in operator data keep
-`flowise doctor` exiting 1. Audit tamper-*proofing*, alerting and data classification are absent, and
-image publication and edge drift are ungated. Full list in `docs/BASELINE-3.1.4-fw8.md`.
+`/vector/upsert/` dual-auth; credentials written with a null tenant key (production is clean, but it
+will drift); a missing session pepper starts a live-but-unusable server; `pnpm` as PID 1 makes a clean
+stop exit 1; no HEALTHCHECK; the MCP transport skips the SSRF guard on redirects; an unauthorized
+burst of 28,639 requests produced 4 log lines and 0 audit rows; and the accessibility set (focus
+indicators, contrast). Full list in `docs/bug-log.md`.
 
 ---
 

@@ -13,6 +13,7 @@ import scheduleService from '../../services/schedule'
 import { GeneralErrorMessage } from '../../utils/constants'
 import { assertPublicFlowHasNoCodeNode } from '../../utils/codeNodeGuard'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import { denyUnlessPublicOrOwned } from '../../utils/flowAccess'
 import { getPageAndLimitParams } from '../../utils/pagination'
 import { checkUsageLimit } from '../../utils/quotaUsage'
 import { RateLimiterManager } from '../../utils/rateLimit'
@@ -243,47 +244,6 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
         return res.json(apiResponse)
     } catch (error) {
         next(error)
-    }
-}
-
-/**
- * The authorisation ladder for the two `/public-*` endpoints, in ONE place.
- *
- * These endpoints are reachable without a session — that is their purpose, because an embedded
- * chat widget has no session. What decides access is the flow's own `isPublic` flag, and after
- * that, workspace membership.
- *
- * It lives here as a shared function because the two endpoints previously implemented this
- * separately and then drifted: `/public-chatflows/:id` enforced the ladder correctly while
- * `/public-chatbotConfig/:id` enforced nothing at all, and returned the full `flowData` of a
- * private flow to anyone who knew its UUID. Two copies of a security check are one copy and one
- * liability; there is now no second copy to forget.
- *
- * Returns `null` when the caller is allowed to proceed. Otherwise it has already written the
- * response and the caller must return immediately.
- */
-const denyUnlessPublicOrOwned = async (
-    req: Request,
-    res: Response,
-    chatflow: { isPublic?: boolean | null; workspaceId?: string }
-): Promise<Response | null> => {
-    // Public flows are public. This is the widget's path.
-    if (chatflow.isPublic) return null
-
-    // Not public: from here on a caller must be signed in AND in the owning workspace.
-    if (!req.user) return res.status(StatusCodes.UNAUTHORIZED).json({ message: GeneralErrorMessage.UNAUTHORIZED })
-
-    const queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
-    try {
-        const workspaceUser = await new WorkspaceUserService().readWorkspaceUserByUserId(req.user.id, queryRunner)
-        if (workspaceUser.length === 0)
-            return res.status(StatusCodes.NOT_FOUND).json({ message: WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND })
-        const workspaceIds = workspaceUser.map((user) => user.workspaceId)
-        if (!workspaceIds.includes(chatflow.workspaceId as string))
-            return res.status(StatusCodes.BAD_REQUEST).json({ message: 'You are not in the workspace that owns this chatflow' })
-        return null
-    } finally {
-        await queryRunner.release()
     }
 }
 
