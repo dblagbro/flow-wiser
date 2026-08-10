@@ -1,6 +1,6 @@
 # Status — building in the open
 
-**Last updated: 2026-08-06**
+**Last updated: 2026-08-09**
 
 This project is developed in public, including the unfinished parts. Work-in-progress is
 pushed as it is written, before it compiles or runs.
@@ -18,13 +18,22 @@ That is deliberate, for three reasons:
 
 ## What actually works right now
 
-**`3.1.4-fw4` is released and is the build to deploy.** It is Apache-2.0-only, it boots,
-and a fresh install works. Earlier entries on this page said the Apache-2.0 work "does not
-run. It is not deployable." That was true when written and is no longer true.
+**`3.1.4-fw8` is released and is the build to deploy.** It is Apache-2.0-only, it boots, a
+fresh install works, and — new in fw8 — its released commit passes CI.
+
+That last clause is the point of the release. `fw5`, `fw6` and `fw7` were tagged, published
+and deployed while Node CI was failing, and nothing said so; a 30-test suite covering the
+recovery CLI had never executed at all. The code in those releases was sound and is running
+in production, but the *evidence* for it was not, and this page has said "✅ Shipped" in
+places where the check backing it was not running. `docs/PROCESS-GAPS.md` (G9–G11) records
+how that happened and what now prevents it.
+
+**Read [BASELINE-3.1.4-fw8.md](BASELINE-3.1.4-fw8.md) before testing anything.** It states
+what is verified, by which check, and what is explicitly not fixed.
 
 | Thing | State |
 | --- | --- |
-| **`3.1.4-fw4` — Apache-2.0-only** | ✅ **Released.** Built from source at `dblagbro/flow-wiser` |
+| **`3.1.4-fw8` — Apache-2.0-only** | ✅ **Released.** Built from source at `dblagbro/flow-wiser` |
 | The 127 commercially licensed files | ✅ Deleted, and the build fails if any trace returns |
 | Authentication, sessions, SSO login methods | ✅ Shipped |
 | MFA — TOTP + hashed recovery codes | ✅ Shipped. Upstream had none |
@@ -39,6 +48,12 @@ run. It is not deployable." That was true when written and is no longer true.
 | `NODE_VERSION=24` unbuildable default | ✅ Fixed |
 | `vm2` 3.11.2 → 3.11.5 (6 critical sandbox escapes) | ✅ Fixed in the source tree as of `fw4`; before that, only in the npm-install Dockerfile |
 | Upstream archive (347 PRs, 698 issues, 116 advisories) | ✅ Captured before the 2026-08-10 lock |
+| Chatflow version history | ✅ Shipped in `fw5` — git-backed, `isomorphic-git` |
+| Credential encryption — AES-256-GCM, key versioning, rotation | ✅ Shipped in `fw6`. Legacy `crypto-js` records still readable; `credential:rotate-encryption` migrates them |
+| Audit export with a reproducible SHA-256 manifest, and retention | ✅ Shipped in `fw6`/`fw7` |
+| `CODE_EXECUTION_MODE` — `disabled` \| `e2b` \| `vm2`, e2b fails closed | ✅ Shipped in `fw7` |
+| HSTS at the edge | ✅ Shipped in `fw8`, verified from outside the network |
+| CI green on the released commit — 974 tests, lint, build, Cypress | ✅ First true in `fw8` |
 
 ## What is not done
 
@@ -46,9 +61,11 @@ run. It is not deployable." That was true when written and is no longer true.
 | --- | --- | --- |
 | Five identity-administration endpoints | ⬜ `501` with a reason | `/user`, `/role`, `/organization`, `/organizationuser`, `/audit`. No call site exists in the Apache-2.0 client, so building them would mean inventing behaviour |
 | Forgotten-password flow | ⬜ `501` | No transactional email path in this build, so no token can be issued. The forced-password-change flow through the same URL does work |
-| Chatflow version history | ⬜ Designed, not built | [REQUIREMENTS-VERSIONING.md](REQUIREMENTS-VERSIONING.md) |
 | ReAct Agent + AWS Bedrock nodes | ⚠️ Non-fatal load failures | Inherited upstream dependency drift. The server runs; those two nodes do not load |
-| `vm2` | ⚠️ Pinned, not replaced | A fresh escape in essentially every release line. `isolated-vm`, or disabling custom-code nodes on internet-facing deployments, is the real fix |
+| `vm2` | ⚠️ Pinned, not replaced. `CODE_EXECUTION_MODE=disabled` now removes the risk class entirely, and `=e2b` moves it off-host and fails closed | A fresh escape in essentially every release line. `isolated-vm`, or disabling custom-code nodes on internet-facing deployments, is the real fix |
+| 12 dangling credential references | ⚠️ Operator data, not a code defect — and why `flowise doctor` exits 1 |
+| Audit tamper-*proofing*, alerting, data classification | ⬜ Absent. Tamper *evidence* exists; see [COMPLIANCE-POSTURE.md](COMPLIANCE-POSTURE.md) |
+| Docker Hub publication, edge config drift | ⬜ Ungated. Nothing in CI pushes images; nothing diffs `nginx -T` against disk |
 | MySQL migrations | ⚠️ Verified by inspection | No MySQL image will unpack on the build host. Byte-identical to the MariaDB files modulo collation; MariaDB is executed |
 
 ---
@@ -97,8 +114,8 @@ Apache-2.0-only build is published.
 
 ## Where the project is going
 
-Three capabilities upstream never shipped, all Apache 2.0. Two of them are now in
-`3.1.4-fw4`:
+Three capabilities upstream never shipped, all Apache 2.0. All three have now landed —
+the third, chatflow version history, shipped in `3.1.4-fw5`:
 
 - ✅ **RBAC with real enforcement.** Upstream's 21 permissions had *no* server-side check —
   the client rendered buttons as `null` rather than disabling them, so those checks were

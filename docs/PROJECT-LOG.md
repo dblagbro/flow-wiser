@@ -4,6 +4,73 @@ Decisions, findings and requirements. Newest first.
 
 ---
 
+## 2026-08-09 — `3.1.4-fw8`: the baseline, and four days of red CI nobody saw
+
+### What happened
+
+Between 2026-08-05 and 2026-08-09 Node CI failed on every commit. Three releases — `fw5`, `fw6`,
+`fw7` — were tagged, published to Docker Hub and deployed in that window, two of them while an
+external security team held the repository. The releases were functionally sound; the deployed fw7
+passed every manual check and is still running. What was missing was any evidence that they were.
+
+The cause was one line: the flow-versioning work added `isomorphic-git` to `packages/server/package.json`
+and never regenerated `pnpm-lock.yaml`, so `--frozen-lockfile` failed before jest started.
+
+### The part that mattered more than the cause
+
+Four independent failures were stacked, each invisible until the one above it was removed:
+the lockfile, then 45 lint errors, then an ESM-only dependency pinned by a wrong security override,
+then Cypress starting the server with no encryption key. Removing any one changed nothing observable,
+which is why three days of work sat on top of it without anyone noticing.
+
+Underneath all of it, `test/identity/recovery-cli.test.ts` — 30 tests, and the only evidence that
+REQUIREMENTS-MIGRATION §7 holds — had never executed. Its docblock openly documented that `pnpm test`
+would not pick it up and offered a hand-run command instead. A comment asking a human to remember
+something is not a control. Worse, it had rotted while dead: five assertions were asserting schema
+defects that `1780000000012-AddTenancyColumnsToCoreTables` had already repaired.
+
+### Decisions
+
+- **Cut `fw8` rather than re-tag `fw7`.** No product code changed between them. Re-tagging would have
+  pointed a published release at a different tree than the image built from it, and rewriting the
+  history of a release that shipped to an external team would be worse than recording that it shipped
+  on a red build. `fw8` exists so QA has a baseline whose evidence holds.
+- **Flip the stale assertions, do not delete them.** A check that silently stops running must stay
+  distinguishable from a defect that got fixed.
+- **Reject a test-count floor** in favour of comparing the filesystem against `jest --listTests`. A
+  floor drifts downward as tests are legitimately deleted and cannot tell a deliberate removal from a
+  suite that stopped being discovered.
+- **HSTS without `includeSubDomains` or `preload`.** Every HTTPS host at this edge is named in the
+  server blocks and sends HSTS for itself, so coverage is identical; `includeSubDomains` would pin
+  unenumerated subdomains for a year. Two other domains sharing this proxy have had expired
+  certificates since 2026-03-18 — exactly where HSTS converts a clickable warning into an outage.
+- **`enforce_admins` on**, accepting that direct pushes to `main` become impossible and every change
+  needs a PR. The previous setting printed `Bypassed rule violations` and let the push through, which
+  is a receipt, not a gate.
+
+### Findings not related to the fork
+
+- **The edge had been serving a stale configuration since 2026-08-07.** `nginx.conf` is bind-mounted
+  as a *file*, and a file bind mount is pinned to an inode at container start; rewriting the file made
+  a new inode and the container kept the old one. `nginx -s reload` reported success throughout. The
+  only functional difference was the IP allowlist removed on 2026-08-07 at the operator's direction —
+  **that change had never taken effect.**
+- **Verifications that could not fail.** Every check of that allowlist had been issued from this host,
+  whose address is inside it. Earlier the same day, `git push --dry-run` reported success against a
+  branch with `enforce_admins` enabled — dry-run does not evaluate protection rules. Three instances in
+  one day of a test that returns success regardless of the answer.
+
+### State at close
+
+`3.1.4-fw8` released; CI green on the released commit; 974 tests (up from 937); branch protection with
+`enforce_admins`; release gate on tags and releases; test-discovery check in CI; HSTS live and verified
+from outside the network. Open: `vm2`, 12 dangling credential references, audit tamper-proofing,
+alerting, data classification, ungated image publication, undetected edge drift.
+
+Next: full QA against `docs/BASELINE-3.1.4-fw8.md`.
+
+---
+
 ## 2026-08-05 — Fork established, patched, rebranded, published
 
 ### Context

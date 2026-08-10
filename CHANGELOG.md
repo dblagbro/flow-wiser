@@ -28,6 +28,87 @@ first.
 
 ---
 
+## [3.1.4-fw8] — 2026-08-09
+
+**The line in the sand.** Everything before this was released while the build was red. This is the
+first version whose released commit passes CI, and it exists so QA has a baseline whose evidence
+holds rather than one whose claims must be taken on trust. `docs/BASELINE-3.1.4-fw8.md` states in
+full what is verified, how, and what is explicitly not fixed.
+
+**No product code changed between fw7 and fw8.** What changed is that the claims about it became
+checkable.
+
+### The build was red for four days and three releases shipped anyway
+
+Node CI failed from 2026-08-05 to 2026-08-09. fw5, fw6 and fw7 were tagged, released and deployed in
+that window, two of them while an external security team held the repository. Four independent
+failures were stacked so each was invisible until the one above it was removed:
+
+- **`pnpm-lock.yaml` was stale.** The flow-versioning work added `isomorphic-git` and never
+  regenerated it, so `--frozen-lockfile` — what CI runs, and what anyone cloning the repository runs
+  — failed before jest started. Production was unaffected; the Docker build does not use that flag.
+- **45 lint errors**, including 19 `eslint-disable` directives naming
+  `@typescript-eslint/no-var-requires` — a rule this repository has never defined, since the root
+  config registers the parser but not the plugin. They suppressed nothing and errored for naming an
+  unknown rule.
+- **`@tootallnate/once` was pinned to an ESM-only major.** GHSA-vpq2-c234-7xj6 patches two release
+  lines, 2.0.1 and 3.0.1; the override jumped to `>=3.0.1`, which neither consumer
+  (`http-proxy-agent@4` and `@5`, declaring `1` and `2`) was written against. Node 20.19+ can
+  `require()` ESM so production never noticed; jest's CJS registry cannot, so two suites failed to
+  parse. Corrected to `>=2.0.1 <3` — satisfies the advisory and stays CJS.
+- **Cypress started the server with no encryption key** and died at boot with `KeyringError`. The
+  keyring never invents a key, deliberately. Cypress predates the identity layer and was never given
+  one.
+
+### 30 tests that had never run
+
+`packages/server/test/identity/recovery-cli.test.ts` — the only evidence that
+REQUIREMENTS-MIGRATION §7 holds — was committed, counted as coverage, and had never executed once.
+Beneath the failures above, the global `typeorm` decorator mock left its real `DataSource` a stub
+with no `initialize()`. `jest.config.js` now declares two projects so a database-backed suite gets a
+real ORM.
+
+It had also rotted while dead: five assertions were asserting schema defects that
+`1780000000012-AddTenancyColumnsToCoreTables` had already **repaired**. Those were flipped to assert
+the fixed state rather than deleted, so a check that silently stops running stays distinguishable
+from a defect that got fixed. Test count 937 → **974**.
+
+### HSTS at the edge
+
+`Strict-Transport-Security: max-age=31536000`, deliberately without `includeSubDomains` and without
+`preload`. Every HTTPS host at this edge is named in the server blocks and sends HSTS for itself, so
+coverage is identical, while `includeSubDomains` would pin unenumerated subdomains for a year in a
+cache no operator can reach — and two other domains sharing this proxy have had expired certificates
+since 2026-03-18. Repeated inside all 14 locations that set their own `add_header`, because nginx
+discards every inherited `add_header` in such a location.
+
+Applying it exposed that the edge container had been serving a **stale configuration since
+2026-08-07**: `nginx.conf` is bind-mounted as a file, and a file bind mount is pinned to an inode at
+container start. `nginx -s reload` reported success the entire time. The only functional difference
+was the IP allowlist removed on 2026-08-07 at the operator's direction — that change had never taken
+effect, and every check of it had been issued from inside the allowlisted network.
+
+### Controls, so none of this can recur quietly
+
+- **Branch protection** on `main` with `enforce_admins`: direct pushes are rejected, not logged as
+  bypassed.
+- **`release-gate.yml`**, on tag push and release publication. It cannot prevent a tag being created
+  — Actions runs after the ref is written — so it marks the tag red and reverts a published release
+  to a draft. Docker Hub is **not** covered, because nothing in CI pushes there.
+- **`scripts/assert-test-discovery.js`**, comparing every test file on disk against
+  `jest --listTests`. A test-count floor was rejected: it drifts downward as tests are legitimately
+  deleted and cannot distinguish a deliberate removal from a suite that stopped being discovered.
+
+Each was tested against the failure it exists to catch, not merely written.
+
+### Known open
+
+`vm2` remains the default execution path. 12 dangling credential references in operator data keep
+`flowise doctor` exiting 1. Audit tamper-*proofing*, alerting and data classification are absent, and
+image publication and edge drift are ungated. Full list in `docs/BASELINE-3.1.4-fw8.md`.
+
+---
+
 ## [3.1.4-fw7] — 2026-08-08
 
 Adds a code-execution kill switch, audit retention, and fixes a runtime bug that shipped in fw6.

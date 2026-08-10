@@ -134,7 +134,8 @@ having read.
   from `docker/Dockerfile`, which installs FlowiseAI's published npm package — and that
   package contains the commercially licensed compiled output. Those images **do** contain
   it, and the commercial terms govern them wherever you obtained them. They are superseded;
-  move to `3.1.4-fw4`.
+  move to `3.1.4-fw8` (the current build — `fw4` was the first redistributable one, and any
+  release from `fw4` onward is clean).
 - **`docker/Dockerfile` cannot produce a redistributable image**, whatever this repository
   contains, because the material arrives from npm rather than from the tree. Publish only
   from the root `Dockerfile`.
