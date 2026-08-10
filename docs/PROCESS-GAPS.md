@@ -454,3 +454,19 @@ non-commit returns nothing, and nothing is indistinguishable from clean.
 third discovered by the control firing rather than by review. The pattern is not that the controls
 are bad. It is that every one of them was verified on the path where it succeeds.
 
+**Postscript — the fix was wrong too, the same way.** v2 decided whether to dereference by reading
+the TAG REF's object type. That is right for a `release` event and wrong for a `push`, where
+`github.sha` is already the commit: it tried to dereference a commit as a tag object, got a 404, and
+failed every tag push. So the first fix moved the bug from one event to another rather than removing
+it.
+
+Both versions made the identical mistake — deciding whether to dereference `$REF` by consulting
+something that is not `$REF`. v3 asks about `$REF` itself: if it can be read as a tag object, it is
+one. No inference from a sibling call, no branching on event type.
+
+**And a related trap worth stating on its own.** A `release` event runs the workflow **from the
+tagged commit**, not from the default branch. Fixing the gate on `main` therefore did nothing for a
+tag cut before the fix — the old, broken gate kept running and kept re-drafting the release. The tag
+had to carry its own fix. Anyone debugging a release-event workflow and wondering why their change
+has no effect should start there.
+
