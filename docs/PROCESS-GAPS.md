@@ -417,3 +417,40 @@ correct, and found to be either bypassable or self-defeating — and the second 
 came from the control firing on me. The guard doing exactly its job while being wrong about what
 its job was is worth keeping in front of anyone who edits it.
 
+---
+
+## G13 · The release gate drafted its own release
+
+**What happened.** `v3.1.4-fw8` was tagged on a commit whose CI was green, the release was
+published, and the release gate immediately reverted it to a draft.
+
+Nothing was wrong with the release. The gate resolved the annotated tag to its **tag object**
+(`24d00db8`, type `tag`) rather than the commit it points at (`42e44ea6`), asked GitHub for the
+check-runs of a sha that has none, got `No commit found`, and failed.
+
+**The bug is one line, and it is the same mistake twice.** The dereference was written as:
+
+```
+TYPE="$(gh api "repos/$REPO/git/commits/$REF" --jq '.sha' 2>/dev/null || echo '')"
+if [ -z "$TYPE" ]; then REF="$(gh api ".../git/tags/$REF" --jq '.object.sha')"; fi
+```
+
+It **infers** the object type from whether an unrelated call happened to return something, instead
+of asking. GitHub reports `.object.type` directly. The comment above that block even says
+dereferencing matters "or every check lookup silently finds nothing and this gate passes by
+accident — the exact class of bug it exists to prevent" — and then the code guessed.
+
+**Failing closed was right.** An inconclusive result must not be treated as a pass, and the gate
+did exactly that: it refused to bless what it could not evaluate, and un-published rather than
+assume. The design held; the resolution logic did not. That distinction is worth keeping — a gate
+that fails noisily on a real release is recoverable in minutes, while a gate that passes wrongly is
+the thing that produced fw5, fw6 and fw7.
+
+**Fixed** by asking for `.object.type` and dereferencing only when it is `tag`, then **proving** the
+result is a commit before evaluating anything against it — because a check lookup against a
+non-commit returns nothing, and nothing is indistinguishable from clean.
+
+**Count.** This is the fifth control in this arc found to be bypassable or self-defeating, and the
+third discovered by the control firing rather than by review. The pattern is not that the controls
+are bad. It is that every one of them was verified on the path where it succeeds.
+

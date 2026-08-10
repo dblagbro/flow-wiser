@@ -66,17 +66,36 @@ jobs:
                   INPUT_REF: ${{ inputs.ref }}
               run: |
                   set -euo pipefail
+                  # TAG_REF is the tag NAME when there is one, so the object type can be looked
+                  # up below. It is empty for a dispatch against a bare sha.
                   case "$EVENT_NAME" in
-                    push)              REF="$PUSH_SHA" ;;
-                    release)           REF="$(gh api "repos/$REPO/git/refs/tags/$TAG_NAME" --jq '.object.sha')" ;;
-                    workflow_dispatch) REF="$(gh api "repos/$REPO/commits/$INPUT_REF" --jq '.sha')" ;;
+                    push)              REF="$PUSH_SHA"; TAG_REF="${GITHUB_REF#refs/tags/}" ;;
+                    release)           TAG_REF="$TAG_NAME"; REF="$(gh api "repos/$REPO/git/refs/tags/$TAG_NAME" --jq '.object.sha')" ;;
+                    workflow_dispatch) TAG_REF="$INPUT_REF"; REF="$(gh api "repos/$REPO/commits/$INPUT_REF" --jq '.sha' 2>/dev/null || gh api "repos/$REPO/git/refs/tags/$INPUT_REF" --jq '.object.sha')" ;;
                   esac
-                  # An annotated tag points at a tag object, not a commit. Dereference it, or every
-                  # check lookup silently finds nothing and this gate passes by accident — the exact
-                  # class of bug it exists to prevent (see G1b).
-                  TYPE="$(gh api "repos/$REPO/git/commits/$REF" --jq '.sha' 2>/dev/null || echo '')"
-                  if [ -z "$TYPE" ]; then
+                  # An annotated tag points at a TAG OBJECT, not a commit, and it must be
+                  # dereferenced or every check lookup is made against a sha that has no checks.
+                  #
+                  # The first version of this probed `git/commits/$REF` and dereferenced only when
+                  # that came back empty. It did not work: the probe returned something for a tag
+                  # object, so the dereference was skipped, the gate queried check-runs for a tag
+                  # sha, got "No commit found", failed closed, and reverted a perfectly good release
+                  # to a draft. It did that to v3.1.4-fw8 — its own release — minutes after being
+                  # written.
+                  #
+                  # Failing closed was correct. Guessing the object type was not. GitHub reports the
+                  # type directly, so ask it instead of inferring it from whether another call
+                  # happened to succeed.
+                  OBJ_TYPE="$(gh api "repos/$REPO/git/refs/tags/$TAG_REF" --jq '.object.type' 2>/dev/null || echo 'commit')"
+                  if [ "$OBJ_TYPE" = "tag" ]; then
                     REF="$(gh api "repos/$REPO/git/tags/$REF" --jq '.object.sha')"
+                    echo "annotated tag dereferenced to $REF"
+                  fi
+                  # Prove what we ended up with really is a commit. If it is not, stop — do not
+                  # proceed to a check lookup whose emptiness would be indistinguishable from a pass.
+                  if ! gh api "repos/$REPO/commits/$REF" --jq '.sha' >/dev/null 2>&1; then
+                    echo "::error::$REF is not a commit; refusing to evaluate the gate against it."
+                    exit 1
                   fi
                   echo "sha=$REF" >> "$GITHUB_OUTPUT"
                   echo "Checking $REF"
