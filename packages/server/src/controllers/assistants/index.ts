@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { StatusCodes } from 'http-status-codes'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { AssistantType } from '../../Interface'
 import assistantsService from '../../services/assistants'
@@ -34,7 +35,9 @@ const createAssistant = async (req: Request, res: Response, next: NextFunction) 
         const existingAssistantCount = await assistantsService.getAssistantsCountByOrganization(body.type, orgId)
         const newAssistantCount = 1
         await checkUsageLimit('flows', subscriptionId, getRunningExpressApp().usageCacheManager, existingAssistantCount + newAssistantCount)
-
+        // MIGRATION §3a denormalised tenant key — see the note in the credentials controller.
+        // Without it `doctor` reports every row created through the API as a tenancy failure.
+        body.organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await assistantsService.createAssistant(body, orgId, workspaceId)
 
         return res.json(apiResponse)

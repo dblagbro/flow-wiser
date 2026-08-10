@@ -3,6 +3,7 @@ import variablesService from '../../services/variables'
 import { Variable } from '../../database/entities/Variable'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 import { getPageAndLimitParams } from '../../utils/pagination'
 
 const createVariable = async (req: Request, res: Response, next: NextFunction) => {
@@ -28,6 +29,9 @@ const createVariable = async (req: Request, res: Response, next: NextFunction) =
         if (body.value !== undefined) newVariable.value = body.value
         if (body.type !== undefined) newVariable.type = body.type
         newVariable.workspaceId = workspaceId
+        // MIGRATION §3a denormalised tenant key — see the note in the credentials controller.
+        // Without it `doctor` reports every row created through the API as a tenancy failure.
+        body.organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await variablesService.createVariable(newVariable, orgId)
         return res.json(apiResponse)
     } catch (error) {

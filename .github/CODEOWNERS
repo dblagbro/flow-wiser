@@ -1,0 +1,24 @@
+# CODEOWNERS — required review on the paths that police everything else.
+#
+# QA (CI-02) found that the clean-room guard could be disabled by the very PR it polices: a job
+# reporting `skipped` satisfied branch protection, and the guard's protected paths did not cover
+# `.github/**`. Half of that is fixed in code — the release gate no longer treats `skipped` as
+# success, so a disabled check cannot bless a tag or a release.
+#
+# The other half cannot be fixed by a workflow, because any check living in this repository can be
+# edited by the pull request it is meant to guard. The only real answer is review, which is what this
+# file requests.
+#
+# NOTE: this file has no effect until branch protection on `main` enables
+# "Require review from Code Owners". Committing it without that setting is a statement of intent,
+# not a control — recorded that way in docs/bug-log.md rather than marked fixed.
+.github/                @dblagbro
+.github/workflows/      @dblagbro
+
+# The security-critical surfaces. Not to slow them down — to make sure a second look happens.
+packages/server/src/utils/flowAccess.ts              @dblagbro
+packages/server/src/identity/                        @dblagbro
+packages/server/src/commands/                        @dblagbro
+packages/components/src/httpSecurity.ts              @dblagbro
+packages/components/src/utils.ts                     @dblagbro
+Dockerfile                                           @dblagbro

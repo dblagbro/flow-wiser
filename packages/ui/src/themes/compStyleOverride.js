@@ -3,6 +3,36 @@ export default function componentStyleOverrides(theme) {
     return {
         MuiCssBaseline: {
             styleOverrides: {
+                /**
+                 * UI-04 — a visible keyboard focus indicator, WCAG 2.4.7 (Level A).
+                 *
+                 * There was none. Tabbing through the sidebar reported `outline: none / 0px` and
+                 * `box-shadow: none` on every navigation link — Chatflows, Agentflows, Executions,
+                 * Credentials, API Keys, all of them. A keyboard-only user could move focus through
+                 * the entire primary navigation with no way to tell where they were. Only the
+                 * "Star" link and the theme switch showed anything, and that was the browser's
+                 * default surviving by accident rather than a deliberate style.
+                 *
+                 * Applied globally at :focus-visible rather than per component, because the defect
+                 * was precisely that individual components each had to remember. :focus-visible (not
+                 * :focus) means a mouse click does not draw a ring, so this costs nothing visually
+                 * for pointer users — which is usually the reason focus styling gets removed in the
+                 * first place.
+                 *
+                 * Two layers: a solid outline plus an offset halo in the opposite tone, so the ring
+                 * stays visible whether the focused control sits on the page background, on a card,
+                 * or on a coloured button.
+                 */
+                '*:focus-visible': {
+                    outline: `2px solid ${theme?.customization?.isDarkMode ? '#8ab4ff' : '#0b5cd5'}`,
+                    outlineOffset: '2px',
+                    borderRadius: '4px',
+                    boxShadow: theme?.customization?.isDarkMode ? '0 0 0 4px rgba(10, 12, 16, 0.9)' : '0 0 0 4px rgba(255, 255, 255, 0.9)'
+                },
+                // Keep the ring off pointer interaction, and off elements that manage their own.
+                '*:focus:not(:focus-visible)': {
+                    outline: 'none'
+                },
                 body: {
                     scrollbarWidth: 'thin',
                     scrollbarColor: theme?.customization?.isDarkMode

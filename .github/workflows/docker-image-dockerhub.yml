@@ -48,6 +48,14 @@ permissions:
 
 jobs:
     prepare:
+        # DISABLED — see the banner at the top of this file.
+        # It builds docker/Dockerfile (a NON-redistributable image: it installs FlowiseAI's
+        # published npm package, which carries the commercial compiled output) and pushes it to
+        # `flowiseai/flowise` — upstream's namespace — using THIS fork's DOCKERHUB_TOKEN.
+        # It was reachable by anyone with workflow_dispatch rights, gated only by a comment.
+        # The one documented licence incident of this project was a button press away.
+        # Kept for reproducing upstream's images, which needs neither credentials nor a push.
+        if: false
         runs-on: ubuntu-latest
         outputs:
             node_version: ${{ steps.defaults.outputs.node_version }}
@@ -63,6 +71,14 @@ jobs:
                   echo "tag_version=${TAG_VERSION_INPUT}" >> $GITHUB_OUTPUT
 
     build:
+        # DISABLED — see the banner at the top of this file.
+        # It builds docker/Dockerfile (a NON-redistributable image: it installs FlowiseAI's
+        # published npm package, which carries the commercial compiled output) and pushes it to
+        # `flowiseai/flowise` — upstream's namespace — using THIS fork's DOCKERHUB_TOKEN.
+        # It was reachable by anyone with workflow_dispatch rights, gated only by a comment.
+        # The one documented licence incident of this project was a button press away.
+        # Kept for reproducing upstream's images, which needs neither credentials nor a push.
+        if: false
         needs: prepare
         runs-on: ${{ matrix.runner }}
         strategy:
@@ -131,6 +147,14 @@ jobs:
                   retention-days: 1
 
     merge:
+        # DISABLED — see the banner at the top of this file.
+        # It builds docker/Dockerfile (a NON-redistributable image: it installs FlowiseAI's
+        # published npm package, which carries the commercial compiled output) and pushes it to
+        # `flowiseai/flowise` — upstream's namespace — using THIS fork's DOCKERHUB_TOKEN.
+        # It was reachable by anyone with workflow_dispatch rights, gated only by a comment.
+        # The one documented licence incident of this project was a button press away.
+        # Kept for reproducing upstream's images, which needs neither credentials nor a push.
+        if: false
         needs: [prepare, build]
         runs-on: ubuntu-latest
         strategy:

@@ -29,19 +29,25 @@ import { EnvSessionPepperProvider } from '../services/SessionService'
  * initialise, refuse connections rather than serving unauthenticated". So this pulls both loads
  * forward to boot, where a failure is attributable and loud.
  *
- * ── Why it throws for the keyring but only warns for the pepper ──────────────────────────────
+ * ── Both are fatal. The pepper used to be only a warning; here is why that changed ───────────
  *
  * A misconfigured KEYRING is unambiguously fatal: `loadKeyring` rejects an absent, short, or
  * published-example key, and every one of those means stored ciphertext is either unreadable or was
  * never protected. There is no degraded mode worth having.
  *
- * A missing PEPPER is also fatal to logging in, but it is fatal LATER and it is recoverable without
- * data loss — set the variable, restart, and every existing session simply has to sign in again.
- * More importantly, `initDatabase()` wraps this call in a `try/catch` that logs and CONTINUES
- * (index.ts), so throwing here would not actually refuse connections; it would produce one error
- * line and an application that runs on regardless. Given that, the honest behaviour is to state the
- * problem in terms an operator can act on, at boot, rather than to raise an exception the
- * surrounding code has already decided to swallow.
+ * A missing PEPPER is equally fatal — no session can be issued, so nobody can sign in — but it used
+ * to be logged and stepped over. The reasoning at the time was accurate: `initDatabase()` wrapped
+ * this call in a `try/catch` that logged and CONTINUED, so throwing would have produced one error
+ * line and an application that ran on regardless.
+ *
+ * That catch now rethrows, so the reason no longer holds and the behaviour is fixed to match. It
+ * mattered: QA (INFRA-02) started an instance with no pepper and watched it log the error, print
+ * "Flowise Server is listening at :3000", and stay up. With no HEALTHCHECK, an orchestrator would
+ * report that container healthy while every single login failed — the worst kind of outage, because
+ * nothing is obviously broken.
+ *
+ * Refusing to start is recoverable in seconds and impossible to misread. Serving a login page that
+ * can never succeed is neither.
  *
  * The keyring failure is still thrown rather than logged, because `loadKeyring`'s own message names
  * the offending variable and the remedy, and it is worth having that appear as an error with a
@@ -79,9 +85,11 @@ export const initAuthSecrets = async (): Promise<void> => {
         logger.info(`🔑 [identity]: session pepper active=v${pepper.version} keyId=${pepper.keyId}`)
     } catch (error) {
         logger.error(
-            `❌ [identity]: session pepper unavailable — sign-in will fail until it is configured. ` +
+            `❌ [identity]: session pepper unavailable — refusing to start. No session can be issued without it, ` +
+                `so the server would accept connections and fail every sign-in. ` +
                 `${error instanceof Error ? error.message : String(error)}`
         )
+        throw error
     }
 }
 

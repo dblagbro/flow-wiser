@@ -125,15 +125,30 @@ export class MCPToolkit extends BaseToolkit {
             await checkDenyList(this.serverParams.url)
             const mergedHeaders = { ...this.serverParams?.headers, ...injectHeaders }
             const headers = Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined
+            // `checkDenyList` above validates the hostname ONCE, before any connection is made.
+            // That is not sufficient on its own: the SDK's global fetch follows redirects itself and
+            // re-resolves DNS, so a host that passes the pre-flight can redirect to 169.254.169.254
+            // or re-resolve to a loopback address between the check and the connect. `secureFetch`
+            // exists precisely for this — it walks redirects manually, revalidates every hop, and
+            // pins the validated IP into the connection so a rebind cannot land elsewhere.
+            //
+            // The SSE fallback below already passed it. The Streamable-HTTP path — the primary one —
+            // did not, so the guard the author wrote was simply absent from the branch that
+            // normally runs.
+            const secureRequestInit = {
+                fetch: async (url: any, init: any) =>
+                    secureFetch(url.toString(), { ...(init ?? {}), ...(headers ? { headers } : {}) }) as any
+            }
             try {
                 if (headers) {
                     transport = new StreamableHTTPClientTransport(baseUrl, {
                         requestInit: {
                             headers
-                        }
+                        },
+                        ...secureRequestInit
                     })
                 } else {
-                    transport = new StreamableHTTPClientTransport(baseUrl)
+                    transport = new StreamableHTTPClientTransport(baseUrl, { ...secureRequestInit })
                 }
                 await client.connect(transport)
             } catch (error) {

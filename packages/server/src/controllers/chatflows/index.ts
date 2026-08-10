@@ -28,6 +28,15 @@ const checkIfChatflowIsValidForStreaming = async (req: Request, res: Response, n
                 `Error: chatflowsController.checkIfChatflowIsValidForStreaming - id not provided!`
             )
         }
+        // Whitelisted for anonymous callers so an embedded widget can ask whether the flow it is
+        // about to talk to supports streaming. It had no ownership check at all, so it loaded and
+        // parsed the flowData of ANY flow by UUID — leaking whether a private flow exists (200 vs a
+        // 500 naming the internal service) and details of its node graph in the error text.
+        const streamFlow = await chatflowsService.getChatflowById(req.params.id)
+        if (!streamFlow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+        const streamDenied = await denyUnlessPublicOrOwned(req, res, streamFlow)
+        if (streamDenied) return streamDenied
+
         const apiResponse = await chatflowsService.checkIfChatflowIsValidForStreaming(req.params.id)
         return res.json(apiResponse)
     } catch (error) {
