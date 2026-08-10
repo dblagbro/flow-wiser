@@ -33,7 +33,20 @@ export const ErrorProvider = ({ children }) => {
             }
             navigate('/rate-limited', { state: { retryAfter } })
         } else if (err?.response?.status === 403) {
-            navigate('/unauthorized')
+            // A 403 may carry a destination. The password-change gate returns
+            // `{ error: 'must_change_password', redirectTo: '/reset-password' }` — the server is not
+            // saying "you may not", it is saying "not until you do this one thing first".
+            //
+            // Mapping every 403 to /unauthorized turned that into a dead end: the user was told they
+            // lacked permission, which was untrue, and the route they needed was never offered. The
+            // redirect hint existed only in the 401 branch below, where this response never lands,
+            // so it was unreachable code (UI-01).
+            const redirectTo = err?.response?.data?.redirectTo || err?.response?.data?.data?.redirectUrl
+            if (redirectTo) {
+                navigate(redirectTo)
+            } else {
+                navigate('/unauthorized')
+            }
         } else if (err?.response?.status === 401) {
             if (ErrorMessage.INVALID_MISSING_TOKEN === err?.response?.data?.message) {
                 store.dispatch(logoutSuccess())

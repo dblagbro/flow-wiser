@@ -159,6 +159,7 @@ export const runDoctor = async (context: RecoveryContext & { env?: NodeJS.Proces
         checks.push(await checkPasswordAndMfaState(queryRunner, dataSource, env))
         checks.push(await checkTenantKeys(queryRunner, dataSource))
         checks.push(await checkCredentialReferences(queryRunner, dataSource))
+        checks.push(await checkEncryptionKeyUsable(queryRunner))
     } finally {
         if (!queryRunner.isReleased) await queryRunner.release()
     }
@@ -196,6 +197,102 @@ export const runDoctor = async (context: RecoveryContext & { env?: NodeJS.Proces
 }
 
 // ── 1. Schema fingerprint ────────────────────────────────────────────────────────────────────
+
+/**
+ * Can this process actually READ what is stored?
+ *
+ * ── The failure this exists for ──────────────────────────────────────────────────────────────
+ *
+ * Restore a backup without its encryption key — or with a different key that happens to carry the
+ * same version number, which the default of 1 makes likely — and the instance starts perfectly.
+ * Every other check in this command passes. `credential:rotate-encryption` reports "Every
+ * credential is already encrypted under the current key. Nothing to do." and exits 0, because it
+ * compared version numbers rather than attempting a decrypt (fixed in the same release).
+ *
+ * So the operator has an instance that boots, passes its own diagnostic, and is unrecoverable. The
+ * first symptom is a 500 the next time somebody opens a flow that uses a credential — possibly
+ * days later, possibly after the good backup has rotated out of retention.
+ *
+ * QA reproduced exactly this: 305 credentials, wholly wrong key, nine of nine checks green.
+ *
+ * ── What it does ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Attempts a real decrypt of one record per distinct key version. Not a checksum, not a header
+ * inspection — the actual operation the application performs, because that is the only thing that
+ * answers the question. A failure is a FAIL, not a warning: nothing else about the instance
+ * matters if its secrets cannot be read.
+ */
+const checkEncryptionKeyUsable = async (queryRunner: QueryRunner): Promise<DoctorCheck> => {
+    const name = 'Crypto — encryption key can read stored credentials'
+    if (!(await queryRunner.hasTable('credential'))) {
+        return { name, status: 'ok', summary: 'No credential table on this database; nothing to verify.', details: [] }
+    }
+
+    let rows: { id: string; name: string; encryptedData: string }[] = []
+    try {
+        rows = await queryRunner.query('SELECT id, name, "encryptedData" FROM credential')
+    } catch {
+        try {
+            rows = await queryRunner.query('SELECT id, name, encryptedData FROM credential')
+        } catch (error) {
+            return {
+                name,
+                status: 'warn',
+                summary: `Could not read the credential table: ${error instanceof Error ? error.message : String(error)}`,
+                details: []
+            }
+        }
+    }
+
+    if (rows.length === 0) {
+        return { name, status: 'ok', summary: 'No credentials stored; nothing to verify.', details: [] }
+    }
+
+    // Imported here rather than at module scope: doctor must remain runnable against a database
+    // whose migrations only half-applied, and this pulls in the keyring.
+    const { decryptCredentialData } = require('../utils')
+    const { isEnvelope, envelopeKeyVersion } = require('../utils/credentialEnvelope')
+
+    const probed = new Set<string>()
+    const failures: string[] = []
+    let verified = 0
+
+    for (const row of rows) {
+        const version = isEnvelope(row.encryptedData) ? String(envelopeKeyVersion(row.encryptedData)) : 'legacy'
+        if (probed.has(version)) continue
+        probed.add(version)
+        try {
+            await decryptCredentialData(row.encryptedData)
+            verified++
+        } catch (error) {
+            failures.push(
+                `key version ${version}: '${row.name}' could not be decrypted — ${error instanceof Error ? error.message : String(error)}`
+            )
+        }
+    }
+
+    if (failures.length > 0) {
+        return {
+            name,
+            status: 'fail',
+            summary: `${failures.length} of ${probed.size} stored key version(s) cannot be decrypted with the key this process holds.`,
+            details: [
+                ...failures,
+                'The key is absent, wrong, or a retired version was not supplied. Credentials are UNREADABLE and',
+                'this instance cannot serve any flow that uses one. If this follows a restore, the backup was',
+                'restored without its IDENTITY_ENCRYPTION_KEY — that value lives only in the environment and is',
+                'in no backup of the data directory. Restore it before writing anything further.'
+            ]
+        }
+    }
+
+    return {
+        name,
+        status: 'ok',
+        summary: `${verified} key version(s) verified by decrypting a stored credential.`,
+        details: [`Versions checked: ${[...probed].join(', ')}`]
+    }
+}
 
 const checkMigrations = async (queryRunner: QueryRunner, dataSource: DataSource): Promise<DoctorCheck> => {
     const name = 'Schema — applied migrations'

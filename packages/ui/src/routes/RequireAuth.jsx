@@ -1,3 +1,4 @@
+import RouteErrorBoundary from '@/routes/RouteErrorBoundary'
 import { useAuth } from '@/hooks/useAuth'
 import { useConfig } from '@/store/context/ConfigContext'
 import PropTypes from 'prop-types'
@@ -54,7 +55,11 @@ export const RequireAuth = ({ permission, children }) => {
         return <Navigate to='/unauthorized' replace />
     }
 
-    return children
+    // Every protected route already passes through here, which makes it the one place that can
+    // guarantee a boundary without each route remembering to add one. A view that throws during
+    // render or in an effect now costs that view, not the whole application — see UI-02, where an
+    // unguarded `.find()` on an empty API response blanked the entire UI.
+    return <RouteErrorBoundary>{children}</RouteErrorBoundary>
 }
 
 RequireAuth.propTypes = {
