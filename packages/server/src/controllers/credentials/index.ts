@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import credentialsService from '../../services/credentials'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 
 const createCredential = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -13,6 +14,11 @@ const createCredential = async (req: Request, res: Response, next: NextFunction)
         }
         const body = req.body
         body.workspaceId = req.user?.activeWorkspaceId
+        // MIGRATION §3a denormalised tenant key, resolved from the workspace so the two can
+        // never disagree. Chatflows got this in fw6; these paths did not, so every object
+        // created through the API since has carried a NULL organizationId and `doctor` goes
+        // red on a FRESH instance after ordinary use — QA reproduced it at 305/305.
+        body.organizationId = await resolveOrganizationIdForWorkspace(body.workspaceId)
         const apiResponse = await credentialsService.createCredential(body)
         return res.json(apiResponse)
     } catch (error) {

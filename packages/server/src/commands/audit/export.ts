@@ -185,6 +185,11 @@ export default class AuditExport extends RecoveryCommand {
         verify: Flags.boolean({
             description: 'Verification run: do NOT record an audit event for this export, so the trail is unchanged.',
             default: false
+        }),
+        expect: Flags.string({
+            description:
+                'The SHA-256 the export must reproduce. Exits 3 if it does not. Without this, --verify only PRINTS a digest ' +
+                'and exits 0 whether or not it matches, which makes the tamper check depend on a human comparing 64 hex characters.'
         })
     }
 
@@ -219,9 +224,27 @@ export default class AuditExport extends RecoveryCommand {
         this.log(`  events   ${result.file}`)
         this.log(`  manifest ${result.manifestFile}`)
         this.log(`  sha256   ${result.digest}`)
+        // A verification that cannot fail is not a verification. Before `--expect`, `--verify`
+        // printed a digest and exited 0 whether or not it matched — on deliberately tampered data
+        // it printed the DIFFERENT digest with no warning, and the control worked only if an
+        // operator compared 64 hex characters by eye. QA filed it as OPS-09.
+        if (flags.expect) {
+            if (flags.expect.trim().toLowerCase() !== result.digest.toLowerCase()) {
+                this.log(`\n  expected  ${flags.expect.trim()}`)
+                this.log(`  actual    ${result.digest}`)
+                this.error(
+                    'DIGEST MISMATCH. Rows in this seqNo range have been modified or removed since the export you are ' +
+                        'comparing against. The audit trail is not intact.',
+                    { exit: 3 }
+                )
+            }
+            this.log(`\nDigest matches --expect. Rows ${result.firstSeqNo}-${result.lastSeqNo} are unchanged.`)
+            return
+        }
+
         this.log(
-            `\nVerify with:  flowise audit:export --file <new> --from-seq ${result.firstSeqNo} --to-seq ${result.lastSeqNo} --verify` +
-                '\nThat must reproduce the digest above. A mismatch means rows in the range were altered.'
+            `\nVerify with:  flowise audit:export --file <new> --from-seq ${result.firstSeqNo} --to-seq ${result.lastSeqNo} --verify --expect ${result.digest}` +
+                '\nThat exits 3 on a mismatch. Without --expect it only prints a digest and always exits 0.'
         )
     }
 }

@@ -18,21 +18,23 @@ Full detail per finding lives in the domain reports; this is the register.
 | OPS-02 | Undocumented `flowise user <email> <password>`: argv password, no audit row | **HIGH** | FIXED — command removed |
 | SEC-B-02 | `::` absent from the SSRF deny list; routes to loopback | **HIGH** | FIXED + negative test |
 | CI-01 | release-gate: tag name interpolated into shell; `skipped` counted as success | **HIGH** | FIXED |
-| CI-02 | Clean-room guard's protected paths did not cover `.github/workflows/**`, so a PR could disable the guard policing it | **HIGH** | **PARTIAL** — release gate no longer accepts `skipped`; branch protection still treats a skipped required check as passing. Needs CODEOWNERS on `.github/**`. See G12 |
+| CI-02 | Clean-room guard's protected paths did not cover `.github/workflows/**`, so a PR could disable the guard policing it | **HIGH** | PARTIAL — CODEOWNERS added; needs "Require review from Code Owners" enabled on main |
 | SEC-A-01 | argon2 redaction stops at the first comma; salt and digest survive | **MEDIUM** | FIXED + negative test |
-| API-01 | chatflows-streaming has no auth or ownership check | **MEDIUM** | OPEN |
-| API-09 | Unauthenticated POST /leads persists into a private flow | **MEDIUM** | OPEN |
-| OPS-04 | Credentials written with organizationId NULL; doctor goes red after normal use | **HIGH** | OPEN — production currently clean |
-| OPS-09 | audit:export --verify prints a digest and exits 0 either way | **MEDIUM** | OPEN |
-| INFRA-02 | Missing FLOWISE_SESSION_PEPPER starts a live-but-unusable server | **HIGH** | OPEN |
-| INFRA-04 | pnpm as PID 1: clean stop exits 1, zombies unreaped | **MEDIUM** | OPEN |
-| INFRA-03 | No HEALTHCHECK in image or compose | **MEDIUM** | OPEN |
-| SEC-B-01 | MCP Streamable-HTTP transport skips the SSRF guard on redirects/rebinding | **HIGH** | OPEN |
-| SEC-B-08 | Production compose is mode 664 with three literal secrets | **MEDIUM** | OPEN — operator action |
-| PERF-03 | 28,639 unauthorized requests produced 4 log lines and 0 audit rows | **MEDIUM** | OPEN |
-| UI-04 | No visible focus indicator on primary navigation (WCAG 2.4.7) | **HIGH** | OPEN |
-| UI-06 | Disabled button text 1.06:1 in dark mode (AA needs 4.5:1) | **HIGH** | OPEN |
-| SEC-B-03 | docker-image-dockerhub.yml armed, pushes to upstream's namespace | **MEDIUM** | OPEN |
+| API-01 | chatflows-streaming has no auth or ownership check | **MEDIUM** | FIXED — shared auth ladder |
+| API-09 | Unauthenticated POST /leads persists into a private flow | **MEDIUM** | FIXED — anon writes only on public flows |
+| OPS-04 | Credentials written with organizationId NULL; doctor goes red after normal use | **HIGH** | FIXED — tenant key set on all four create paths |
+| OPS-09 | audit:export --verify prints a digest and exits 0 either way | **MEDIUM** | FIXED — --expect, exits 3 on mismatch |
+| INFRA-02 | Missing FLOWISE_SESSION_PEPPER starts a live-but-unusable server | **HIGH** | FIXED — missing pepper is now fatal |
+| INFRA-04 | pnpm as PID 1: clean stop exits 1, zombies unreaped | **MEDIUM** | FIXED — node execs as PID 1 |
+| INFRA-03 | No HEALTHCHECK in image or compose | **MEDIUM** | FIXED — HEALTHCHECK on /api/v1/ping |
+| SEC-B-01 | MCP Streamable-HTTP transport skips the SSRF guard on redirects/rebinding | **HIGH** | FIXED — secureFetch on the Streamable transport |
+| SEC-B-08 | Production compose is mode 664 with three literal secrets | **MEDIUM** | PARTIAL — compose now 640; literal secrets remain, operator decision |
+| PERF-03 | 28,639 unauthorized requests produced 4 log lines and 0 audit rows | **MEDIUM** | FIXED — rate-limited denial counter |
+| UI-04 | No visible focus indicator on primary navigation (WCAG 2.4.7) | **HIGH** | FIXED — global :focus-visible, 5.7-8.5:1 |
+| UI-06 | Disabled button text 1.06:1 in dark mode (AA needs 4.5:1) | **HIGH** | FIXED — dark 6.03:1, light 4.62:1 |
+| SEC-B-03 | docker-image-dockerhub.yml armed, pushes to upstream's namespace | **MEDIUM** | FIXED — every job `if: false` |
+| DATA-01 | `chat_flow.flowData` stored as a BLOB on one row; the driver returns a Buffer, `JSON.parse` fails, the canvas is unopenable | **HIGH** | FIXED — entity transformer normalises Buffer→string; the one production row converted to text, content md5 identical |
+| UI-07 | Brand primary #2196f3 with white text is 3.12:1 (AA needs 4.5) | **MEDIUM** | OPEN — brand decision. #1976d2 gives 4.60:1, #1565c0 gives 5.75:1 |
 | CRED-01 | Production password written to 11 files on disk during QA | **HIGH** | SCRUBBED — rotate the password |
 
 ## Counts

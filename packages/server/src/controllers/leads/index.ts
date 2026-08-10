@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import chatflowsService from '../../services/chatflows'
 import leadsService from '../../services/leads'
+import { denyUnlessPublicOrOwned } from '../../utils/flowAccess'
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 
@@ -42,6 +43,15 @@ const createLeadInChatflow = async (req: Request, res: Response, next: NextFunct
                 `Error: leadsController.createLeadInChatflow - body not provided!`
             )
         }
+        // Capturing a lead IS the widget's job, so an anonymous caller is legitimate — but only
+        // against a flow that is actually published. Anonymous writes onto a PRIVATE flow were
+        // accepted and persisted, and the rows then showed up in the owner's lead list: unauth
+        // storage pollution on a resource the caller cannot otherwise see.
+        const leadFlow = await chatflowsService.getChatflowById(req.body?.chatflowid)
+        if (!leadFlow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+        const leadDenied = await denyUnlessPublicOrOwned(req, res, leadFlow)
+        if (leadDenied) return leadDenied
+
         const apiResponse = await leadsService.createLead(req.body)
         return res.json(apiResponse)
     } catch (error) {

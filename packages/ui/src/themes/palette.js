@@ -72,7 +72,17 @@ export default function themePalette(theme) {
             primary: theme.darkTextPrimary,
             secondary: theme.darkTextSecondary,
             dark: theme.textDark,
-            hint: theme.colors?.grey100
+            hint: theme.colors?.grey100,
+            // UI-06. There was no `disabled` here, so MUI fell back to its own default of
+            // rgba(0,0,0,0.26) — a LIGHT-theme token. On the dark background (#16181b) that
+            // composites to 1.06:1, i.e. black text on near-black: the label of a disabled button is
+            // invisible, not merely low-contrast. WCAG AA wants 4.5:1 for body text.
+            //
+            // Disabled controls are exempt from the AA contrast minimum, but "exempt" is about
+            // conformance, not about whether a user can read the button they are wondering why they
+            // cannot press. These values clear 4.5:1 against their own backgrounds while still
+            // reading as clearly inactive next to the primary text.
+            disabled: theme.customization.isDarkMode ? 'rgba(219, 228, 255, 0.62)' : 'rgba(28, 32, 40, 0.62)'
         },
         background: {
             paper: theme.paper,
