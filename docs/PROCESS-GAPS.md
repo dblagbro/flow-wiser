@@ -380,3 +380,40 @@ either way. Testing an IP-based control from an allowed IP is the clearest possi
 signal green. A periodic diff of `nginx -T` against the file on disk would close it; it does not
 exist yet.
 
+---
+
+## G12 · A fix for "the guard can be disabled" that disabled the guard
+
+**The finding.** QA established that the clean-room guard could be neutered by the very PR it
+polices: its protected-path regex covered `packages/server/src/(enterprise/|IdentityManager.ts)`
+but not `.github/workflows/**`, so a PR adding `if: false` to the guard job would report `skipped`
+— and `skipped` satisfied both branch protection and the release gate.
+
+**What I did, and why it was wrong.** I added `.github/workflows/` to that regex. It blocked the
+next workflow edit — which was my own — with the message *"Clean-room violation: commercially
+licensed files were modified."*
+
+Two different concerns got the same mechanism:
+
+  1. **Licensing.** Do not MODIFY commercially licensed files. Deletion is fine; deletion is the
+     goal. This is what that regex and that error message are for.
+  2. **Guard integrity.** Do not let a change disable the check that polices changes.
+
+`.github/workflows/**` is not commercially licensed, so the message was false. And the rule is
+absolute where the real requirement is "may change, with review" — workflow maintenance is normal
+and the repository now had no legitimate path to it.
+
+**Reverted.** The licensing regex is back to licensing.
+
+**What actually closes the original hole.** Half of it is already done: the release gate no longer
+counts `skipped` as success, so a disabled check cannot bless a tag or a release. The other half —
+branch protection treating a `skipped` required check as passing — is GitHub behaviour that a
+workflow in the same repository cannot fix, because any check can be edited by the PR it guards.
+That needs `CODEOWNERS` on `.github/**` with required review, which is an account-level control and
+is **not** in place. Recorded as open rather than papered over with a check that cannot work.
+
+**The pattern, again.** This is the fourth time in this arc that a control was written, believed
+correct, and found to be either bypassable or self-defeating — and the second time the discovery
+came from the control firing on me. The guard doing exactly its job while being wrong about what
+its job was is worth keeping in front of anyone who edits it.
+

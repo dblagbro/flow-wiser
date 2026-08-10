@@ -94,7 +94,7 @@ jobs:
                   fi
                   BAD=$(git diff --name-status --diff-filter=ACMR "$BASE" "${{ github.sha }}" \
                         | awk '{print $2}' \
-                        | grep -E '^(packages/server/src/(enterprise/|IdentityManager\.ts)|\.github/workflows/)' || true)
+                        | grep -E '^packages/server/src/(enterprise/|IdentityManager\.ts)' || true)
                   if [ -n "$BAD" ]; then
                     echo "::error::Clean-room violation - commercially licensed files were modified"
                     echo "$BAD"

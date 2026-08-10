@@ -18,6 +18,7 @@ Full detail per finding lives in the domain reports; this is the register.
 | OPS-02 | Undocumented `flowise user <email> <password>`: argv password, no audit row | **HIGH** | FIXED — command removed |
 | SEC-B-02 | `::` absent from the SSRF deny list; routes to loopback | **HIGH** | FIXED + negative test |
 | CI-01 | release-gate: tag name interpolated into shell; `skipped` counted as success | **HIGH** | FIXED |
+| CI-02 | Clean-room guard's protected paths did not cover `.github/workflows/**`, so a PR could disable the guard policing it | **HIGH** | **PARTIAL** — release gate no longer accepts `skipped`; branch protection still treats a skipped required check as passing. Needs CODEOWNERS on `.github/**`. See G12 |
 | SEC-A-01 | argon2 redaction stops at the first comma; salt and digest survive | **MEDIUM** | FIXED + negative test |
 | API-01 | chatflows-streaming has no auth or ownership check | **MEDIUM** | OPEN |
 | API-09 | Unauthenticated POST /leads persists into a private flow | **MEDIUM** | OPEN |
