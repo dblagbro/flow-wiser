@@ -1,5 +1,20 @@
 #!/bin/sh
 . "$(dirname "$0")/_/husky.sh"
 
+# Clean-room guard FIRST, and unconditionally.
+#
+# `husky install` (run by `pnpm install`'s postinstall) sets core.hooksPath to
+# .husky, which silently replaces .githooks and disables the clean-room guard.
+# That is not hypothetical: it happened on 2026-08-11, minutes after the guard had
+# been enabled and verified. Chaining it here means the guard survives every
+# reinstall, whichever hooksPath is in effect.
+#
+# Do not move this below the formatters, and do not make it conditional -- a
+# licensed-path violation must be rejected before anything else runs.
+# See docs/CLEANROOM-PROTOCOL.md and docs/PROCESS-GAPS.md G1.
+if [ -x "$(dirname "$0")/../.githooks/pre-commit" ]; then
+    "$(dirname "$0")/../.githooks/pre-commit" || exit 1
+fi
+
 pnpm quick # prettify
 pnpm lint-staged # eslint lint(also include prettify but prettify support more file extensions than eslint, so run prettify first)
