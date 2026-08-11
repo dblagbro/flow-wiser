@@ -247,8 +247,17 @@ describe('GenerateFlowDialog', () => {
         it('should handle image load error by hiding image', async () => {
             await renderAndWaitForModels()
 
+            // `renderAndWaitForModels` only waits for the request to have been *issued*
+            // (`toHaveBeenCalled`), not for its result to be painted. The model icons are rendered
+            // from the resolved response, so on a loaded CI runner this querySelectorAll ran a tick
+            // early and found zero images — a flake, not a regression: the same commit passed and
+            // failed with only a CHANGELOG edit between the two runs.
+            //
+            // Waiting for the image itself asserts exactly as much as before (an icon must appear)
+            // without depending on scheduling to have already flushed.
+            await waitFor(() => expect(document.querySelectorAll('img').length).toBeGreaterThan(0))
+
             const images = document.querySelectorAll('img')
-            expect(images.length).toBeGreaterThan(0)
             fireEvent.error(images[0])
             expect(images[0].style.display).toBe('none')
         })
