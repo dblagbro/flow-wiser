@@ -75,7 +75,8 @@ at runtime, so images must be booted, not just built (RM-12).
 | `.githooks/pre-commit` (clean-room guard)      | ✅ **ACTIVE — both halves verified 2026-08-11**                                 |
 | Claude advisory path guard (`.claude/hooks/`)  | ✅ **ACTIVE** — advisory only, exits 0; tested on good, bad and malformed input |
 | `.gitignore` secret patterns                   | ✅ **ACTIVE** — 8/8 known-bad ignored, 7/7 known-good untouched                 |
-| `.husky/pre-commit`, `.husky/pre-push`         | present · **INERT** — `node_modules` absent                                     |
+| `.husky/pre-commit`                            | ✅ **ACTIVE** — `core.hooksPath` = `.husky`; chains the clean-room guard first  |
+| `.husky/pre-push`                              | present · **runs, but guards nothing here** — see RM-05                         |
 | `.github/workflows/cleanroom-guard.yml`        | present · execution on this commit **unverified**                               |
 | `.github/workflows/proprietary-path-guard.yml` | present · historically gated to `FlowiseAI/Flowise`; **verify**                 |
 | `.github/workflows/release-gate.yml`           | present · execution **unverified**                                              |
@@ -86,8 +87,11 @@ input, in the environment that runs it** (`PROCESS-GAPS.md` G1).
 
 The clean-room hook was enabled on 2026-08-11 and verified **both ways**: an added file under
 `packages/server/src/enterprise/` was rejected (exit 1), and ordinary staged changes were allowed
-(exit 0). The scratch file was removed; nothing was committed. This closes the G1 condition for
-the local hook in this clone. Remaining control work is RM-04/RM-05/RM-09 in
+(exit 0). It was then **silently disabled the same day** when `pnpm install` ran `husky install`,
+which reset `core.hooksPath` from `.githooks` to `.husky`; `.husky/pre-commit` now chains it
+unconditionally so it survives reinstalls, and it was re-verified both ways through that path.
+It has since gated four real commits. This closes the G1 condition for the local hook in this
+clone. Remaining control work is RM-04/RM-05/RM-09 in
 [`remediation-plan.md`](remediation-plan.md).
 
 `.husky/pre-push` is **inherited upstream cruft**: it triggers only on pushes to
