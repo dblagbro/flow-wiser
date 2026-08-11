@@ -15,16 +15,113 @@ release that does not exist.
 
 Two consequences worth stating, since both have bitten projects that did this:
 
-- Under strict semver, `3.1.4-fw4` is a **pre-release of** `3.1.4` and therefore sorts
-  *below* it. Nothing in this codebase compares versions programmatically — the version
-  endpoint reports a string and the About dialog displays it — so this is a labelling
-  quirk, not a behavioural one. Do not build release-gating logic on `semver.gt` here.
-- A `+` build-metadata suffix would sort correctly but is not a legal Docker tag
-  character, so the tag and the package version could not stay identical. They are worth
-  more identical.
+-   Under strict semver, `3.1.4-fw4` is a **pre-release of** `3.1.4` and therefore sorts
+    _below_ it. Nothing in this codebase compares versions programmatically — the version
+    endpoint reports a string and the About dialog displays it — so this is a labelling
+    quirk, not a behavioural one. Do not build release-gating logic on `semver.gt` here.
+-   A `+` build-metadata suffix would sort correctly but is not a legal Docker tag
+    character, so the tag and the package version could not stay identical. They are worth
+    more identical.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); latest release
 first.
+
+---
+
+## [3.1.4-fw10] — 2026-08-10
+
+**A sweep of all 116 upstream security advisories against this tree.** Four were still present. Two
+were unauthenticated. One was confirmed exploitable against the running production host. All four
+are fixed here, along with a SQL injection found outside the advisory set and a sandbox mitigation
+this project had documented in five places and never implemented.
+
+`docs/ADVISORY-SWEEP.md` carries the full 116-row table with a verdict and evidence for each.
+
+### Unauthenticated credential abuse — was live in production
+
+`/api/v1/text-to-speech/generate` is whitelisted so an embedded chat widget can speak a **public**
+chatflow's replies without a session. The `chatflowId` branch enforced that. The body-config branch
+did not: omitting `chatflowId` skipped the `isPublic` gate entirely, and the request body's
+`credentialId` flowed into `getCredentialData`, which resolves `findOneBy({ id })` with **no
+workspace predicate**.
+
+Confirmed against the live host: a POST carrying a provider and a credential UUID — no session, no
+API key, no permission — returned HTTP 200 and began synthesis. An attacker who knew any credential
+UUID could have the server decrypt the owner's OpenAI or ElevenLabs key and spend against it.
+
+Selecting an arbitrary credential is an authoring action, so it now requires a session **and** the
+credential must belong to the caller's workspace.
+
+### Unauthenticated OAuth2 credential write
+
+`state` was the credential's own UUID — the code said so: _"Use credential ID as state parameter"_.
+The whitelisted `/callback` resolved it with `findOneBy({ id: state })`: no ownership check, no CSRF
+binding, no expiry, no single-use. Anyone who knew a credential UUID could complete an authorisation
+against **their own** provider account and have the resulting tokens written onto **someone else's**
+credential — after which that tenant's flows act as the attacker's identity.
+
+A `state` that is the identifier of the thing being modified is not a state parameter. It is now 128
+bits from a CSPRNG, issued only by the authenticated `/authorize`, bound to both credential and
+workspace, single-use (deleted on read, so a replay fails), expiring in ten minutes.
+
+`/refresh/:credentialId` had the same unscoped lookup and wrote new tokens, letting an
+unauthenticated caller force refresh-token rotation on a victim's connected service. Removed from
+`WHITELIST_URLS`; now requires a session and a workspace-scoped lookup.
+
+### SSRF in the GET API chain
+
+The POST half had been fixed by reimplementing the chain locally against `secureFetch`. The GET half
+still imported LangChain's `APIChain`, which fetches with its own unguarded client — no deny list, no
+redirect revalidation, no DNS-rebind protection. The guard existed in the sibling file and was simply
+not used here.
+
+It matters more in this node than most: the URL is written by a language model from user-supplied
+text, so prompt injection steers it, and the response is fed back into the answer prompt — the SSRF
+is not blind.
+
+### Authenticated SQL injection, found outside the advisory set
+
+`importAssistants` built a raw `IN (...)` clause by concatenating ids from the request body.
+`importTools` and `importVariables` were given a UUID guard upstream for exactly this; the assistants
+sibling was missed. Reachable by any holder of `workspace:import` — super-admin, admin, org-admin.
+Now UUID-validated **and** parameter-bound: both, because they fail differently.
+
+### A mitigation we documented and never implemented
+
+`docs/COMPLIANCE-POSTURE.md`, `docs/BASELINE-3.1.4-fw8.md`, `docs/ISSUE-REGISTER.md` and two earlier
+CHANGELOG entries all stated **"`Proxy` removed from the sandbox"** as a shipped mitigation. It was
+not. The only occurrence of `Proxy` in `packages/components/src/utils.ts` was a comment saying it had
+been removed.
+
+`Proxy` is the primitive the published `vm2` escapes build their trap on. It is now genuinely
+shadowed, along with `Reflect`. This does not make `vm2` safe — it remains deprecated and
+unpatchable, and the real answer is still `CODE_EXECUTION_MODE=disabled` or `=e2b`. It makes the
+documented mitigation true.
+
+The two earlier CHANGELOG entries are corrected in place rather than quietly fixed: implementing it
+now and saying nothing would leave a record implying it had always been so.
+
+### Two fw9 fixes that persisted nothing
+
+`tools` and `variables` build an allowlisted copy of the request body — deliberately, so a client
+cannot set `id` or `workspaceId`. The fw9 tenant-key fix assigned to the **discarded** `body` object
+instead. It type-checked, it read correctly, and it wrote nothing. All four create paths now assign
+to the object actually passed to the service.
+
+### Published
+
+`docs/security/` carries two remediation briefs — one written for leadership, one for engineers —
+covering each of the four findings, what it meant in practice, and how to reproduce it. Both are
+explicit about `vm2` still being the default execution path, and both record that the external
+retest made two factually incorrect statements in this project's favour, which we contradicted
+rather than accepted. A brief that only carries good news is not evidence of anything.
+
+### Known open
+
+`CODE_EXECUTION_MODE` still defaults to `vm2`; shadowing `Proxy` narrows the escape surface without
+closing it. `/vector/upsert/` dual-auth remains a design change rather than a guard. `CODEOWNERS`
+does nothing until "Require review from Code Owners" is enabled. The brand primary is 3.12:1 against
+white.
 
 ---
 
@@ -36,16 +133,16 @@ canvas.
 
 ### Unauthenticated surfaces
 
-- **The MCP Streamable-HTTP transport validated a hostname once and never again.** It called
-  `checkDenyList(url)` and then handed the URL to the SDK with no custom `fetch`, so the SDK
-  followed redirects and re-resolved DNS itself — neither checked. The SSE fallback *in the same
-  function* already passed `secureFetch`, which walks redirects manually and pins the validated IP.
-  The guard existed; the path that normally runs did not use it.
-- **`/chatflows-streaming/:id`** loaded and parsed any flow's `flowData` by UUID with no ownership
-  check, leaking existence (200 vs a 500 naming the internal service) and node-graph detail.
-- **`POST /leads`** accepted anonymous writes onto private flows and persisted them into the owner's
-  lead list. Capturing a lead is the widget's job, so anonymous is legitimate — but only against a
-  flow that is actually published.
+-   **The MCP Streamable-HTTP transport validated a hostname once and never again.** It called
+    `checkDenyList(url)` and then handed the URL to the SDK with no custom `fetch`, so the SDK
+    followed redirects and re-resolved DNS itself — neither checked. The SSE fallback _in the same
+    function_ already passed `secureFetch`, which walks redirects manually and pins the validated IP.
+    The guard existed; the path that normally runs did not use it.
+-   **`/chatflows-streaming/:id`** loaded and parsed any flow's `flowData` by UUID with no ownership
+    check, leaking existence (200 vs a 500 naming the internal service) and node-graph detail.
+-   **`POST /leads`** accepted anonymous writes onto private flows and persisted them into the owner's
+    lead list. Capturing a lead is the widget's job, so anonymous is legitimate — but only against a
+    flow that is actually published.
 
 ### Tenancy
 
@@ -56,19 +153,19 @@ Production is clean today only because its rows predate the API write path.
 
 ### Operations
 
-- **`audit:export --verify` could not fail.** It printed a digest and exited 0 whether or not it
-  matched; on deliberately tampered data it printed the *different* digest with no warning. The
-  tamper-evidence control worked only if an operator compared 64 hex characters by eye. `--expect
-  <sha256>` now exits 3 on mismatch.
-- **A missing `FLOWISE_SESSION_PEPPER` no longer starts a server nobody can log into.** It logged an
-  error and kept serving. The code's stated reason for warning rather than throwing was that
-  `initDatabase` swallowed the exception — that catch now rethrows, so the reasoning was stale and
-  the behaviour is corrected to match it.
-- **`HEALTHCHECK` added.** There was none, while compose pairs `restart: always` with no health
-  condition — which never restarts a hung-but-alive process.
-- **`node` execs as PID 1.** `pnpm start` put four processes under PID 1, so `docker stop` returned
-  ExitCode 1 with `ELIFECYCLE` instead of 0/143 and nothing reaped orphans. Every clean stop looked
-  like a crash, which is what makes a real crash unremarkable.
+-   **`audit:export --verify` could not fail.** It printed a digest and exited 0 whether or not it
+    matched; on deliberately tampered data it printed the _different_ digest with no warning. The
+    tamper-evidence control worked only if an operator compared 64 hex characters by eye. `--expect
+<sha256>` now exits 3 on mismatch.
+-   **A missing `FLOWISE_SESSION_PEPPER` no longer starts a server nobody can log into.** It logged an
+    error and kept serving. The code's stated reason for warning rather than throwing was that
+    `initDatabase` swallowed the exception — that catch now rethrows, so the reasoning was stale and
+    the behaviour is corrected to match it.
+-   **`HEALTHCHECK` added.** There was none, while compose pairs `restart: always` with no health
+    condition — which never restarts a hung-but-alive process.
+-   **`node` execs as PID 1.** `pnpm start` put four processes under PID 1, so `docker stop` returned
+    ExitCode 1 with `ELIFECYCLE` instead of 0/143 and nothing reaped orphans. Every clean stop looked
+    like a crash, which is what makes a real crash unremarkable.
 
 ### Observability
 
@@ -85,13 +182,13 @@ documented licence incident was a button press away, gated only by a comment. Ev
 
 ### Accessibility, measured rather than eyeballed
 
-- **Focus indicators.** None existed anywhere in the theme; tabbing the whole sidebar reported
-  `outline: none`. Applied globally at `:focus-visible` — the defect was that each component had to
-  remember — so pointer users still see nothing. Ring contrast 5.72:1 to 8.52:1 against the surfaces
-  it lands on, against WCAG 1.4.11's 3:1.
-- **Disabled text.** `text.disabled` was undefined, so MUI fell back to its *light-theme*
-  `rgba(0,0,0,0.26)`. On the dark background that is **1.06:1** — black on near-black. Now 6.03:1
-  dark and 4.62:1 light, both clearing AA.
+-   **Focus indicators.** None existed anywhere in the theme; tabbing the whole sidebar reported
+    `outline: none`. Applied globally at `:focus-visible` — the defect was that each component had to
+    remember — so pointer users still see nothing. Ring contrast 5.72:1 to 8.52:1 against the surfaces
+    it lands on, against WCAG 1.4.11's 3:1.
+-   **Disabled text.** `text.disabled` was undefined, so MUI fell back to its _light-theme_
+    `rgba(0,0,0,0.26)`. On the dark background that is **1.06:1** — black on near-black. Now 6.03:1
+    dark and 4.62:1 light, both clearing AA.
 
 ### One production flow could not be opened
 
@@ -133,7 +230,7 @@ were release blockers. All nine are fixed here.
 `GET /api/v1/public-chatbotConfig/:id` returned the **complete flow definition** — node graph, model
 choices, which credential types are wired — for flows explicitly marked `isPublic = 0`, to
 unauthenticated callers on the public internet. Confirmed against the running production instance:
-48,523 bytes, HTTP 200, no credentials required. No credential *values* were exposed.
+48,523 bytes, HTTP 200, no credentials required. No credential _values_ were exposed.
 
 Its sibling `/public-chatflows/:id` had the correct check, which is what proves this was an omission
 rather than a decision. Both endpoints now share **one** authorization function, because two copies
@@ -175,16 +272,16 @@ key passes and rotates normally.
 
 ### Also fixed
 
-- **`::`** was missing from the SSRF deny list and routes to loopback — `curl http://[::]:3100/`
-  reached a live service. `100.64.0.0/10` and `198.18.0.0/15` added with it.
-- The **argon2** redaction pattern excluded `,`, and every real PHC string contains
-  `m=65536,t=3,p=4` — so matching stopped at the first comma and salt and digest survived in clear.
-- `path-to-regexp` was pinned **eight majors** below what express-5 consumers declare, breaking route
-  registration for the Brave-MCP node and the MCP OAuth router. Third bad override found in a day.
-- `flowise user <email> <password>` removed: argv password, no audit row, working login.
-- `/sso-config` blanked the **entire application** on an empty API response. Fixed at source, and
-  every protected route now sits behind a real React error boundary — the existing `ErrorBoundary`
-  was a display component that cannot catch a thrown render or effect.
+-   **`::`** was missing from the SSRF deny list and routes to loopback — `curl http://[::]:3100/`
+    reached a live service. `100.64.0.0/10` and `198.18.0.0/15` added with it.
+-   The **argon2** redaction pattern excluded `,`, and every real PHC string contains
+    `m=65536,t=3,p=4` — so matching stopped at the first comma and salt and digest survived in clear.
+-   `path-to-regexp` was pinned **eight majors** below what express-5 consumers declare, breaking route
+    registration for the Brave-MCP node and the MCP OAuth router. Third bad override found in a day.
+-   `flowise user <email> <password>` removed: argv password, no audit row, working login.
+-   `/sso-config` blanked the **entire application** on an empty API response. Fixed at source, and
+    every protected route now sits behind a real React error boundary — the existing `ErrorBoundary`
+    was a display component that cannot catch a thrown render or effect.
 
 ### The pattern, and the rule adopted because of it
 
@@ -218,7 +315,7 @@ Adds a code-execution kill switch, audit retention, and fixes a runtime bug that
 **`audit:export --from` / `--to` failed at runtime.** Both filters referenced `e.createdDate`; the
 column is `occurredAt`. TypeScript could not catch it because the reference lives inside a
 query-builder string, so it compiled clean and shipped. It surfaced only when `audit:prune` made the
-same mistake in a *typed* context, where the compiler did reject it.
+same mistake in a _typed_ context, where the compiler did reject it.
 
 Worth recording: "0 TypeScript errors" verified the typed call sites and silently skipped the
 string-embedded query. A compile pass is not coverage of anything expressed as a string.
@@ -227,14 +324,14 @@ string-embedded query. A compile pass is not coverage of anything expressed as a
 
 **`CODE_EXECUTION_MODE`** — `disabled` | `e2b` | `vm2`. Defaults to previous behaviour.
 
-- **`e2b` now fails closed.** Previously the remote sandbox was selected only by the presence of
-  `E2B_APIKEY`, and its absence fell back silently to the in-process sandbox. That is exactly how an
-  independent assessment concluded code ran off-host and rated the `vm2` risk moot, while the key was
-  unset and everything ran locally. An operator who asks for off-host execution now gets it or an
-  error.
-- **`disabled`** removes the risk class rather than mitigating it. A deployment with no code-execution
-  nodes has no reason to carry an in-process sandbox at all, and no sandbox is stronger than not
-  executing.
+-   **`e2b` now fails closed.** Previously the remote sandbox was selected only by the presence of
+    `E2B_APIKEY`, and its absence fell back silently to the in-process sandbox. That is exactly how an
+    independent assessment concluded code ran off-host and rated the `vm2` risk moot, while the key was
+    unset and everything ran locally. An operator who asks for off-host execution now gets it or an
+    error.
+-   **`disabled`** removes the risk class rather than mitigating it. A deployment with no code-execution
+    nodes has no reason to carry an in-process sandbox at all, and no sandbox is stronger than not
+    executing.
 
 **Boot-time sandbox posture.** The server states which sandbox will execute code and warns explicitly
 when it is `vm2`. The assessment above reached a wrong conclusion because the posture was not
@@ -242,7 +339,7 @@ observable without reading source and checking an environment variable.
 
 **`flowise audit:prune`** — retention enforcement. Default 400 days; refuses below the 365 days
 PCI-DSS 10.7 requires unless `--force`; refuses to delete without `--i-have-exported`, because
-deleted audit rows are unrecoverable. Its own audit record is written *after* the delete, so a prune
+deleted audit rows are unrecoverable. Its own audit record is written _after_ the delete, so a prune
 can never fall inside the window it describes and erase the evidence of pruning.
 
 ### Still open
@@ -267,7 +364,7 @@ support standard compliance claims.
 
 **Runtime variables read arbitrary `process.env`** (HIGH on a multi-user instance). A runtime
 variable resolved `process.env[name]` with the name supplied by the user and no allowlist, then
-injected the result into code nodes *and* prompt templates. Creating one is gated on
+injected the result into code nodes _and_ prompt templates. Creating one is gated on
 `variables:create` — a non-admin permission that `org-admin` and `user` both hold. Any authoring user
 could name a variable `JWT_AUTH_TOKEN_SECRET`, reference it in a flow, read the token-signing key,
 and forge tokens for any user in any tenant.
@@ -279,7 +376,7 @@ must opt in.
 
 **`GET /credentials/:id` returned decrypted plaintext.** The route requires `credentials:create` or
 `credentials:update`, which **four of the six system roles hold**, including `org-admin` and `user` —
-both explicitly designed to see credential *records* but never *values*. And `credentials:reveal`,
+both explicitly designed to see credential _records_ but never _values_. And `credentials:reveal`,
 the admin-only grant that split exists for, was enforced on **no route at all**. The two endpoints
 were also inverted: `/:id/reveal` redacted while the plain `GET` revealed.
 
@@ -327,8 +424,8 @@ and the failures look random.
 ### Added
 
 `flowise audit:export` — JSONL plus a SHA-256 manifest over an explicit `seqNo` range, for review and
-evidence retention. The manifest states the limit of its own claim: this is tamper *evidence*, not
-tamper *proofing*. An actor with database write access could rewrite history and re-export cleanly.
+evidence retention. The manifest states the limit of its own claim: this is tamper _evidence_, not
+tamper _proofing_. An actor with database write access could rewrite history and re-export cleanly.
 
 `docs/COMPLIANCE-POSTURE.md` — control mapping for SOC 2, HIPAA and PCI with evidence and named gaps.
 
@@ -363,13 +460,13 @@ That is every stored credential, secret and API key, and arbitrary write to shar
 
 Fixed in two places, deliberately:
 
-- **In code.** `filterDangerousBuiltIns` refuses `fs`, `child_process`, `process`, `vm`, `module`,
-  `worker_threads`, `net`, `dns` and others regardless of configuration, warning rather than
-  filtering silently so a failing flow is explicable. An explicit escape hatch exists
-  (`TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS`) and requires an exact acknowledgement string, so it
-  cannot be reached by copying a config snippet. `path` is kept — it manipulates strings and opens
-  nothing.
-- **In configuration.** `fs` removed from the deployment's `TOOL_FUNCTION_BUILTIN_DEP`.
+-   **In code.** `filterDangerousBuiltIns` refuses `fs`, `child_process`, `process`, `vm`, `module`,
+    `worker_threads`, `net`, `dns` and others regardless of configuration, warning rather than
+    filtering silently so a failing flow is explicable. An explicit escape hatch exists
+    (`TOOL_FUNCTION_ALLOW_DANGEROUS_BUILTINS`) and requires an exact acknowledgement string, so it
+    cannot be reached by copying a config snippet. `path` is kept — it manipulates strings and opens
+    nothing.
+-   **In configuration.** `fs` removed from the deployment's `TOOL_FUNCTION_BUILTIN_DEP`.
 
 The code fix is the important one. A value in a compose file is one careless edit from returning,
 and a sandbox whose containment can be removed by an environment variable is not a sandbox.
@@ -384,7 +481,7 @@ private, keyless flow reached `buildChatflow`. 22 of 25 flows on the assessed in
 A prediction now requires one of: a valid flow API key, an explicit `isPublic` flag, or an
 authenticated caller. **Absence of a credential is not a credential.**
 
-*Breaking:* calling `/prediction/` on a keyless, non-public flow without a session now returns 401.
+_Breaking:_ calling `/prediction/` on a keyless, non-public flow without a session now returns 401.
 That is the access being removed. Mark such flows public, or give them an API key.
 
 #### A public flow may no longer contain a code-execution node
@@ -400,21 +497,21 @@ costs the host.
 
 Reported by the assessment, confirmed by inspection — recorded so nobody re-fixes them:
 
-- **SSRF from code nodes** (suspected) — already mitigated. `httpSecurity.ts` denies
-  `169.254.169.254`, all RFC1918 ranges, `localhost` and `::1` by default, across redirect chains.
-- **vm2 command execution** — the four public escape techniques are blocked by the shipped config:
-  `eval: false` disables code-generation-from-strings (this entry also claimed `Proxy` was removed — it was not implemented until 3.1.4-fw10),
-  defeating the `Function('return process')` primitive every published escape relies on.
-- **Path traversal / arbitrary file read** via `get-upload-file` — UUID and format validated.
-- **Unauthenticated MCP code execution** — route-level `authenticateToken` applies despite the
-  whitelist.
+-   **SSRF from code nodes** (suspected) — already mitigated. `httpSecurity.ts` denies
+    `169.254.169.254`, all RFC1918 ranges, `localhost` and `::1` by default, across redirect chains.
+-   **vm2 command execution** — the four public escape techniques are blocked by the shipped config:
+    `eval: false` disables code-generation-from-strings (this entry also claimed `Proxy` was removed — it was not implemented until 3.1.4-fw10),
+    defeating the `Function('return process')` primitive every published escape relies on.
+-   **Path traversal / arbitrary file read** via `get-upload-file` — UUID and format validated.
+-   **Unauthenticated MCP code execution** — route-level `authenticateToken` applies despite the
+    whitelist.
 
 ### Known and NOT fixed in this release
 
 **`vm2` is deprecated and unpatchable.** Its escapes are blocked by configuration today, not by the
 library. The durable fix is `isolated-vm` or the already-present `@e2b/code-interpreter` remote
 sandbox; it touches every code-node type and is scheduled as its own change rather than rushed into
-a security release. Until then, treat *who can author a code node* and *which flows are public* as
+a security release. Until then, treat _who can author a code node_ and _which flows are public_ as
 host-RCE-equivalent trust boundaries.
 
 Correcting an earlier claim: the `vm2` 3.11.5 pin in `3.1.4-fw4` was described as closing six
@@ -423,8 +520,8 @@ worse version; it did not make the sandbox safe.
 
 ### Added
 
-- `packages/server/src/utils/codeNodeGuard.test.ts` — 16 cases including the assessment's payloads
-- `packages/components/src/dangerousBuiltins.test.ts` — pins the refusal of every dangerous builtin
+-   `packages/server/src/utils/codeNodeGuard.test.ts` — 16 cases including the assessment's payloads
+-   `packages/components/src/dangerousBuiltins.test.ts` — pins the refusal of every dangerous builtin
 
 ---
 
@@ -441,7 +538,7 @@ testing had reached, including a fresh install that bricked itself on first logi
 are fixed here.
 
 `3.1.4-fw1` through `3.1.4-fw3` are **superseded**. They were built before the removal and
-contain the commercially licensed compiled output; see *Notes on distribution* below.
+contain the commercially licensed compiled output; see _Notes on distribution_ below.
 
 ### Changed — the repository is now 100% Apache 2.0
 
@@ -468,41 +565,41 @@ interface did not determine behaviour — and implemented against it. **The comm
 licensed files were never read.** A pre-commit hook and a CI job reject any commit that
 modifies a protected path.
 
-- `docs/CLEANROOM-PROTOCOL.md` — the binding process and its prohibitions
-- `docs/CLEANROOM-ATTESTATION.md` — evidence, with commands anyone can re-run. Includes a
-  disclosed incident in which a malformed command exposed roughly twelve lines of one
-  protected file, and the remediation applied
-- `docs/SPEC-AUTH-RBAC.md` — the specification and its citations
-- `docs/HOW-WE-DID-THIS.md` — the method, written to be reusable, including what went wrong
+-   `docs/CLEANROOM-PROTOCOL.md` — the binding process and its prohibitions
+-   `docs/CLEANROOM-ATTESTATION.md` — evidence, with commands anyone can re-run. Includes a
+    disclosed incident in which a malformed command exposed roughly twelve lines of one
+    protected file, and the remediation applied
+-   `docs/SPEC-AUTH-RBAC.md` — the specification and its citations
+-   `docs/HOW-WE-DID-THIS.md` — the method, written to be reusable, including what went wrong
 
 ### Added — identity, RBAC, tenancy and recovery
 
-- **Authentication** under `packages/server/src/identity/`: local password login (bcrypt,
-  cost 12, chosen so existing upstream hashes verify unchanged), sessions, and SSO login
-  methods.
-- **MFA**: TOTP with hashed recovery codes, verified against the published RFC 6238 test
-  vectors. Upstream had no MFA.
-- **RBAC**: 82 permissions across 19 categories, deny-by-default and validated at
-  route-mount time. Upstream shipped 21 permissions with no server-side check at all — the
-  client rendered the buttons as `null`, so the restriction was cosmetic.
-- **`credentials:reveal` split out of `credentials:manage`**, admin-only and audited, so one
-  compromised account no longer yields every stored API key.
-- **Audit trail**: one append-only record across all domains, replacing the sign-in-only
-  log. RBAC without a record answers "was this allowed?" but never "who did it?".
-- **Encryption at rest** with per-record key version, algorithm, nonce and salt, so key
-  rotation is resumable and auditable. The key may live off-host, and the server refuses to
-  start with the published example value that `.env.example` has been shipping.
-- **Multi-tenancy** with organisations, workspaces and a denormalised tenant key on the row,
-  so a query that forgets to join cannot cross tenants.
-- **Migration from an existing Flowise database**, preserving accounts and access: password
-  hashes carry over and still verify, non-user content is byte-identical before and after,
-  dry-run writes nothing, and rollback is byte-for-byte. Verified against a copy of a real
-  production database.
-- **Recovery CLI** — `admin:create`, `admin:reset-password`, `admin:list`, `admin:unlock`,
-  `admin:clear-password-change`, `mfa:disable`, `sso:disable`, `session:revoke-all`, and
-  `doctor`. Passwords are read from `/dev/tty` and cannot be supplied by flag, pipe or
-  environment variable. `doctor` runs nine checks and exits non-zero on failure, so a
-  half-migrated database is a finding rather than a mystery.
+-   **Authentication** under `packages/server/src/identity/`: local password login (bcrypt,
+    cost 12, chosen so existing upstream hashes verify unchanged), sessions, and SSO login
+    methods.
+-   **MFA**: TOTP with hashed recovery codes, verified against the published RFC 6238 test
+    vectors. Upstream had no MFA.
+-   **RBAC**: 82 permissions across 19 categories, deny-by-default and validated at
+    route-mount time. Upstream shipped 21 permissions with no server-side check at all — the
+    client rendered the buttons as `null`, so the restriction was cosmetic.
+-   **`credentials:reveal` split out of `credentials:manage`**, admin-only and audited, so one
+    compromised account no longer yields every stored API key.
+-   **Audit trail**: one append-only record across all domains, replacing the sign-in-only
+    log. RBAC without a record answers "was this allowed?" but never "who did it?".
+-   **Encryption at rest** with per-record key version, algorithm, nonce and salt, so key
+    rotation is resumable and auditable. The key may live off-host, and the server refuses to
+    start with the published example value that `.env.example` has been shipping.
+-   **Multi-tenancy** with organisations, workspaces and a denormalised tenant key on the row,
+    so a query that forgets to join cannot cross tenants.
+-   **Migration from an existing Flowise database**, preserving accounts and access: password
+    hashes carry over and still verify, non-user content is byte-identical before and after,
+    dry-run writes nothing, and rollback is byte-for-byte. Verified against a copy of a real
+    production database.
+-   **Recovery CLI** — `admin:create`, `admin:reset-password`, `admin:list`, `admin:unlock`,
+    `admin:clear-password-change`, `mfa:disable`, `sso:disable`, `session:revoke-all`, and
+    `doctor`. Passwords are read from `/dev/tty` and cannot be supplied by flag, pipe or
+    environment variable. `doctor` runs nine checks and exits non-zero on failure, so a
+    half-migrated database is a finding rather than a mystery.
 
 ### Fixed — a fresh install did not work, in six independent ways
 
@@ -543,13 +640,13 @@ it now collects the current password instead.
 file that names it imports only its constants; nothing anywhere constructed it or invoked
 `run()`. On every fresh install:
 
-- The six roles — super-admin, admin, super-user, org-admin, user, read-only — did not
-  exist. The only role that ever existed was the single one `admin:create` seeds on demand
-  for the account it is making, so RBAC was fully designed and one-sixth usable: there was
-  no `admin`, `user` or `read-only` row to assign anyone to.
-- `FLOWISE_BOOTSTRAP_EMAIL` / `FLOWISE_BOOTSTRAP_PASSWORD` did nothing at all.
-- `doctor` reported "5 of the six system roles are not seeded" on a healthy instance, which
-  is how this surfaced.
+-   The six roles — super-admin, admin, super-user, org-admin, user, read-only — did not
+    exist. The only role that ever existed was the single one `admin:create` seeds on demand
+    for the account it is making, so RBAC was fully designed and one-sixth usable: there was
+    no `admin`, `user` or `read-only` row to assign anyone to.
+-   `FLOWISE_BOOTSTRAP_EMAIL` / `FLOWISE_BOOTSTRAP_PASSWORD` did nothing at all.
+-   `doctor` reported "5 of the six system roles are not seeded" on a healthy instance, which
+    is how this surfaced.
 
 Now invoked from `initDatabase`, after migrations and before the identity manager.
 Idempotent by construction, so it is safe on every boot including against a database
@@ -557,7 +654,7 @@ migrated from Flowise 3.x. One deliberate contract change for the boot path only
 instance with no identity and none configured is now **reported** rather than thrown, and
 the boot log prints the exact command to fix it — throwing inside the transaction rolled
 back the six roles it had just seeded, so a first `docker run` with no environment would
-have refused to start *and* left nothing behind for `admin:create` to use.
+have refused to start _and_ left nothing behind for `admin:create` to use.
 
 #### A brand-new Postgres database could never be created
 
@@ -667,18 +764,18 @@ Found by scanning the built image for commercial material rather than assuming t
 the files had been enough. It had not been; nothing had ever looked anywhere but at the
 files themselves.
 
-- `upstream-archive/strip-protected-hunks.py` removes the hunk bodies and is committed, so
-  the operation is reproducible and auditable rather than something that happened once to a
-  directory. It decides **only** on the path in a `diff --git a/… b/…` header — no hunk
-  content is inspected or matched on, because `docs/CLEANROOM-PROTOCOL.md` requires not
-  *reading* those files, not merely not copying them. Headers and diffstat entries are kept,
-  with a marker where each hunk was, so the archive still records what each pull request
-  touched. Every hunk against an Apache-2.0 path is untouched and still applies.
-- `.dockerignore` now excludes `upstream-archive`, `.git`, `.github` and `.githooks`, plus
-  `.env` anywhere in the tree, database files and key material. The three `.env` paths listed
-  before were enumerated by hand, so a fourth would have been copied in silently.
-- The `Dockerfile` gate now fails on any `enterprise/` path segment rather than only compiled
-  `dist/enterprise/`, and on `upstream-archive` itself.
+-   `upstream-archive/strip-protected-hunks.py` removes the hunk bodies and is committed, so
+    the operation is reproducible and auditable rather than something that happened once to a
+    directory. It decides **only** on the path in a `diff --git a/… b/…` header — no hunk
+    content is inspected or matched on, because `docs/CLEANROOM-PROTOCOL.md` requires not
+    _reading_ those files, not merely not copying them. Headers and diffstat entries are kept,
+    with a marker where each hunk was, so the archive still records what each pull request
+    touched. Every hunk against an Apache-2.0 path is untouched and still applies.
+-   `.dockerignore` now excludes `upstream-archive`, `.git`, `.github` and `.githooks`, plus
+    `.env` anywhere in the tree, database files and key material. The three `.env` paths listed
+    before were enumerated by hand, so a fourth would have been copied in silently.
+-   The `Dockerfile` gate now fails on any `enterprise/` path segment rather than only compiled
+    `dist/enterprise/`, and on `upstream-archive` itself.
 
 Two consequences, recorded in `upstream-archive/MANIFEST.md`: those fifteen patches are no
 longer faithful captures of their pull requests, and `pr-6706` — the `connect-sqlite3` fix by
@@ -693,87 +790,87 @@ and the images built from it.
 
 ### Security
 
-- **`vm2` pinned to 3.11.5 in the source tree**, not only in the npm-install Dockerfile.
-  The earlier pin existed solely in `docker/Dockerfile`; `packages/components` still
-  declared `vm2 3.11.2` and the lockfile resolved it, so a build from the root Dockerfile —
-  the one that produces this release — would have shipped the vulnerable sandbox while the
-  README advertised 3.11.5. 3.11.2 is subject to six critical sandbox escapes
-  (`GHSA-248r-7h7q-cr24`, `GHSA-6j2x-vhqr-qr7q`, `GHSA-76w7-j9cq-rx2j`,
-  `GHSA-m4wx-m65x-ghrr`, `GHSA-rp36-8xq3-r6c4`, `GHSA-v6mx-mf47-r5wg`), and a sandbox
-  escape here is the first link in *RCE → read `database.sqlite` → decrypt credentials →
-  exfiltrate provider API keys*. Fixed as a direct dependency **and** a `pnpm.overrides`
-  entry, for the same reason the fork already learned once with `connect-sqlite3`: a later
-  resolution silently undoes an earlier pin.
-- The `connect-sqlite3` boot crash behind upstream
-  [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) **cannot occur in this build**.
-  It threw inside `dist/enterprise/middleware/passport/SessionPersistance.js`, which is one
-  of the 127 deleted files; nothing in the tree imports `connect-sqlite3` any more.
-- All 26 advisories published 2026-08-04 remain closed, as in `3.1.4-fw1`.
+-   **`vm2` pinned to 3.11.5 in the source tree**, not only in the npm-install Dockerfile.
+    The earlier pin existed solely in `docker/Dockerfile`; `packages/components` still
+    declared `vm2 3.11.2` and the lockfile resolved it, so a build from the root Dockerfile —
+    the one that produces this release — would have shipped the vulnerable sandbox while the
+    README advertised 3.11.5. 3.11.2 is subject to six critical sandbox escapes
+    (`GHSA-248r-7h7q-cr24`, `GHSA-6j2x-vhqr-qr7q`, `GHSA-76w7-j9cq-rx2j`,
+    `GHSA-m4wx-m65x-ghrr`, `GHSA-rp36-8xq3-r6c4`, `GHSA-v6mx-mf47-r5wg`), and a sandbox
+    escape here is the first link in _RCE → read `database.sqlite` → decrypt credentials →
+    exfiltrate provider API keys_. Fixed as a direct dependency **and** a `pnpm.overrides`
+    entry, for the same reason the fork already learned once with `connect-sqlite3`: a later
+    resolution silently undoes an earlier pin.
+-   The `connect-sqlite3` boot crash behind upstream
+    [#6688](https://github.com/FlowiseAI/Flowise/issues/6688) **cannot occur in this build**.
+    It threw inside `dist/enterprise/middleware/passport/SessionPersistance.js`, which is one
+    of the 127 deleted files; nothing in the tree imports `connect-sqlite3` any more.
+-   All 26 advisories published 2026-08-04 remain closed, as in `3.1.4-fw1`.
 
 ### Changed — build and versioning
 
-- **The root `Dockerfile` is now the release build.** It compiles this repository, from
-  which the 127 files are deleted, so nothing derived from them can reach the image.
-- **`docker/Dockerfile` cannot produce an Apache-2.0-only image and is documented as such.**
-  It runs `npm install -g flowise@<version>`, which fetches FlowiseAI's published package —
-  and that package ships the compiled `dist/enterprise/` output and
-  `dist/IdentityManager.js` under the Commercial License. That is precisely how `fw1`
-  through `fw3` came to contain commercially licensed material. It also cannot build `fw4`
-  or later at all, since those versions exist only in this repository and never on npm. It
-  is retained for reproducing and diagnosing the upstream images.
-- **The root `Dockerfile` takes `FLOWISE_VERSION`** and asserts it against
-  `packages/server/package.json` before installing anything, so the tag and the version the
-  server reports are one fact rather than two.
-- **The build fails if any commercially licensed artifact is present**, anywhere on the
-  image filesystem: any `dist/enterprise/` path, or any `IdentityManager` file. `pnpm
-  install` fetches from npm and upstream's package still carries that output, so a
-  dependency edge could reintroduce it silently. It now cannot be built at all if that
-  happens.
-- **The version the server reports is now the Flow-Wiser version.** `GET /api/v1/version`
-  reads the nearest `package.json`, which resolves to `packages/server/package.json`. Every
-  `fw` image before this one reported a bare `3.1.4` — the same class of
-  tag-does-not-match-contents problem this fork was started to fix. It now answers
-  `3.1.4-fw4`.
+-   **The root `Dockerfile` is now the release build.** It compiles this repository, from
+    which the 127 files are deleted, so nothing derived from them can reach the image.
+-   **`docker/Dockerfile` cannot produce an Apache-2.0-only image and is documented as such.**
+    It runs `npm install -g flowise@<version>`, which fetches FlowiseAI's published package —
+    and that package ships the compiled `dist/enterprise/` output and
+    `dist/IdentityManager.js` under the Commercial License. That is precisely how `fw1`
+    through `fw3` came to contain commercially licensed material. It also cannot build `fw4`
+    or later at all, since those versions exist only in this repository and never on npm. It
+    is retained for reproducing and diagnosing the upstream images.
+-   **The root `Dockerfile` takes `FLOWISE_VERSION`** and asserts it against
+    `packages/server/package.json` before installing anything, so the tag and the version the
+    server reports are one fact rather than two.
+-   **The build fails if any commercially licensed artifact is present**, anywhere on the
+    image filesystem: any `dist/enterprise/` path, or any `IdentityManager` file. `pnpm
+install` fetches from npm and upstream's package still carries that output, so a
+    dependency edge could reintroduce it silently. It now cannot be built at all if that
+    happens.
+-   **The version the server reports is now the Flow-Wiser version.** `GET /api/v1/version`
+    reads the nearest `package.json`, which resolves to `packages/server/package.json`. Every
+    `fw` image before this one reported a bare `3.1.4` — the same class of
+    tag-does-not-match-contents problem this fork was started to fix. It now answers
+    `3.1.4-fw4`.
 
 ### Known gaps
 
 Stated plainly rather than omitted:
 
-- Five identity-administration endpoints (`/user`, `/role`, `/organization`,
-  `/organizationuser`, `/audit`) return **501 with a reason**. They have no call site in the
-  Apache-2.0 client, so implementing them would mean inventing behaviour — exactly what this
-  method exists to prevent.
-- The forgotten-password flow (`POST /account/reset-password` with a `tempToken`) returns
-  **501**. There is no transactional email path in this build, so no token can be issued.
-  The forced-password-change flow through the same URL does work.
-- Chatflow version history is designed but not yet built.
-- **The denormalised tenant key is not written on create.** `REQUIREMENTS-MIGRATION.md` §3a
-  requires `organizationId` on every tenant-scoped resource row; the migrations add the column
-  and the index, but the write paths do not populate it, so a newly created chatflow has
-  `organizationId` NULL while its workspace has one. `doctor` catches it and exits non-zero:
-  *"1 row(s) carry a tenant key that disagrees with their workspace"*. Nothing is currently
-  served to the wrong tenant, because scoping still goes through `workspaceId` — but a query
-  that filters on organization alone, which §3a exists to make safe, would miss those rows.
-  §3a's central enforcement layer is the missing piece; until it lands, expect `doctor` to
-  report this on any instance where content has been created.
-- The two non-fatal node-load failures from `3.1.4-fw1` remain: `@langchain/core` does not
-  export `./utils/uuid` (ReAct Agent), and `Cannot find module '@smithy/eventstream-codec'`
-  (AWS Bedrock). The server starts and serves normally; only those nodes are unavailable.
-- `vm2` is pinned, not replaced. It has produced a fresh escape in essentially every release
-  line. Replacing it outright (`isolated-vm`), or disabling custom-code nodes on
-  internet-facing deployments, is the real fix.
-- MySQL migrations are verified by inspection rather than execution — no MySQL image will
-  unpack on the build host. The files are byte-identical to the MariaDB ones modulo
-  collation, and MariaDB is executed.
+-   Five identity-administration endpoints (`/user`, `/role`, `/organization`,
+    `/organizationuser`, `/audit`) return **501 with a reason**. They have no call site in the
+    Apache-2.0 client, so implementing them would mean inventing behaviour — exactly what this
+    method exists to prevent.
+-   The forgotten-password flow (`POST /account/reset-password` with a `tempToken`) returns
+    **501**. There is no transactional email path in this build, so no token can be issued.
+    The forced-password-change flow through the same URL does work.
+-   Chatflow version history is designed but not yet built.
+-   **The denormalised tenant key is not written on create.** `REQUIREMENTS-MIGRATION.md` §3a
+    requires `organizationId` on every tenant-scoped resource row; the migrations add the column
+    and the index, but the write paths do not populate it, so a newly created chatflow has
+    `organizationId` NULL while its workspace has one. `doctor` catches it and exits non-zero:
+    _"1 row(s) carry a tenant key that disagrees with their workspace"_. Nothing is currently
+    served to the wrong tenant, because scoping still goes through `workspaceId` — but a query
+    that filters on organization alone, which §3a exists to make safe, would miss those rows.
+    §3a's central enforcement layer is the missing piece; until it lands, expect `doctor` to
+    report this on any instance where content has been created.
+-   The two non-fatal node-load failures from `3.1.4-fw1` remain: `@langchain/core` does not
+    export `./utils/uuid` (ReAct Agent), and `Cannot find module '@smithy/eventstream-codec'`
+    (AWS Bedrock). The server starts and serves normally; only those nodes are unavailable.
+-   `vm2` is pinned, not replaced. It has produced a fresh escape in essentially every release
+    line. Replacing it outright (`isolated-vm`), or disabling custom-code nodes on
+    internet-facing deployments, is the real fix.
+-   MySQL migrations are verified by inspection rather than execution — no MySQL image will
+    unpack on the build host. The files are byte-identical to the MariaDB ones modulo
+    collation, and MariaDB is executed.
 
 ### Planned
 
-- Resolve the two remaining non-fatal node-load failures
-- Replace `vm2` rather than pinning it
-- Sweep remaining critical dependency advisories
-- Adopt the remaining security pull requests from `upstream-archive/`
-- Chatflow version history
-- Public product map and contribution queue
+-   Resolve the two remaining non-fatal node-load failures
+-   Replace `vm2` rather than pinning it
+-   Sweep remaining critical dependency advisories
+-   Adopt the remaining security pull requests from `upstream-archive/`
+-   Chatflow version history
+-   Public product map and contribution queue
 
 ### Notes on distribution
 
@@ -829,11 +926,11 @@ build that were never fixed upstream and now never will be.
 Every published `flowiseai/flowise` image ships the **`flowise@3.1.2` server package
 regardless of its tag**:
 
-| Image tag | Server package actually shipped |
-| --- | --- |
-| `flowiseai/flowise:3.1.2` | `flowise@3.1.2` |
-| `flowiseai/flowise:3.1.3` | `flowise@3.1.2` ❌ |
-| `flowiseai/flowise:3.1.4` | `flowise@3.1.2` ❌ |
+| Image tag                 | Server package actually shipped |
+| ------------------------- | ------------------------------- |
+| `flowiseai/flowise:3.1.2` | `flowise@3.1.2`                 |
+| `flowiseai/flowise:3.1.3` | `flowise@3.1.2` ❌              |
+| `flowiseai/flowise:3.1.4` | `flowise@3.1.2` ❌              |
 
 `flowise@3.1.3` and `@3.1.4` are published correctly on npm; no official image ever
 contained them.
@@ -898,35 +995,35 @@ and the broken default went unnoticed. Anyone running a plain `docker build` hit
 
 ### Security
 
-- **All 26 advisories published 2026-08-04 are closed** by this build — 10 critical, 13 high,
-  3 medium. This includes `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously
-  unreachable because 3.1.4 would not start.
-- Adopted **CVE-2026-27699** (`basic-ftp` → 5.2.1) and **CVE-2026-33863** (`convict` → 6.2.5)
-  from upstream PRs #6683 and #6682 by **anupamme**, which could not be merged before archival.
-  Both were re-pinned via `pnpm.overrides` rather than root `dependencies` — these are
-  transitive dependencies, and a root entry does not reliably force transitive consumers onto
-  the pinned version under pnpm.
-- `SECURITY.md` replaced. Upstream's states that vulnerability reports are no longer accepted;
-  Flow-Wiser accepts them.
+-   **All 26 advisories published 2026-08-04 are closed** by this build — 10 critical, 13 high,
+    3 medium. This includes `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously
+    unreachable because 3.1.4 would not start.
+-   Adopted **CVE-2026-27699** (`basic-ftp` → 5.2.1) and **CVE-2026-33863** (`convict` → 6.2.5)
+    from upstream PRs #6683 and #6682 by **anupamme**, which could not be merged before archival.
+    Both were re-pinned via `pnpm.overrides` rather than root `dependencies` — these are
+    transitive dependencies, and a root entry does not reliably force transitive consumers onto
+    the pinned version under pnpm.
+-   `SECURITY.md` replaced. Upstream's states that vulnerability reports are no longer accepted;
+    Flow-Wiser accepts them.
 
 ### Added
 
-- `upstream-archive/` — snapshot of the upstream contribution backlog captured before the
-  2026-08-10 archive locked it: **347 open pull requests** as git-am-able mailbox patches
-  (original authors preserved), **698 open issues**, **116 security advisories**, and
-  **100 discussions**.
-- `CONNECT_SQLITE3_VERSION` and `FLOWISE_VERSION` build arguments, both with assertions.
-- Dependabot, vulnerability alerts, and GitHub Discussions enabled.
+-   `upstream-archive/` — snapshot of the upstream contribution backlog captured before the
+    2026-08-10 archive locked it: **347 open pull requests** as git-am-able mailbox patches
+    (original authors preserved), **698 open issues**, **116 security advisories**, and
+    **100 discussions**.
+-   `CONNECT_SQLITE3_VERSION` and `FLOWISE_VERSION` build arguments, both with assertions.
+-   Dependabot, vulnerability alerts, and GitHub Discussions enabled.
 
 ### Known issues
 
 Two **non-fatal** node-load failures remain, inherited from upstream dependency drift. The
 server starts and serves normally; only these specific nodes are unavailable:
 
-| Error | Node affected |
-| --- | --- |
+| Error                                            | Node affected            |
+| ------------------------------------------------ | ------------------------ |
 | `@langchain/core` does not export `./utils/uuid` | ReAct Agent (Chat + LLM) |
-| `Cannot find module '@smithy/eventstream-codec'` | AWS Bedrock |
+| `Cannot find module '@smithy/eventstream-codec'` | AWS Bedrock              |
 
 Both are tracked for a future release.
 

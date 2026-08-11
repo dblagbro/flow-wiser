@@ -189,7 +189,24 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
             throw error
         }
     } catch (error) {
+        // An authorisation failure must answer with its real status code, not an SSE error event.
+        //
+        // This catch turned EVERY error into a 200 with an `tts_error` frame. That is right once a
+        // stream is under way — you cannot change the status after the headers are sent — and wrong
+        // before it, because a refused request then looks identical to a successful one to anything
+        // reading status codes: a monitor, a WAF, a scanner, or a security reviewer checking whether
+        // GHSA-8gj2 is closed. The credential was never used and no audio was produced, but the
+        // response said 200 and the fix looked absent.
+        //
+        // Before the stream starts, an InternalFlowiseError carries its own status; use it.
         if (!res.headersSent) {
+            const status = (error as { statusCode?: number })?.statusCode
+            if (typeof status === 'number' && status >= 400 && status < 500) {
+                return res.status(status).json({
+                    success: false,
+                    message: error instanceof Error ? error.message : 'Request refused'
+                })
+            }
             res.setHeader('Content-Type', 'text/event-stream')
             res.setHeader('Cache-Control', 'no-cache')
             res.setHeader('Connection', 'keep-alive')
