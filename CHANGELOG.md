@@ -28,6 +28,95 @@ first.
 
 ---
 
+## [3.1.4-fw10] — 2026-08-10
+
+**A sweep of all 116 upstream security advisories against this tree.** Four were still present. Two
+were unauthenticated. One was confirmed exploitable against the running production host. All four
+are fixed here, along with a SQL injection found outside the advisory set and a sandbox mitigation
+this project had documented in five places and never implemented.
+
+`docs/ADVISORY-SWEEP.md` carries the full 116-row table with a verdict and evidence for each.
+
+### Unauthenticated credential abuse — was live in production
+
+`/api/v1/text-to-speech/generate` is whitelisted so an embedded chat widget can speak a **public**
+chatflow's replies without a session. The `chatflowId` branch enforced that. The body-config branch
+did not: omitting `chatflowId` skipped the `isPublic` gate entirely, and the request body's
+`credentialId` flowed into `getCredentialData`, which resolves `findOneBy({ id })` with **no
+workspace predicate**.
+
+Confirmed against the live host: a POST carrying a provider and a credential UUID — no session, no
+API key, no permission — returned HTTP 200 and began synthesis. An attacker who knew any credential
+UUID could have the server decrypt the owner's OpenAI or ElevenLabs key and spend against it.
+
+Selecting an arbitrary credential is an authoring action, so it now requires a session **and** the
+credential must belong to the caller's workspace.
+
+### Unauthenticated OAuth2 credential write
+
+`state` was the credential's own UUID — the code said so: *"Use credential ID as state parameter"*.
+The whitelisted `/callback` resolved it with `findOneBy({ id: state })`: no ownership check, no CSRF
+binding, no expiry, no single-use. Anyone who knew a credential UUID could complete an authorisation
+against **their own** provider account and have the resulting tokens written onto **someone else's**
+credential — after which that tenant's flows act as the attacker's identity.
+
+A `state` that is the identifier of the thing being modified is not a state parameter. It is now 128
+bits from a CSPRNG, issued only by the authenticated `/authorize`, bound to both credential and
+workspace, single-use (deleted on read, so a replay fails), expiring in ten minutes.
+
+`/refresh/:credentialId` had the same unscoped lookup and wrote new tokens, letting an
+unauthenticated caller force refresh-token rotation on a victim's connected service. Removed from
+`WHITELIST_URLS`; now requires a session and a workspace-scoped lookup.
+
+### SSRF in the GET API chain
+
+The POST half had been fixed by reimplementing the chain locally against `secureFetch`. The GET half
+still imported LangChain's `APIChain`, which fetches with its own unguarded client — no deny list, no
+redirect revalidation, no DNS-rebind protection. The guard existed in the sibling file and was simply
+not used here.
+
+It matters more in this node than most: the URL is written by a language model from user-supplied
+text, so prompt injection steers it, and the response is fed back into the answer prompt — the SSRF
+is not blind.
+
+### Authenticated SQL injection, found outside the advisory set
+
+`importAssistants` built a raw `IN (...)` clause by concatenating ids from the request body.
+`importTools` and `importVariables` were given a UUID guard upstream for exactly this; the assistants
+sibling was missed. Reachable by any holder of `workspace:import` — super-admin, admin, org-admin.
+Now UUID-validated **and** parameter-bound: both, because they fail differently.
+
+### A mitigation we documented and never implemented
+
+`docs/COMPLIANCE-POSTURE.md`, `docs/BASELINE-3.1.4-fw8.md`, `docs/ISSUE-REGISTER.md` and two earlier
+CHANGELOG entries all stated **"`Proxy` removed from the sandbox"** as a shipped mitigation. It was
+not. The only occurrence of `Proxy` in `packages/components/src/utils.ts` was a comment saying it had
+been removed.
+
+`Proxy` is the primitive the published `vm2` escapes build their trap on. It is now genuinely
+shadowed, along with `Reflect`. This does not make `vm2` safe — it remains deprecated and
+unpatchable, and the real answer is still `CODE_EXECUTION_MODE=disabled` or `=e2b`. It makes the
+documented mitigation true.
+
+The two earlier CHANGELOG entries are corrected in place rather than quietly fixed: implementing it
+now and saying nothing would leave a record implying it had always been so.
+
+### Two fw9 fixes that persisted nothing
+
+`tools` and `variables` build an allowlisted copy of the request body — deliberately, so a client
+cannot set `id` or `workspaceId`. The fw9 tenant-key fix assigned to the **discarded** `body` object
+instead. It type-checked, it read correctly, and it wrote nothing. All four create paths now assign
+to the object actually passed to the service.
+
+### Known open
+
+`CODE_EXECUTION_MODE` still defaults to `vm2`; shadowing `Proxy` narrows the escape surface without
+closing it. `/vector/upsert/` dual-auth remains a design change rather than a guard. `CODEOWNERS`
+does nothing until "Require review from Code Owners" is enabled. The brand primary is 3.12:1 against
+white.
+
+---
+
 ## [3.1.4-fw9] — 2026-08-10
 
 The remaining thirteen findings from the `fw8` QA regression. `fw8` fixed the nine that blocked a
