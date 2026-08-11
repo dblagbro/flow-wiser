@@ -18,19 +18,25 @@
 # The Apache-2.0-only image is built from source:
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22 \
 #     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 # ---------------------------------------------------------------------------
 
 # Node.js version (overridable via build-arg from CI)
 #
-# Upstream defaulted this to 24, but that default does not build: better-sqlite3
-# fails to compile under node-gyp on Node 24 ("gyp ERR! not ok", node-gyp 8.4.1).
-# Every published flowiseai/flowise image (3.1.2, 3.1.3, 3.1.4) actually runs
-# Node v20.20.2, so upstream CI must have been overriding this. Defaulting to 20
-# makes a plain `docker build` reproduce the shipped runtime instead of failing.
-ARG NODE_VERSION=20
+# Node 22 is the supported version for this project. See
+# docs/decisions/ADR-0004-node-version-conflict.md (Accepted 2026-08-11).
+#
+# History: upstream defaulted this to 24, but that default does not build --
+# better-sqlite3 fails to compile under node-gyp on Node 24 ("gyp ERR! not ok",
+# node-gyp 8.4.1). Every published flowiseai/flowise image (3.1.2, 3.1.3, 3.1.4)
+# actually ran Node v20.20.2, so upstream CI must have been overriding this. The
+# default was set to 20 to reproduce the shipped runtime; Node 20 is now near end
+# of support, so the project standardised on 22.
+#
+# This value must stay in step with .nvmrc, `engines.node`, and the CI Node matrix.
+ARG NODE_VERSION=22
 
 # Stage 1: Build stage
 FROM node:${NODE_VERSION}-alpine AS build
