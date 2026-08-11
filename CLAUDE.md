@@ -71,10 +71,26 @@ They must move together; divergence is what produced ADR-0004 in the first place
 canvas component with its own `version: number` — see `docs/backlog.md` BL-02. Never conflate them
 in code, commits, docs or UI copy.
 
-**5. Git hooks are not active in this clone.**
-`core.hooksPath` is unset and `node_modules` is absent, so neither `.githooks/pre-commit` nor
-husky runs here. See `docs/remediation-plan.md` for the enable-and-verify procedure. Until it is
-done, the clean-room guard exists but **does not execute locally** — CI is the only enforcement.
+**5. Git hooks ARE active — and `pnpm install` will try to break one of them.**
+`core.hooksPath` is `.husky`, set by `husky install` during `pnpm install`. The clean-room guard
+lives in `.githooks/pre-commit`, so that reset would normally **silently disable it** — which is
+exactly what happened on 2026-08-11, minutes after the guard was enabled and verified.
+
+`.husky/pre-commit` now chains `.githooks/pre-commit` first and unconditionally, so the guard
+survives every reinstall regardless of which `hooksPath` is in effect. **Do not remove that chain**,
+and do not "simplify" `.husky/pre-commit` by dropping it.
+
+On every commit the hook runs: clean-room guard → `pnpm quick` (prettier) → `pnpm lint-staged`
+(eslint --fix). It needs `pnpm` on `PATH`, so export `~/.local/bin` before committing or the hook
+fails for an unrelated reason.
+
+**Prettier will reformat your Markdown when you commit it.** Documentation is staged and formatted
+like code — expect bullet, table and emphasis changes in the commit. That is the hook working, not
+a problem.
+
+If you ever find `core.hooksPath` pointing somewhere unexpected, verify the guard both ways before
+trusting it: stage a file under `packages/server/src/enterprise/` (it must be **rejected**), then
+stage an ordinary file (it must be **allowed**). See `docs/remediation-plan.md` RM-03.
 
 ## Reporting
 
