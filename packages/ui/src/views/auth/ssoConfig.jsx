@@ -341,7 +341,21 @@ const SSOConfigPage = () => {
 
     useEffect(() => {
         if (getLoginMethodsApi.data) {
-            const data = getLoginMethodsApi.data
+            // `data` is whatever /api/v1/loginmethod returned. On an instance with no SSO
+            // configured that is `[]` — a 200, not an error — so `data.providers` is `undefined`
+            // and `.find()` threw. The throw happened inside a useEffect with no error boundary
+            // above it, so React unmounted the whole tree: the entire application rendered as a
+            // blank white page, no shell, no sidebar, no message. Nothing failed in the network
+            // log, which is why it looked healthy from the server side (UI-02).
+            //
+            // Normalised once here rather than guarded at each of the eight call sites below,
+            // because seven of them being right and one being wrong is how this class of bug
+            // survives review.
+            const raw = getLoginMethodsApi.data
+            const data = {
+                providers: Array.isArray(raw?.providers) ? raw.providers : [],
+                callbacks: Array.isArray(raw?.callbacks) ? raw.callbacks : []
+            }
             const azureConfig = data.providers.find((provider) => provider.name === 'azure')
             const azureCallback = data.callbacks.find((callback) => callback.providerName === 'azure')
             if (azureCallback) {

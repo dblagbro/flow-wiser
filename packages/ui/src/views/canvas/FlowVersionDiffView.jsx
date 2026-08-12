@@ -99,9 +99,7 @@ const FlowVersionDiffView = ({ diff, loading, promptsOnly, onTogglePromptsOnly, 
 
             {!loading && diff && !hasChanges && (
                 <Typography variant='body2' sx={{ mt: 2, color: theme.palette.text.secondary }}>
-                    {promptsOnly
-                        ? 'No prompt or template field changed between these two versions.'
-                        : 'These two versions are identical.'}
+                    {promptsOnly ? 'No prompt or template field changed between these two versions.' : 'These two versions are identical.'}
                 </Typography>
             )}
 
@@ -160,10 +158,7 @@ const FlowVersionDiffView = ({ diff, loading, promptsOnly, onTogglePromptsOnly, 
                                     <Box component='span' sx={{ flex: '0 0 1rem', color: gutterColor, userSelect: 'none' }}>
                                         {signFor(line.op)}
                                     </Box>
-                                    <Box
-                                        component='span'
-                                        sx={{ flex: 1, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', pr: 1 }}
-                                    >
+                                    <Box component='span' sx={{ flex: 1, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', pr: 1 }}>
                                         {line.text}
                                     </Box>
                                 </Box>

@@ -2,7 +2,7 @@
 #
 #   docker build --no-cache --pull \
 #     --build-arg NODE_VERSION=20 \
-#     --build-arg FLOWISE_VERSION=3.1.4-fw7 \
+#     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 #
 #   docker run -d -p 3000:3000 dblagbro/flow-wiser:3.1.4-fw4
@@ -115,4 +115,25 @@ USER node
 
 EXPOSE 3000
 
-CMD [ "pnpm", "start" ]
+# INFRA-03 — the image declared no healthcheck at all, and the compose service pairs
+# `restart: always` with no health condition. `restart: always` never restarts a process that is
+# hung but alive, so an instance could serve nothing while reporting healthy. `curl` is already
+# installed above. The start period is generous because migrations run before the port opens and a
+# cold start was measured at ~9s (and far longer on a contended host).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT:-3000}/api/v1/ping || exit 1
+
+# INFRA-04 — exec the server directly instead of `pnpm start`.
+#
+# `pnpm start` put a four-process chain under PID 1 (pnpm -> run-script-os -> npm -> node). Two
+# consequences, both measured:
+#   * `docker stop` returned ExitCode 1 with `ELIFECYCLE` rather than 0 or 143, because the npm
+#     wrapper reports a SIGTERM-ed child as a failure. Every intentional stop looked like a crash to
+#     restart policies and alerting, which makes a real crash unnoticeable.
+#   * PID 1 was a shell wrapper, so nothing reaped orphans — two zombies were resident in a test
+#     container.
+#
+# `exec` form + the oclif entrypoint puts node itself at PID 1, so SIGTERM reaches the process that
+# installed the handler and the exit code means what it says.
+WORKDIR /usr/src/flowise/packages/server
+CMD [ "node", "./bin/run", "start" ]

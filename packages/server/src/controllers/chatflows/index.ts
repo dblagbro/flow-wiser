@@ -13,6 +13,7 @@ import scheduleService from '../../services/schedule'
 import { GeneralErrorMessage } from '../../utils/constants'
 import { assertPublicFlowHasNoCodeNode } from '../../utils/codeNodeGuard'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import { denyUnlessPublicOrOwned } from '../../utils/flowAccess'
 import { getPageAndLimitParams } from '../../utils/pagination'
 import { checkUsageLimit } from '../../utils/quotaUsage'
 import { RateLimiterManager } from '../../utils/rateLimit'
@@ -27,6 +28,15 @@ const checkIfChatflowIsValidForStreaming = async (req: Request, res: Response, n
                 `Error: chatflowsController.checkIfChatflowIsValidForStreaming - id not provided!`
             )
         }
+        // Whitelisted for anonymous callers so an embedded widget can ask whether the flow it is
+        // about to talk to supports streaming. It had no ownership check at all, so it loaded and
+        // parsed the flowData of ANY flow by UUID — leaking whether a private flow exists (200 vs a
+        // 500 naming the internal service) and details of its node graph in the error text.
+        const streamFlow = await chatflowsService.getChatflowById(req.params.id)
+        if (!streamFlow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+        const streamDenied = await denyUnlessPublicOrOwned(req, res, streamFlow)
+        if (streamDenied) return streamDenied
+
         const apiResponse = await chatflowsService.checkIfChatflowIsValidForStreaming(req.params.id)
         return res.json(apiResponse)
     } catch (error) {
@@ -232,7 +242,14 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
         const rateLimiterManager = RateLimiterManager.getInstance()
         await rateLimiterManager.updateRateLimiter(updateChatFlow)
 
-        const apiResponse = await chatflowsService.updateChatflow(chatflow, updateChatFlow, orgId, workspaceId, subscriptionId, req.user?.id)
+        const apiResponse = await chatflowsService.updateChatflow(
+            chatflow,
+            updateChatFlow,
+            orgId,
+            workspaceId,
+            subscriptionId,
+            req.user?.id
+        )
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -240,7 +257,8 @@ const updateChatflow = async (req: Request, res: Response, next: NextFunction) =
 }
 
 const getSinglePublicChatflow = async (req: Request, res: Response, next: NextFunction) => {
-    let queryRunner: QueryRunner | undefined
+    // No queryRunner here any more: denyUnlessPublicOrOwned owns the connection it needs and
+    // releases it in its own finally, so there is one place that can leak it instead of two.
     try {
         if (typeof req.params === 'undefined' || !req.params.id) {
             throw new InternalFlowiseError(
@@ -250,22 +268,21 @@ const getSinglePublicChatflow = async (req: Request, res: Response, next: NextFu
         }
         const chatflow = await chatflowsService.getChatflowById(req.params.id)
         if (!chatflow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+
+        // A public flow is served with its flowData sanitised — this endpoint's own behaviour,
+        // not part of the access decision, so it stays here.
         if (chatflow.isPublic)
             return res.status(StatusCodes.OK).json({ ...chatflow, flowData: sanitizeFlowDataForPublicEndpoint(chatflow.flowData) })
-        if (!req.user) return res.status(StatusCodes.UNAUTHORIZED).json({ message: GeneralErrorMessage.UNAUTHORIZED })
-        queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
-        const workspaceUserService = new WorkspaceUserService()
-        const workspaceUser = await workspaceUserService.readWorkspaceUserByUserId(req.user.id, queryRunner)
-        if (workspaceUser.length === 0)
-            return res.status(StatusCodes.NOT_FOUND).json({ message: WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND })
-        const workspaceIds = workspaceUser.map((user) => user.workspaceId)
-        if (!workspaceIds.includes(chatflow.workspaceId))
-            return res.status(StatusCodes.BAD_REQUEST).json({ message: 'You are not in the workspace that owns this chatflow' })
+
+        // The access decision itself is shared with getSinglePublicChatbotConfig. This function
+        // used to own the only correct copy of it; that is exactly how the other endpoint came
+        // to have no copy at all.
+        const denied = await denyUnlessPublicOrOwned(req, res, chatflow)
+        if (denied) return denied
+
         return res.status(StatusCodes.OK).json(chatflow)
     } catch (error) {
         next(error)
-    } finally {
-        if (queryRunner) await queryRunner.release()
     }
 }
 
@@ -277,6 +294,21 @@ const getSinglePublicChatbotConfig = async (req: Request, res: Response, next: N
                 `Error: chatflowsController.getSinglePublicChatbotConfig - id not provided!`
             )
         }
+
+        // This endpoint returns the flow's chatbot configuration AND its sanitised `flowData` —
+        // the node graph, the models chosen, which credential TYPES are wired. It had no access
+        // check of any kind, so every private flow's definition was readable by anyone holding
+        // its UUID. Found in QA against a live instance: 48 KB of a flow with `isPublic = 0`,
+        // returned to an unauthenticated request from the public internet.
+        //
+        // The lookup has to happen before the ladder, because the ladder decides on `isPublic`
+        // and `workspaceId`. A missing flow answers 404 before any of that, which is the same
+        // answer an unauthorised caller gets for a flow that exists — so this is not an oracle.
+        const chatflow = await chatflowsService.getChatflowById(req.params.id)
+        if (!chatflow) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Chatflow not found' })
+        const denied = await denyUnlessPublicOrOwned(req, res, chatflow)
+        if (denied) return denied
+
         const apiResponse = await chatflowsService.getSinglePublicChatbotConfig(req.params.id)
         return res.json(apiResponse)
     } catch (error) {

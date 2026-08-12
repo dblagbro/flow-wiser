@@ -1,6 +1,7 @@
 import { stripProtectedFields } from '../../utils/stripProtectedFields'
 import { extractResponseContent, ICommonObject } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
+import { validate } from 'uuid'
 import { cloneDeep, isEqual, uniqWith } from 'lodash'
 import OpenAI from 'openai'
 import { DeleteResult, In, QueryRunner } from 'typeorm'
@@ -431,21 +432,30 @@ const importAssistants = async (
         await checkUsageLimit('flows', subscriptionId, appServer.usageCacheManager, newAssistants.length)
 
         // step 2 - check whether ids are duplicate in database
-        let ids = '('
-        let count: number = 0
-        const lastCount = newAssistants.length - 1
-        newAssistants.forEach((newAssistant) => {
-            ids += `'${newAssistant.id}'`
-            if (lastCount != count) ids += ','
-            if (lastCount == count) ids += ')'
-            count += 1
-        })
+        //
+        // This built a raw `IN (...)` clause by concatenating ids straight from the request body.
+        // `importTools` and `importVariables` were given a UUID guard upstream for exactly this
+        // (GHSA-9c4c-g95m-c8cp); the assistants sibling was missed, leaving authenticated SQL
+        // injection reachable by anyone holding `workspace:import` — which super-admin, admin and
+        // org-admin all do — and usable to read or write outside their own tenant.
+        //
+        // Two changes, either of which would have been sufficient, both kept because they fail
+        // differently: reject anything that is not a UUID, and bind the values as parameters so a
+        // future edit cannot reintroduce concatenation.
+        for (const newAssistant of newAssistants) {
+            if (newAssistant.id && !validate(newAssistant.id)) {
+                throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, `Error: importAssistants - invalid id!`)
+            }
+        }
 
-        const selectResponse = await repository
-            .createQueryBuilder('assistant')
-            .select('assistant.id')
-            .where(`assistant.id IN ${ids}`)
-            .getMany()
+        const assistantIds = newAssistants.map((newAssistant) => newAssistant.id).filter(Boolean)
+        const selectResponse = assistantIds.length
+            ? await repository
+                  .createQueryBuilder('assistant')
+                  .select('assistant.id')
+                  .where('assistant.id IN (:...assistantIds)', { assistantIds })
+                  .getMany()
+            : []
         const foundIds = selectResponse.map((response) => {
             return response.id
         })

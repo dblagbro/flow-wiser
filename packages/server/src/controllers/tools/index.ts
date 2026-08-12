@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { StatusCodes } from 'http-status-codes'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import toolsService from '../../services/tools'
 import { getPageAndLimitParams } from '../../utils/pagination'
@@ -27,7 +28,11 @@ const createTool = async (req: Request, res: Response, next: NextFunction) => {
         if (body.schema !== undefined) toolBody.schema = body.schema
         if (body.func !== undefined) toolBody.func = body.func
         toolBody.workspaceId = workspaceId
-
+        // MIGRATION §3a denormalised tenant key. Assigned to the ALLOWLISTED object, not to
+        // `body` — the allowlist exists so a client cannot set id/workspaceId, and writing the
+        // tenant key onto the discarded `body` meant it was silently never persisted. That is
+        // how the first attempt at this fix shipped looking correct and doing nothing.
+        toolBody.organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await toolsService.createTool(toolBody, orgId)
         return res.json(apiResponse)
     } catch (error) {

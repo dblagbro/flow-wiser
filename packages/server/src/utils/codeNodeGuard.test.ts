@@ -74,7 +74,10 @@ describe('assertPublicFlowHasNoCodeNode', () => {
         expect(() => assertPublicFlowHasNoCodeNode(true, codeFlow)).toThrow(/Runs Code/)
     })
 
-    it.each([['string true', 'true'], ['numeric 1', 1]])('catches a truthy %s from a JSON body', (_label, value) => {
+    it.each([
+        ['string true', 'true'],
+        ['numeric 1', 1]
+    ])('catches a truthy %s from a JSON body', (_label, value) => {
         // The body arrives over HTTP; isPublic is not guaranteed to be a real boolean.
         expect(() => assertPublicFlowHasNoCodeNode(value, codeFlow)).toThrow(/cannot be made public/i)
     })

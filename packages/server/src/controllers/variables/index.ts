@@ -3,6 +3,7 @@ import variablesService from '../../services/variables'
 import { Variable } from '../../database/entities/Variable'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
+import { resolveOrganizationIdForWorkspace } from '../../identity/tenancy/ControllerServiceUtils'
 import { getPageAndLimitParams } from '../../utils/pagination'
 
 const createVariable = async (req: Request, res: Response, next: NextFunction) => {
@@ -28,6 +29,11 @@ const createVariable = async (req: Request, res: Response, next: NextFunction) =
         if (body.value !== undefined) newVariable.value = body.value
         if (body.type !== undefined) newVariable.type = body.type
         newVariable.workspaceId = workspaceId
+        // MIGRATION §3a denormalised tenant key. Assigned to the ALLOWLISTED object, not to
+        // `body` — the allowlist exists so a client cannot set id/workspaceId, and writing the
+        // tenant key onto the discarded `body` meant it was silently never persisted. That is
+        // how the first attempt at this fix shipped looking correct and doing nothing.
+        ;(newVariable as { organizationId?: string | null }).organizationId = await resolveOrganizationIdForWorkspace(workspaceId)
         const apiResponse = await variablesService.createVariable(newVariable, orgId)
         return res.json(apiResponse)
     } catch (error) {

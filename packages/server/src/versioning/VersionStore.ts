@@ -158,7 +158,11 @@ export class VersionStore {
     }
 
     /** Record a deletion as a commit, so the flow's history ends explicitly rather than just stopping. */
-    async captureDeletion(input: { chatflowId: string; name?: string | null; author?: Partial<FlowVersionAuthor> }): Promise<string | null> {
+    async captureDeletion(input: {
+        chatflowId: string
+        name?: string | null
+        author?: Partial<FlowVersionAuthor>
+    }): Promise<string | null> {
         await this.ensureRepo()
         const flowFile = flowPath(input.chatflowId)
         if (!fs.existsSync(path.join(this.dir, flowFile))) return null
@@ -266,7 +270,12 @@ export class VersionStore {
             ref: slug,
             object: oid,
             message: trimmed,
-            tagger: { name: AUTHOR_FALLBACK.name, email: AUTHOR_FALLBACK.email, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 }
+            tagger: {
+                name: AUTHOR_FALLBACK.name,
+                email: AUTHOR_FALLBACK.email,
+                timestamp: Math.floor(Date.now() / 1000),
+                timezoneOffset: 0
+            }
         })
         return { oid, slug, label: trimmed }
     }

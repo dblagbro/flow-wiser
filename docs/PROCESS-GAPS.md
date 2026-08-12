@@ -225,3 +225,248 @@ here. Branch protection requiring Node CI and the clean-room guard would make th
 instead of behavioural.
 
 ---
+
+---
+
+## G10 · A test suite was committed, counted as coverage, and never once executed
+
+**What happened.** `packages/server/test/identity/recovery-cli.test.ts` holds 30 tests covering all
+eight recovery CLI commands and `doctor` — the only evidence that REQUIREMENTS-MIGRATION §7 ("every
+identity operation must be performable without a working UI and without a working login") actually
+holds. It has never run in CI. Not once, in any build, since it was written.
+
+**Three independent failures stacked.** That is why it stayed invisible, and why fixing any one of
+them changed nothing observable:
+
+1. `pnpm install --frozen-lockfile` failed (G9), so jest never started.
+2. A pnpm override forced an ESM-only `@tootallnate/once` into a CJS require chain, so the suite
+   failed to *parse* — reported as "Test suite failed to run", which reads like an environment
+   grumble rather than 30 missing tests.
+3. `jest.config.js` mapped `typeorm` to a decorator mock for every file, so the suite's real
+   `DataSource` was a stub without `initialize()`. Every test would have died on its first fixture
+   line even if it had parsed.
+
+Each layer had to be removed before the next became visible. Three days of green-looking local work
+sat on top of it.
+
+**The file said so, and that was not enough.** Its docblock openly documented that `pnpm test` would
+not pick it up and gave a hand-run `npx jest` invocation with three overrides. That is a comment
+asking a human to remember something, which is not a control. Written-down knowledge that a check is
+disabled reads, at a glance, exactly like a check that is enabled.
+
+**What it hid.** Once the suite ran, five assertions failed — all of them encoding schema defects
+that `1780000000012-AddTenancyColumnsToCoreTables` had since *repaired* (the dangling
+`chat_flow → workspace` foreign key, and nine tables missing `workspaceId`). So the tests were not
+merely absent; they had silently drifted into asserting a broken state as correct. Had they run at
+the time, they would have failed the moment that migration landed and forced the question then.
+
+**Also wrong, and worth naming separately:** the `@tootallnate/once` override was incorrect on its own
+terms. The advisory it exists for (GHSA-vpq2-c234-7xj6) patches *two* release lines, 2.0.1 and 3.0.1;
+the override jumped to `>=3.0.1`, an ESM-only major that neither consumer
+(`http-proxy-agent@4`, `@5`, which declare `1` and `2`) was written against. `>=2.0.1 <3` satisfies
+the advisory and stays CJS. A security pin that breaks the build is a security pin that gets worked
+around.
+
+**Fix applied.** Override corrected; `jest.config.js` split into `stubbed-orm` and `real-orm`
+projects so a suite needing a real database gets one; the five stale assertions flipped to assert the
+repaired state rather than deleted, so a check that stops running stays distinguishable from a defect
+that got fixed. Suite passes 30/30. Package total went from 937 tests to 974.
+
+**Fix still needed.** Nothing detects a suite that exists but never runs. A collected-test-count
+floor in CI, or a check that every `*.test.ts` on disk appears in the run report, would have caught
+this in a day instead of never.
+
+**Postscript — a fourth layer.** With install, lint, build and the unit tests all green, the job
+failed one step further on: Cypress starts the server with `pnpm start` and no environment, so it
+died at boot with `KeyringError: no encryption key configured`. That is the keyring behaving exactly
+as designed — it never invents a key, because a generated key silently strands every credential
+written under the previous one — but the Cypress step was configured before the identity layer
+existed and was never given one. It has been failing that way ever since, invisible behind the three
+failures above it. The same missing variable took the site down during the fw5 deploy. Fixed by
+setting throwaway `IDENTITY_ENCRYPTION_KEY` and `FLOWISE_SESSION_PEPPER` values in the workflow,
+checked in rather than stored as repository secrets so a fork can still get a green build.
+
+**Count the layers: four.** Each one had to be removed before the next was even visible, and each
+looked like the whole problem while it was on top. This is the real lesson of G9 and G10 — a build
+that has been red for a while is not one bug, and "I fixed the failure" is not the same claim as
+"the build is green."
+
+---
+
+## Controls added 2026-08-09 — what now enforces G9 and G10
+
+Both gaps ended with "fix still needed", which is a note to nobody. These are the mechanisms.
+
+| Gap | Was | Now |
+|---|---|---|
+| G9 · released on a red build | nothing looked | branch protection on `main` (required: `guard`, `build (ubuntu-latest, …)`, `enforce_admins` ON, force-push and deletion blocked) + `release-gate.yml` |
+| G10 · a suite that never ran | nothing looked | `scripts/assert-test-discovery.js`, run inside Node CI |
+
+**`release-gate.yml` — honest about its limits.** It cannot stop a tag being created: Actions runs
+after the ref is written and a hosted repository has no pre-receive hook. What it does is attach a
+red X to the tag, and — on `release: published` with a red commit — revert the release to a draft.
+That second part is a real gate rather than a notification: nothing is destroyed, notes and assets
+survive, and it stops being something a user can find. **Docker Hub is not covered**, because nothing
+in CI pushes there; Flow-Wiser images are built and pushed by hand. That is stated in the workflow
+rather than left to be assumed.
+
+**`assert-test-discovery.js` — why not a test-count floor.** A floor has to be revised every time
+someone legitimately deletes a test, so it drifts downward until it asserts nothing, and it cannot
+tell "we removed 30 tests on purpose" from "30 tests stopped being discovered". Comparing the
+filesystem against `jest --listTests` — Jest's own answer, not a re-implementation of its resolution
+— asks the real question. Exclusions are allowed but must be declared with a reason, because an
+undeclared exclusion is the entire defect.
+
+**It was tested against the actual failure**, not just written. Reproducing the G10 condition
+(recovery-cli ignored by one project and unmatched by the other) makes it exit 1 and name the file.
+The first attempt at that negative test passed when it should have failed — the mutation let the
+other project pick the file up — which is worth recording: a control nobody has watched fail is a
+control nobody has tested.
+
+**`enforce_admins` is ON.** It was off for one day while CI was being repaired, because turning it on
+with a red build would have locked out the fixes. The cost is real: direct pushes to `main` are now
+rejected until checks pass, so an emergency fix needs a PR or a deliberate, logged un-protection. That
+is the intended cost. The previous setting logged `Bypassed rule violations` and let the push through,
+which is a receipt, not a gate.
+
+### Verification of these controls, 2026-08-09
+
+Written down because a control nobody has watched fail is a control nobody has tested.
+
+- **`release-gate.yml`, both directions.** Dispatched against a commit whose CI was green
+  (`3fea7f17`) and one whose CI was red (`67f4ab89`). Run 31339550626 passed; run 31339559213
+  failed with `Commit 67f4ab89… did not pass CI`. Failing for the right reason, not merely failing.
+- **`assert-test-discovery.js`.** Reproducing the G10 condition makes it exit 1 and name
+  `packages/server/test/identity/recovery-cli.test.ts`. Confirmed running inside Node CI on
+  `c5bfae0b`: 155 discovered / 155 on disk across five packages.
+- **`enforce_admins`.** `git push --dry-run` is NOT a test of this — it reported success against a
+  protected branch. Dry-run does not evaluate protection rules, so anyone using it to confirm a
+  branch is protected will get a false all-clear.
+
+---
+
+## G11 · The edge served a stale config for two days, and `nginx -s reload` reported success throughout
+
+**What happened.** Adding HSTS to the edge produced no header. The config on disk was correct, the
+syntax test passed, and `nginx -s reload` returned success — and the running configuration was
+unchanged. `nginx -T`, which dumps what is actually loaded, showed one HSTS line where the file had
+nineteen.
+
+The nginx container bind-mounts `nginx.conf` as a **file**, not a directory. A file bind mount is
+resolved to an inode when the container starts. Rewriting the file on the host created a new inode,
+so the container went on serving the old one. The container's view had been stale since 2026-08-07:
+1710 lines against 1729 on disk. `docker restart nginx` re-resolved it.
+
+**What that hid, and this is the serious part.** The only functional difference between the two was
+the IP allowlist on the admin API paths — the one removed on 2026-08-07 at the operator's explicit
+direction, on the reasoning that RBAC is now the control and the allowlist was breaking external
+administration. **That change never took effect.** For two days the edge was still denying those
+paths to non-LAN clients while the documentation, the commit, and I all recorded it as applied.
+
+**Why nobody noticed, including me.** Every verification curl was run from this host, whose source
+address is inside `192.168.18.0/24` — an entry in the allowlist being tested. The test could not
+fail. It is the same defect as the `git push --dry-run` check earlier the same day and as G1b: a
+verification that cannot distinguish the two outcomes is not a verification, and it reports success
+either way. Testing an IP-based control from an allowed IP is the clearest possible instance.
+
+**Fixes.**
+- `docker restart nginx` after editing a file bind mount. A reload is not enough, because reload
+  re-reads a path the kernel has already bound to the wrong inode.
+- Verify with `nginx -T | grep`, never with `nginx -t`. The first reports what is running; the
+  second only reports that a file parses.
+- Verify a network-scoped control from outside that network, or do not claim it is verified.
+
+**Still open.** Nothing detects edge drift. The container can be stale for days with every local
+signal green. A periodic diff of `nginx -T` against the file on disk would close it; it does not
+exist yet.
+
+---
+
+## G12 · A fix for "the guard can be disabled" that disabled the guard
+
+**The finding.** QA established that the clean-room guard could be neutered by the very PR it
+polices: its protected-path regex covered `packages/server/src/(enterprise/|IdentityManager.ts)`
+but not `.github/workflows/**`, so a PR adding `if: false` to the guard job would report `skipped`
+— and `skipped` satisfied both branch protection and the release gate.
+
+**What I did, and why it was wrong.** I added `.github/workflows/` to that regex. It blocked the
+next workflow edit — which was my own — with the message *"Clean-room violation: commercially
+licensed files were modified."*
+
+Two different concerns got the same mechanism:
+
+  1. **Licensing.** Do not MODIFY commercially licensed files. Deletion is fine; deletion is the
+     goal. This is what that regex and that error message are for.
+  2. **Guard integrity.** Do not let a change disable the check that polices changes.
+
+`.github/workflows/**` is not commercially licensed, so the message was false. And the rule is
+absolute where the real requirement is "may change, with review" — workflow maintenance is normal
+and the repository now had no legitimate path to it.
+
+**Reverted.** The licensing regex is back to licensing.
+
+**What actually closes the original hole.** Half of it is already done: the release gate no longer
+counts `skipped` as success, so a disabled check cannot bless a tag or a release. The other half —
+branch protection treating a `skipped` required check as passing — is GitHub behaviour that a
+workflow in the same repository cannot fix, because any check can be edited by the PR it guards.
+That needs `CODEOWNERS` on `.github/**` with required review, which is an account-level control and
+is **not** in place. Recorded as open rather than papered over with a check that cannot work.
+
+**The pattern, again.** This is the fourth time in this arc that a control was written, believed
+correct, and found to be either bypassable or self-defeating — and the second time the discovery
+came from the control firing on me. The guard doing exactly its job while being wrong about what
+its job was is worth keeping in front of anyone who edits it.
+
+---
+
+## G13 · The release gate drafted its own release
+
+**What happened.** `v3.1.4-fw8` was tagged on a commit whose CI was green, the release was
+published, and the release gate immediately reverted it to a draft.
+
+Nothing was wrong with the release. The gate resolved the annotated tag to its **tag object**
+(`24d00db8`, type `tag`) rather than the commit it points at (`42e44ea6`), asked GitHub for the
+check-runs of a sha that has none, got `No commit found`, and failed.
+
+**The bug is one line, and it is the same mistake twice.** The dereference was written as:
+
+```
+TYPE="$(gh api "repos/$REPO/git/commits/$REF" --jq '.sha' 2>/dev/null || echo '')"
+if [ -z "$TYPE" ]; then REF="$(gh api ".../git/tags/$REF" --jq '.object.sha')"; fi
+```
+
+It **infers** the object type from whether an unrelated call happened to return something, instead
+of asking. GitHub reports `.object.type` directly. The comment above that block even says
+dereferencing matters "or every check lookup silently finds nothing and this gate passes by
+accident — the exact class of bug it exists to prevent" — and then the code guessed.
+
+**Failing closed was right.** An inconclusive result must not be treated as a pass, and the gate
+did exactly that: it refused to bless what it could not evaluate, and un-published rather than
+assume. The design held; the resolution logic did not. That distinction is worth keeping — a gate
+that fails noisily on a real release is recoverable in minutes, while a gate that passes wrongly is
+the thing that produced fw5, fw6 and fw7.
+
+**Fixed** by asking for `.object.type` and dereferencing only when it is `tag`, then **proving** the
+result is a commit before evaluating anything against it — because a check lookup against a
+non-commit returns nothing, and nothing is indistinguishable from clean.
+
+**Count.** This is the fifth control in this arc found to be bypassable or self-defeating, and the
+third discovered by the control firing rather than by review. The pattern is not that the controls
+are bad. It is that every one of them was verified on the path where it succeeds.
+
+**Postscript — the fix was wrong too, the same way.** v2 decided whether to dereference by reading
+the TAG REF's object type. That is right for a `release` event and wrong for a `push`, where
+`github.sha` is already the commit: it tried to dereference a commit as a tag object, got a 404, and
+failed every tag push. So the first fix moved the bug from one event to another rather than removing
+it.
+
+Both versions made the identical mistake — deciding whether to dereference `$REF` by consulting
+something that is not `$REF`. v3 asks about `$REF` itself: if it can be read as a tag object, it is
+one. No inference from a sibling call, no branching on event type.
+
+**And a related trap worth stating on its own.** A `release` event runs the workflow **from the
+tagged commit**, not from the default branch. Fixing the gate on `main` therefore did nothing for a
+tag cut before the fix — the old, broken gate kept running and kept re-drafting the release. The tag
+had to carry its own fix. Anyone debugging a release-event workflow and wondering why their change
+has no effect should start there.
+

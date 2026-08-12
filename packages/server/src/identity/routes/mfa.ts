@@ -101,7 +101,6 @@ interface MfaServices {
  * problem the services themselves solve with a lazy `require`.
  */
 const services = (): MfaServices => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
     const dataSource: DataSource = getRunningExpressApp().AppDataSource
     const audit = new AuditService({ dataSource })

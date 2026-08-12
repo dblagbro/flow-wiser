@@ -291,7 +291,6 @@ export class AuthService {
     /** Lazy `require` for the same reason SessionService uses one: a static import would drag in the server entrypoint. */
     private getDataSource(): DataSource {
         if (this.injectedDataSource) return this.injectedDataSource
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
         return getRunningExpressApp().AppDataSource
     }
@@ -778,12 +777,9 @@ export class AuthService {
                     select: { id: true, email: true, credential: true, isSSO: true, mustChangePassword: true }
                 })
             if (!user) {
-                return await refuse(
-                    PasswordChangeFailure.INTERNAL_ERROR,
-                    LoginErrorMessage.UNKNOWN_ERROR,
-                    null,
-                    { sessionWithoutUser: true }
-                )
+                return await refuse(PasswordChangeFailure.INTERNAL_ERROR, LoginErrorMessage.UNKNOWN_ERROR, null, {
+                    sessionWithoutUser: true
+                })
             }
 
             // The body carries an `email` because the shipped client sends one (`resetPassword.jsx`).
@@ -820,12 +816,9 @@ export class AuthService {
                 if (error instanceof UnsupportedHashError) {
                     // MIGRATION §5 — an operator problem, not a wrong password. The CLI is the exit.
                     logger.error(`❌ [AuthService] ${user.email} has a stored hash this build cannot verify: ${error.message}`)
-                    return await refuse(
-                        PasswordChangeFailure.INVALID_CREDENTIALS,
-                        LoginErrorMessage.UNKNOWN_USER,
-                        user.email,
-                        { unsupportedHash: true }
-                    )
+                    return await refuse(PasswordChangeFailure.INVALID_CREDENTIALS, LoginErrorMessage.UNKNOWN_USER, user.email, {
+                        unsupportedHash: true
+                    })
                 }
                 throw error
             }

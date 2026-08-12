@@ -1,0 +1,191 @@
+# Refuse to bless a release whose commit did not pass CI.
+#
+# ── Why ──────────────────────────────────────────────────────────────────────────────────────
+#
+# Node CI was red from 2026-08-05 to 2026-08-09. Across that window, 3.1.4-fw5, -fw6 and -fw7 were
+# tagged, released and deployed, two of them while an external security team was auditing the
+# repository. Nothing objected, because nothing was asked. Branch protection does not help here: it
+# guards branches, and a tag is not a branch. See G9 in docs/PROCESS-GAPS.md.
+#
+# ── What this can and cannot do ──────────────────────────────────────────────────────────────
+#
+# It CANNOT stop the tag from being created. GitHub Actions runs after the ref is written, and there
+# is no pre-receive hook available on a hosted repository. Anyone claiming otherwise has not tried it.
+# What it does instead is make the failure loud and attached: a red X on the tag itself, an email, and
+# a job summary naming the check that was failing.
+#
+# It CAN stop the publication. A GitHub Release is what people actually consume, and a release can be
+# put back to draft after the fact. On `release: published` with a red commit, this job un-publishes
+# it — nothing is lost, the notes and assets survive, and it stops being something a user can find.
+# That is a real gate rather than a notification.
+#
+# Docker Hub is not covered, because nothing in CI pushes to it — Flow-Wiser images are built and
+# pushed by hand from a workstation (see docker-image-dockerhub.yml, which is upstream's and must not
+# be used). Until that moves into a workflow, the image push has no automated gate, and saying so here
+# is better than implying coverage this does not have.
+
+name: Release gate
+
+on:
+    push:
+        tags:
+            - 'v*'
+    release:
+        types: [published]
+    workflow_dispatch:
+        inputs:
+            ref:
+                description: 'Commit SHA or tag to check'
+                required: true
+                type: string
+
+permissions:
+    checks: read
+    contents: write # needed only to un-publish a release; no ref is deleted
+    statuses: read
+
+jobs:
+    verify:
+        name: Tagged commit passed CI
+        runs-on: ubuntu-latest
+        steps:
+            - name: Resolve the commit under test
+              id: resolve
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPO: ${{ github.repository }}
+                  EVENT_NAME: ${{ github.event_name }}
+                  PUSH_SHA: ${{ github.sha }}
+                  # Bound through `env`, never interpolated into the script body. A git tag may
+                  # legally contain `$`, backticks and parentheses — `git tag 'v1$(id)'` is accepted
+                  # — so `${{ github.event.release.tag_name }}` inside a `run:` string is command
+                  # injection by anyone who can cut a release. It executed in THIS step, which
+                  # writes the sha the verdict is computed from, so the gate could be made to bless
+                  # a red commit. Found by QA on the day this workflow was written.
+                  TAG_NAME: ${{ github.event.release.tag_name }}
+                  INPUT_REF: ${{ inputs.ref }}
+              run: |
+                  set -euo pipefail
+                  case "$EVENT_NAME" in
+                    push)              REF="$PUSH_SHA" ;;
+                    release)           REF="$(gh api "repos/$REPO/git/refs/tags/$TAG_NAME" --jq '.object.sha')" ;;
+                    workflow_dispatch) REF="$(gh api "repos/$REPO/commits/$INPUT_REF" --jq '.sha' 2>/dev/null || gh api "repos/$REPO/git/refs/tags/$INPUT_REF" --jq '.object.sha')" ;;
+                  esac
+                  # An annotated tag points at a TAG OBJECT, not a commit, and it must be
+                  # dereferenced or every check lookup runs against a sha that has no checks.
+                  #
+                  # This has now been wrong twice, both times for the same reason: the code decided
+                  # whether to dereference by consulting something OTHER than the thing it was about
+                  # to dereference.
+                  #
+                  #   v1 probed `git/commits/$REF` and dereferenced only if that came back empty. It
+                  #      did not, so a `release` event evaluated a tag sha, found no checks, failed
+                  #      closed, and drafted its own release.
+                  #   v2 read the TAG REF's object type. That is correct for a release event and
+                  #      wrong for a push, where `github.sha` is ALREADY the commit — so it tried to
+                  #      dereference a commit as a tag, got 404, and failed every tag push.
+                  #
+                  # Ask about $REF itself: if it can be read as a tag object, it is one. No inference
+                  # from a sibling call, no branching on event type.
+                  if gh api "repos/$REPO/git/tags/$REF" --jq '.object.sha' >/dev/null 2>&1; then
+                    REF="$(gh api "repos/$REPO/git/tags/$REF" --jq '.object.sha')"
+                    echo "annotated tag object dereferenced to $REF"
+                  fi
+                  # And prove the result is a commit before anything is evaluated against it: a
+                  # check lookup on a non-commit returns nothing, and nothing reads exactly like clean.
+                  if ! gh api "repos/$REPO/commits/$REF" --jq '.sha' >/dev/null 2>&1; then
+                    echo "::error::$REF is not a commit; refusing to evaluate the gate against it."
+                    exit 1
+                  fi
+                  echo "sha=$REF" >> "$GITHUB_OUTPUT"
+                  echo "Checking $REF"
+
+            - name: Require every gating check to be green
+              id: gate
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPO: ${{ github.repository }}
+                  SHA: ${{ steps.resolve.outputs.sha }}
+              run: |
+                  set -euo pipefail
+
+                  # Kept in step with the required checks on `main`. Matched by PREFIX so bumping the
+                  # Node version in the matrix renames the check without silently disabling the gate:
+                  # a prefix that matches nothing is treated as missing, and missing fails.
+                  REQUIRED_PREFIXES=("guard" "build (ubuntu-latest")
+
+                  # Tags are usually pushed seconds after the commit, so the checks are still running.
+                  # Wait rather than reporting a false red.
+                  DEADLINE=$(( $(date +%s) + 1800 ))
+                  while :; do
+                    RUNS="$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"')"
+                    PENDING=0
+                    for prefix in "${REQUIRED_PREFIXES[@]}"; do
+                      line="$(printf '%s\n' "$RUNS" | grep -F "$prefix" | head -1 || true)"
+                      [ -z "$line" ] && PENDING=1 && continue
+                      status="$(printf '%s' "$line" | cut -f2)"
+                      [ "$status" != "completed" ] && PENDING=1
+                    done
+                    [ "$PENDING" -eq 0 ] && break
+                    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                      echo "::error::Gating checks did not complete within 30 minutes for $SHA."
+                      echo "verdict=timeout" >> "$GITHUB_OUTPUT"; exit 1
+                    fi
+                    echo "waiting for gating checks to finish..."; sleep 30
+                  done
+
+                  FAILED=""
+                  for prefix in "${REQUIRED_PREFIXES[@]}"; do
+                    line="$(printf '%s\n' "$RUNS" | grep -F "$prefix" | head -1 || true)"
+                    if [ -z "$line" ]; then FAILED="$FAILED\n  MISSING  $prefix* — no such check ran"; continue; fi
+                    name="$(printf '%s' "$line" | cut -f1)"
+                    conclusion="$(printf '%s' "$line" | cut -f3)"
+                    # ONLY `success` counts. `skipped` used to be accepted here on the reasoning
+                    # that it means "a conditional check that does not apply" — but a check can be
+                    # made to report `skipped` by adding `if: false` to its job, and the clean-room
+                    # guard's protected paths did not cover `.github/workflows/**`. So a PR could
+                    # disable the guard that is supposed to police it, and both this gate and branch
+                    # protection would report green because nothing ever reported failure.
+                    #
+                    # A required check that did not run is a required check that did not pass.
+                    case "$conclusion" in
+                      success) echo "  OK       $name ($conclusion)" ;;
+                      *)       FAILED="$FAILED\n  FAILED   $name ($conclusion — only 'success' satisfies a required check)" ;;
+                    esac
+                  done
+
+                  if [ -n "$FAILED" ]; then
+                    {
+                      echo "## Release gate: FAILED"
+                      echo ""
+                      echo "Commit \`$SHA\` did not pass CI:"
+                      echo ""
+                      printf '```%b\n```\n' "$FAILED"
+                      echo ""
+                      echo "This commit must not be released. Fix CI, then re-tag."
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    printf '::error::Commit %s did not pass CI:%b\n' "$SHA" "$FAILED"
+                    echo "verdict=failed" >> "$GITHUB_OUTPUT"
+                    exit 1
+                  fi
+
+                  echo "## Release gate: passed" >> "$GITHUB_STEP_SUMMARY"
+                  echo "Commit \`$SHA\` passed every gating check." >> "$GITHUB_STEP_SUMMARY"
+                  echo "verdict=passed" >> "$GITHUB_OUTPUT"
+
+            - name: Un-publish the release
+              # Only on a release event, and only when the gate actually failed. Reverting to draft
+              # destroys nothing — notes and assets survive — but it stops the release being something
+              # a user can find and install. The tag is deliberately left alone: deleting refs out from
+              # under someone mid-release causes more confusion than it prevents.
+              if: ${{ failure() && github.event_name == 'release' }}
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPO: ${{ github.repository }}
+                  TAG_NAME: ${{ github.event.release.tag_name }}
+                  RELEASE_ID: ${{ github.event.release.id }}
+              run: |
+                  set -euo pipefail
+                  gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -F draft=true >/dev/null
+                  echo "::warning::Release $TAG_NAME was reverted to a draft because its commit did not pass CI."
+                  echo "Reverted **$TAG_NAME** to a draft — its commit did not pass CI." >> "$GITHUB_STEP_SUMMARY"

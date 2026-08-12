@@ -5,18 +5,34 @@ import https from 'https'
 import * as ipaddr from 'ipaddr.js'
 import fetch, { RequestInit, Response } from 'node-fetch'
 
-const DEFAULT_DENY_LIST = [
+/**
+ * Addresses an outbound request must never reach.
+ *
+ * `::` is the IPv6 unspecified address and it is NOT cosmetic: on Linux it routes to loopback, so
+ * `http://[::]:3000/` reaches a service on this host exactly as `http://127.0.0.1:3000/` does.
+ * `0.0.0.0` and `::1` were both here from the start; `::` was not, and QA reached a live service
+ * through it. The lesson is that a deny list is only as good as the equivalent forms someone
+ * thought to enumerate — which is why `test/security/negative-controls.test.ts` asserts the
+ * absence rather than trusting the reading.
+ *
+ * `100.64.0.0/10` (CGNAT, RFC 6598) and `198.18.0.0/15` (benchmarking, RFC 2544) are routable to
+ * infrastructure in many hosted environments and are not covered by the RFC1918 entries.
+ */
+export const DEFAULT_DENY_LIST = [
     '0.0.0.0',
     '10.0.0.0/8',
+    '100.64.0.0/10',
     '127.0.0.0/8',
     '169.254.0.0/16',
     '169.254.169.253',
     '169.254.169.254',
     '172.16.0.0/12',
     '192.168.0.0/16',
+    '198.18.0.0/15',
     '224.0.0.0/4',
     '240.0.0.0/4',
     '255.255.255.255/32',
+    '::',
     '::1',
     'fc00::/7',
     'fd00:ec2::254',

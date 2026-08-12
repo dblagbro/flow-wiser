@@ -163,7 +163,6 @@ export class RecoveryCodeService {
     /** Lazy `require` for the same reason SessionService uses one: a static import would drag in the server entrypoint. */
     private getDataSource(): DataSource {
         if (this.injectedDataSource) return this.injectedDataSource
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { getRunningExpressApp } = require('../../utils/getRunningExpressApp')
         return getRunningExpressApp().AppDataSource
     }

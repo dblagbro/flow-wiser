@@ -1,14 +1,7 @@
 import { Flags } from '@oclif/core'
 import { AuditOutcome } from '../../database/entities/identity/AuditEvent'
 import { User } from '../../database/entities/identity'
-import {
-    RecoveryAuditAction,
-    RecoveryCommand,
-    RecoveryContext,
-    RecoveryError,
-    normaliseEmail,
-    recordRecoveryEvent
-} from '../recovery-base'
+import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, RecoveryError, normaliseEmail, recordRecoveryEvent } from '../recovery-base'
 
 /**
  * `flowise admin:clear-password-change --email <e>` — "let this account back in without changing
@@ -145,7 +138,9 @@ export default class AdminClearPasswordChange extends RecoveryCommand {
         if (!result.hasLocalLogin) {
             this.log('')
             this.log(
-                `NOTE: ${result.email} has no local password${result.isSSO ? ' and is marked as an SSO account' : ''}, so it cannot sign in ` +
+                `NOTE: ${result.email} has no local password${
+                    result.isSSO ? ' and is marked as an SSO account' : ''
+                }, so it cannot sign in ` +
                     'with one. Clearing the flag was still the right move — this account had no way out over HTTP — but if it needs a ' +
                     `password, run: flowise admin:reset-password --email ${result.email}`
             )

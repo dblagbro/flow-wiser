@@ -169,6 +169,25 @@ export const enforcePasswordChange: RequestHandler = (req: Request, res: Respons
         return
     }
 
+    // Only API requests are gated. Everything else — the SPA document, its JS and CSS, the
+    // favicon — must be served, or the client cannot load the very screen this 403 is telling it
+    // to go to.
+    //
+    // This middleware is mounted globally (`app.use`) so no route can forget it, which is right.
+    // But `req.path` for a browser navigating to /reset-password is `/reset-password`, not an API
+    // path, so it was answered with this JSON body — and the browser rendered it as raw text. The
+    // account was then unreachable through the UI at all: sign in, land on /unauthorized, navigate
+    // to /reset-password, read a JSON blob. The only exit was `admin:clear-password-change` on the
+    // host. QA hit this on a clean install, which means it was the out-of-box experience for every
+    // new deployment (UI-01).
+    //
+    // Serving the shell discloses nothing: it is a static bundle, and every byte of data behind it
+    // arrives over /api/v1, which is still gated by the check below.
+    if (!req.path.startsWith('/api/')) {
+        next()
+        return
+    }
+
     logger.warn(`[identity] blocked ${req.method} ${req.path} — password change required for user ${state.user.id ?? 'unknown'}`)
     res.status(StatusCodes.FORBIDDEN).json({
         message: 'Password change required',

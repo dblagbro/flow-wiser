@@ -113,6 +113,50 @@ const audit = (
     })
 }
 
+/**
+ * A rate-limited count of authorisation denials, so a burst is visible without drowning the log.
+ *
+ * ── Why ──────────────────────────────────────────────────────────────────────────────────────
+ *
+ * QA drove 28,639 requests that all returned 401 and measured the result: **four** log lines
+ * mentioning "Unauthorized" and **zero** new audit rows. Total container log volume for roughly
+ * 160,000 requests was 236 lines, because there is no access logging either. A credential-stuffing
+ * run against this instance would be, in the QA report's word, invisible (PERF-03).
+ *
+ * Per-denial logging is not the answer — that is what makes a burst a log-flood incident on top of
+ * an auth incident, and it hands an attacker a cheap way to fill the disk. So denials are counted
+ * and summarised on a fixed interval: one line per window, naming the scale and the top offenders,
+ * emitted only when the count is non-zero.
+ *
+ * Deliberately in-process and lossy across restarts. It is a smoke alarm, not an audit trail — the
+ * audit trail already records every individual decision and is the thing to query once this has
+ * told you to look.
+ */
+const DENIAL_WINDOW_MS = Number(process.env.RBAC_DENIAL_SUMMARY_INTERVAL_MS || 60_000)
+let denialCount = 0
+const denialsByRoute = new Map<string, number>()
+let denialTimer: NodeJS.Timeout | undefined
+
+const recordDenial = (route: string): void => {
+    denialCount++
+    denialsByRoute.set(route, (denialsByRoute.get(route) ?? 0) + 1)
+    if (denialTimer) return
+    denialTimer = setTimeout(() => {
+        denialTimer = undefined
+        if (denialCount === 0) return
+        const top = [...denialsByRoute.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([r, n]) => `${r} x${n}`)
+            .join('; ')
+        logger.warn(`🚫 [rbac]: ${denialCount} authorisation denial(s) in the last ${Math.round(DENIAL_WINDOW_MS / 1000)}s — ${top}`)
+        denialCount = 0
+        denialsByRoute.clear()
+    }, DENIAL_WINDOW_MS)
+    // Do not hold the event loop open for a counter.
+    if (typeof denialTimer.unref === 'function') denialTimer.unref()
+}
+
 const respondDenied = (res: Response, decision: Decision): void => {
     if (decision.status === StatusCodes.UNAUTHORIZED) {
         // §C.3 / §A.14 — the client routes on the 401/403 distinction: 401 logs the user out
@@ -210,6 +254,7 @@ const buildHandler = (expression: string, mode: PermissionMode): RequestHandler 
                 next()
                 return
             }
+            recordDenial(describeRoute(req))
             respondDenied(res, decision)
         } catch (error) {
             // Fail closed (REQUIREMENTS §4): an exception inside the permission subsystem means
@@ -223,6 +268,7 @@ const buildHandler = (expression: string, mode: PermissionMode): RequestHandler 
             } catch {
                 // Auditing must never turn a deny into a crash.
             }
+            recordDenial(describeRoute(req))
             respondDenied(res, decision)
         }
     }

@@ -214,10 +214,13 @@ export const validatePassword = (plain: unknown): PasswordViolation[] => {
 /**
  * Assert that `plain` is acceptable, or raise.
  *
- * CALL SITE: `packages/server/src/commands/user.ts:66` — the `pnpm user` password-reset CLI calls
- * this for its side effect only, discards the return, and lets the throw propagate to the command's
- * own `catch`, which logs it and exits. So the contract is exactly: return nothing, throw on
- * rejection.
+ * CALL SITE: `packages/server/src/commands/admin/reset-password.ts` — calls this for its side
+ * effect only, discards the return, and lets the throw propagate to the command's own `catch`,
+ * which logs it and exits. So the contract is exactly: return nothing, throw on rejection.
+ *
+ * (The original call site was `commands/user.ts`, removed in this release: it took the password as
+ * a command-line argument, which put it in shell history and `ps`, and it wrote no audit row —
+ * defeating the tty-only and audited-recovery properties every other command upholds.)
  *
  * A thin wrapper over {@link validatePassword} rather than a second implementation: {@link hash}
  * already applies the same policy, so a caller that hashes gets it for free. This exists for the

@@ -3,6 +3,7 @@ import { convertTextToSpeechStream } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import chatflowsService from '../../services/chatflows'
+import credentialsService from '../../services/credentials'
 import textToSpeechService from '../../services/text-to-speech'
 import { databaseEntities } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
@@ -71,7 +72,37 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
             voice = providerConfig.voice
             model = providerConfig.model
         } else {
-            // Use TTS config from request body
+            // TTS config supplied in the request body — the builder's "preview this voice" path.
+            //
+            // GHSA-8gj2-2cvc-6xx7 / GHSA-5fw2-mwhh-9947. `/api/v1/text-to-speech/generate` is in
+            // WHITELIST_URLS so the embedded widget can speak a PUBLIC chatflow's replies without a
+            // session. The branch above enforces that: no session means the chatflow must be public.
+            //
+            // This branch had no such check. Omitting `chatflowId` skipped the isPublic gate
+            // entirely, and the body's `credentialId` went straight to `getCredentialData`, which
+            // resolves `findOneBy({ id })` with NO workspace predicate — so an unauthenticated
+            // caller who knew any credential UUID could have the server decrypt it and spend against
+            // the owner's OpenAI/ElevenLabs key. Confirmed live against a production host: HTTP 200
+            // and synthesis began, with no session, no API key and no permission.
+            //
+            // There is no legitimate anonymous use of this branch. Choosing an arbitrary credential
+            // is an authoring action, so it requires a session, and the credential must belong to a
+            // workspace the caller is actually in — otherwise this is a cross-tenant credential IDOR
+            // for any signed-in user.
+            if (!req.user?.activeWorkspaceId) {
+                throw new InternalFlowiseError(
+                    StatusCodes.UNAUTHORIZED,
+                    `Error: textToSpeechController.generateTextToSpeech - a session is required to supply a credential directly. ` +
+                        `Anonymous callers must reference a public chatflow via chatflowId.`
+                )
+            }
+            const ownsCredential = await credentialsService.credentialBelongsToWorkspace(bodyCredentialId, req.user.activeWorkspaceId)
+            if (!ownsCredential) {
+                throw new InternalFlowiseError(
+                    StatusCodes.UNAUTHORIZED,
+                    `Error: textToSpeechController.generateTextToSpeech - credential does not belong to this workspace!`
+                )
+            }
             provider = bodyProvider
             credentialId = bodyCredentialId
             voice = bodyVoice
@@ -158,7 +189,24 @@ const generateTextToSpeech = async (req: Request, res: Response) => {
             throw error
         }
     } catch (error) {
+        // An authorisation failure must answer with its real status code, not an SSE error event.
+        //
+        // This catch turned EVERY error into a 200 with an `tts_error` frame. That is right once a
+        // stream is under way — you cannot change the status after the headers are sent — and wrong
+        // before it, because a refused request then looks identical to a successful one to anything
+        // reading status codes: a monitor, a WAF, a scanner, or a security reviewer checking whether
+        // GHSA-8gj2 is closed. The credential was never used and no audio was produced, but the
+        // response said 200 and the fix looked absent.
+        //
+        // Before the stream starts, an InternalFlowiseError carries its own status; use it.
         if (!res.headersSent) {
+            const status = (error as { statusCode?: number })?.statusCode
+            if (typeof status === 'number' && status >= 400 && status < 500) {
+                return res.status(status).json({
+                    success: false,
+                    message: error instanceof Error ? error.message : 'Request refused'
+                })
+            }
             res.setHeader('Content-Type', 'text/event-stream')
             res.setHeader('Cache-Control', 'no-cache')
             res.setHeader('Connection', 'keep-alive')

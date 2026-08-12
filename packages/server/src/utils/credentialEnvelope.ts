@@ -49,8 +49,7 @@ export interface CredentialEnvelope extends EncryptionMetadataFields {
 }
 
 /** True when the stored value uses the authenticated envelope rather than the legacy crypto-js format. */
-export const isEnvelope = (stored: string | null | undefined): boolean =>
-    typeof stored === 'string' && stored.startsWith(ENVELOPE_PREFIX)
+export const isEnvelope = (stored: string | null | undefined): boolean => typeof stored === 'string' && stored.startsWith(ENVELOPE_PREFIX)
 
 /**
  * Encrypt with AES-256-GCM, recording the key id, key version, algorithm, nonce and salt alongside

@@ -255,7 +255,6 @@ export interface MigrationResult {
 
 const defaultRolePermissions = (name: SystemRoleName): string[] => {
     // Lazy on purpose — see MigrateOptions.rolePermissions.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const bootstrap = require('../../identity/services/BootstrapService')
     return bootstrap.systemRolePermissions(name)
 }

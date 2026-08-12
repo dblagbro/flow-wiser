@@ -1498,13 +1498,13 @@ matching algorithm:
 
 ```js
 const hasPermission = (permissionId) => {
-    if (isOpenSource || isGlobal) return true          // :12
-    if (!permissionId) return false                    // :15
-    const permissionIds = permissionId.split(',')      // :16
+    if (isOpenSource || isGlobal) return true // :12
+    if (!permissionId) return false // :15
+    const permissionIds = permissionId.split(',') // :16
     if (permissions && permissions.length) {
-        return permissionIds.some((p) => permissions.includes(p))   // :18
+        return permissionIds.some((p) => permissions.includes(p)) // :18
     }
-    return false                                       // :20
+    return false // :20
 }
 ```
 

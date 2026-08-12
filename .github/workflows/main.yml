@@ -34,6 +34,14 @@ jobs:
             - run: pnpm build
               env:
                   NODE_OPTIONS: '--max_old_space_size=4096'
+            # Before running the tests, assert that every test file on disk is one Jest will
+            # actually run. A suite that is never discovered produces no failures, and no failures
+            # is indistinguishable from success — which is how 30 recovery-CLI tests stayed dead
+            # for weeks (G10). Placed ahead of the run so the diagnosis is "these files are not
+            # discovered" rather than a test count that looks fine.
+            - name: Assert no test file is silently undiscovered
+              run: node scripts/assert-test-discovery.js
+
             - run: pnpm test:coverage
             - name: Cypress install
               run: pnpm cypress install
@@ -44,6 +52,24 @@ jobs:
                   runTests: false
             - name: Cypress test
               uses: cypress-io/github-action@v7.1.5
+              env:
+                  # The server refuses to start without these, on purpose: the keyring never invents
+                  # an encryption key, because a generated key silently strands every credential
+                  # written under the previous one. Cypress was configured before the identity layer
+                  # existed, so it starts the server with no environment at all — and this step has
+                  # been failing at boot with KeyringError ever since, hidden behind three earlier
+                  # failures in the same job.
+                  #
+                  # Throwaway CI values, not secrets. They encrypt nothing that outlives the job and
+                  # every run starts from an empty database. Checked in rather than held as
+                  # repository secrets deliberately: a secret here would make a green build depend on
+                  # configuration a fork cannot see, and this workflow has to be runnable by anyone
+                  # who clones the repository.
+                  #
+                  # Minimum 32 bytes of key material (MIN_KEY_MATERIAL_BYTES), and must not be a
+                  # published example value — the keyring rejects the .env.example key by design.
+                  IDENTITY_ENCRYPTION_KEY: 'ci-only-throwaway-key-not-used-outside-github-actions'
+                  FLOWISE_SESSION_PEPPER: 'ci-only-throwaway-pepper-not-used-outside-github-actions'
               with:
                   install: false
                   working-directory: packages/server

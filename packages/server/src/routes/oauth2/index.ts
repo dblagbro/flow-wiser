@@ -66,6 +66,7 @@ import { getActiveWorkspaceIdForRequest } from '../../identity/tenancy/Controlle
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { decryptCredentialData, encryptCredentialData } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import { issueOAuth2State, redeemOAuth2State } from '../../utils/oauth2State'
 import { extractOAuth2TokenFields, validateOAuth2Url } from '../../utils/oauth2Security'
 import { generateErrorPage, generateSuccessPage } from './templates'
 
@@ -143,7 +144,11 @@ router.post('/authorize/:credentialId', async (req: Request, res: Response, next
             client_id: clientId,
             response_type,
             response_mode,
-            state: credentialId, // Use credential ID as state parameter
+            // GHSA-wch5-xp77-fxg4: `state` was the credential's own UUID, which made the
+            // unauthenticated /callback a credential-write primitive for anyone who knew an id.
+            // Now an unguessable, single-use, expiring nonce bound to this credential AND the
+            // workspace that authorised it.
+            state: issueOAuth2State(credentialId, workspaceId),
             redirect_uri: finalRedirectUri
         })
 
@@ -203,9 +208,25 @@ router.get('/callback', async (req: Request, res: Response) => {
         const appServer = getRunningExpressApp()
         const credentialRepository = appServer.AppDataSource.getRepository(Credential)
 
-        // Find credential by state (assuming state contains the credential ID)
+        // Redeem the single-use state issued by /authorize. A state that does not resolve was never
+        // issued, has already been used, or has expired — all of which mean this callback does not
+        // belong to a handshake this server started, so it gets no further.
+        const redeemed = redeemOAuth2State(state as string)
+        if (!redeemed) {
+            const errorHtml = generateErrorPage(
+                'Invalid or expired authorization state',
+                'This authorization request was not initiated by this server, has already been completed, or has expired.',
+                'Start the connection again from the credential screen.'
+            )
+            res.setHeader('Content-Type', 'text/html')
+            return res.status(400).send(errorHtml)
+        }
+
+        // Scoped by the workspace recorded when the state was issued, so a redeemed state can only
+        // ever write back to the credential it was minted for.
         const credential = await credentialRepository.findOneBy({
-            id: state as string
+            id: redeemed.credentialId,
+            workspaceId: redeemed.workspaceId
         })
 
         if (!credential) {
@@ -354,8 +375,21 @@ router.post('/refresh/:credentialId', async (req: Request, res: Response, next: 
         const appServer = getRunningExpressApp()
         const credentialRepository = appServer.AppDataSource.getRepository(Credential)
 
+        // GHSA-wch5-xp77-fxg4. This route was whitelisted and looked the credential up by the
+        // caller-supplied id with no ownership check, then WROTE new tokens to it — so anyone who
+        // knew a UUID could force refresh-token rotation on another tenant's connected service.
+        //
+        // Refreshing a token is a maintenance action taken by someone who owns the credential; the
+        // only caller is the authenticated credential screen (packages/ui/src/api/oauth2.js). It is
+        // removed from WHITELIST_URLS and scoped here.
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ success: false, message: 'Unauthorized' })
+        }
+
         const credential = await credentialRepository.findOneBy({
-            id: credentialId
+            id: credentialId,
+            workspaceId
         })
 
         if (!credential) {

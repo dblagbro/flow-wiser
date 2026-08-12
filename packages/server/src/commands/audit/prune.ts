@@ -90,10 +90,7 @@ export default class AuditPrune extends RecoveryCommand {
 
     static description = 'Delete audit events older than the retention period. Dry run unless --apply.'
 
-    static examples = [
-        '<%= config.bin %> audit:prune',
-        '<%= config.bin %> audit:prune --retention-days 400 --i-have-exported --apply'
-    ]
+    static examples = ['<%= config.bin %> audit:prune', '<%= config.bin %> audit:prune --retention-days 400 --i-have-exported --apply']
 
     static flags = {
         ...RecoveryCommand.flags,
