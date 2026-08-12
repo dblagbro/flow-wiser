@@ -1,7 +1,7 @@
 import express from 'express'
 import openaiAssistantsController from '../../controllers/openai-assistants'
 import { getMulterStorage } from '../../utils'
-import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+import { checkAnyPermission } from '../../identity/rbac/PermissionCheck'
 
 const router = express.Router()
 

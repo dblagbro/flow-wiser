@@ -1,5 +1,5 @@
 import express from 'express'
-import { checkAnyPermission } from '../../enterprise/rbac/PermissionCheck'
+import { checkAnyPermission } from '../../identity/rbac/PermissionCheck'
 import upsertHistoryController from '../../controllers/upsert-history'
 const router = express.Router()
 
