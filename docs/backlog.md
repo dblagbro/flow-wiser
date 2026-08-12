@@ -84,6 +84,76 @@ that determines whether this is safe. An ADR is warranted.
 
 ---
 
+### BL-03 · Triage the 344 unreviewed upstream contributions
+
+**Raised:** 2026-08-12 by Operator · **Status:** Proposed · **Size:** XL · **Value:** High
+
+`upstream-archive/` preserves **347 open pull requests** from FlowiseAI/Flowise, captured
+2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
+intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
+
+|                      |                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                       |
+| Acted on             | **3** — #6682, #6683 (CVEs, author `anupamme` preserved as commit author), #6706 (`connect-sqlite3`) |
+| Never reviewed       | **344**                                                                                              |
+| Archived open issues | 698                                                                                                  |
+
+`MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
+**re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
+
+**Why this matters beyond housekeeping.** These are the last contributions the upstream community
+will ever make to this codebase — upstream is archived and will accept nothing further. They are
+Apache-2.0, they carry their authors' names, and Flow-Wiser exists as a _continuation_ fork. Merging
+good work with attribution intact is the most direct expression of that. It is also the cheapest
+source of fixes the project will ever have: 129 titles begin `fix`, and someone else already wrote
+and tested them.
+
+**Shape of the backlog:**
+
+| Category                     | Count                          |
+| ---------------------------- | ------------------------------ |
+| `fix` / bug                  | ~129                           |
+| `feat` / new node or feature | ~173                           |
+| security / CVE-flagged       | 5 (of which 2 already adopted) |
+| `chore` / dependency bumps   | ~7                             |
+| Drafts (deprioritise)        | 21                             |
+
+Age skews recent — 73 from 2026-06, 56 from 2026-07 — so most were written against a tree close to
+the fork point and should still apply cleanly.
+
+**Start here — the 3 unadopted security PRs:**
+
+-   **#6672** — apply min/max modifiers to `ZodNumber` in `secureZodParser`
+-   **#5371** — improvements to `SecureZodSchemaParser`
+-   **#5255** — override vulnerable dependencies (`sha.js`, Babel helpers/runtime)
+
+`docs/ADVISORY-SWEEP.md` covered the 116 published advisories; these are contributor-authored
+hardening that the sweep would not have caught.
+
+**Constraints:**
+
+-   **15 of the 347 patches are permanently incomplete.** They touched
+    `packages/server/src/enterprise/` or `IdentityManager.ts`, and **196 hunk bodies — 14,224 lines —
+    were redacted on 2026-08-06** because diff context carries fragments of commercially licensed
+    files. Those cannot be `git am`-ed and **must not be reconstructed**: doing so would mean reading
+    licensed content, which is exactly what ADR-0002 forbids. If the underlying need is real,
+    re-specify it from Apache-2.0 sources.
+-   Apply with `git am --keep-non-patch upstream-archive/patches/pr-<n>.patch` so authorship survives.
+    A contribution merged without its author's name is a contribution stolen.
+-   Every applied patch needs the same gates as any other change: a test, `pnpm build`, `pnpm test`,
+    and a `CHANGELOG.md` entry crediting the author.
+-   Expect conflicts against the `apache2-only` line, whose identity layer diverges sharply from what
+    these PRs were written against.
+
+**Suggested sequence:** the 3 security PRs → `fix` PRs that still apply cleanly → dependency bumps
+(cross-check against `pnpm.overrides` first; the `@anupamme` precedent shows manifest bumps do not
+force transitive versions here) → `feat` PRs on merit, since each is new surface to maintain
+forever. Drafts last.
+
+**Do not attempt this as one pass.** 344 patches is a programme, not a task. Batch by category,
+record progress here, and land them in small reviewable groups.
+
 ## Operational
 
 ### BL-01 · Audit and update outdated nodes in the operator's deployed chatflows
