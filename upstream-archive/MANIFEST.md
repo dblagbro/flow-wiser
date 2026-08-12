@@ -1,6 +1,12 @@
 # Upstream archive snapshot — FlowiseAI/Flowise
 
-Captured: 2026-08-05T13:14:46-04:00
+> **Refreshed 2026-08-12 — and the reason for this archive did not hold.**
+> Upstream was **not** archived on 2026-08-10: the repository reports `archived: false`,
+> comments still work, and **three pull requests were merged on 2026-08-07**. It is frozen,
+> not closed. See [`DELTA-2026-08-12.md`](DELTA-2026-08-12.md) for the delta, the three
+> merged fixes this fork is missing, and the open upstream PRs Flow-Wiser has already solved.
+
+Captured: 2026-08-05T13:14:46-04:00 · Refreshed: 2026-08-12
 Reason: upstream repository moves to public archive on 2026-08-10, which locks
 issues and pull requests. This snapshot preserves the open contribution backlog
 so it remains reviewable and re-appliable in flow-wiser.

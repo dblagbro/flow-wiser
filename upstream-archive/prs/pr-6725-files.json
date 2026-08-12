@@ -1,0 +1,26 @@
+[
+  {
+    "sha": "acbef7cc0acf2a73c793618cd73282a5fbc5f086",
+    "filename": "packages/components/nodes/tools/MCP/core.test.ts",
+    "status": "modified",
+    "additions": 12,
+    "deletions": 1,
+    "changes": 13,
+    "blob_url": "https://github.com/FlowiseAI/Flowise/blob/35cc11b5c1a79fae9e0df307c73fcdcf18828b11/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.test.ts",
+    "raw_url": "https://github.com/FlowiseAI/Flowise/raw/35cc11b5c1a79fae9e0df307c73fcdcf18828b11/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.test.ts",
+    "contents_url": "https://api.github.com/repos/FlowiseAI/Flowise/contents/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.test.ts?ref=35cc11b5c1a79fae9e0df307c73fcdcf18828b11",
+    "patch": "@@ -5,7 +5,8 @@ import {\n     validateEnvironmentVariables,\n     validateMCPServerConfig,\n     sanitizeMCPToolDescription,\n-    sanitizeMCPToolName\n+    sanitizeMCPToolName,\n+    MCPToolkit\n } from './core'\n \n describe('MCP Security Validations', () => {\n@@ -753,3 +754,13 @@ describe('sanitizeMCPToolName', () => {\n         warnSpy.mockRestore()\n     })\n })\n+\n+describe('MCPToolkit', () => {\n+    it('explains how to configure a missing remote URL', async () => {\n+        const toolkit = new MCPToolkit({ command: 'npx', args: ['some-server'] }, 'sse')\n+\n+        await expect(toolkit.createClient()).rejects.toThrow(\n+            'URL is required for remote MCP transport. For stdio servers, set CUSTOM_MCP_PROTOCOL=stdio and provide command/args.'\n+        )\n+    })\n+})"
+  },
+  {
+    "sha": "e6caf93483d7704d9283f541424adfa373472d34",
+    "filename": "packages/components/nodes/tools/MCP/core.ts",
+    "status": "modified",
+    "additions": 3,
+    "deletions": 1,
+    "changes": 4,
+    "blob_url": "https://github.com/FlowiseAI/Flowise/blob/35cc11b5c1a79fae9e0df307c73fcdcf18828b11/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.ts",
+    "raw_url": "https://github.com/FlowiseAI/Flowise/raw/35cc11b5c1a79fae9e0df307c73fcdcf18828b11/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.ts",
+    "contents_url": "https://api.github.com/repos/FlowiseAI/Flowise/contents/packages%2Fcomponents%2Fnodes%2Ftools%2FMCP%2Fcore.ts?ref=35cc11b5c1a79fae9e0df307c73fcdcf18828b11",
+    "patch": "@@ -118,7 +118,9 @@ export class MCPToolkit extends BaseToolkit {\n             await client.connect(transport)\n         } else {\n             if (this.serverParams.url === undefined) {\n-                throw new Error('URL is required for SSE transport')\n+                throw new Error(\n+                    'URL is required for remote MCP transport. For stdio servers, set CUSTOM_MCP_PROTOCOL=stdio and provide command/args.'\n+                )\n             }\n \n             const baseUrl = new URL(this.serverParams.url)"
+  }
+]

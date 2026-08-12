@@ -1,0 +1,74 @@
+From b91d23a7e17579463466adb649d413e7f369bd51 Mon Sep 17 00:00:00 2001
+From: Ilango Rajagopal <ilango.rajagopal@flowiseai.com>
+Date: Wed, 5 Aug 2026 14:22:35 +0530
+Subject: [PATCH] fix: flowise-766
+
+---
+ docker/.env.example              | 5 ++++-
+ docker/worker/.env.example       | 5 ++++-
+ packages/components/src/utils.ts | 3 +++
+ packages/server/.env.example     | 5 ++++-
+ 4 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/docker/.env.example b/docker/.env.example
+index e99d42d4faa..6cca9b49d1c 100644
+--- a/docker/.env.example
++++ b/docker/.env.example
+@@ -41,7 +41,10 @@ PORT=3000
+ # LOG_SANITIZE_BODY_FIELDS=password,pwd,pass,secret,token,apikey,api_key,accesstoken,access_token,refreshtoken,refresh_token,clientsecret,client_secret,privatekey,private_key,secretkey,secret_key,auth,authorization,credential,credentials
+ # LOG_SANITIZE_HEADER_FIELDS=authorization,x-api-key,x-auth-token,cookie
+ # TOOL_FUNCTION_BUILTIN_DEP=crypto,fs
+-# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,puppeteer,playwright,@zilliz/milvus2-sdk-node
++# WARNING: never add puppeteer or playwright here (or to ALLOW_BUILTIN_DEP) - their launch() APIs pass
++# caller-controlled executablePath/args straight into child_process.spawn, giving sandboxed JS full OS
++# command execution, and their file:// page navigation allows arbitrary host file read.
++# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,@zilliz/milvus2-sdk-node
+ # ALLOW_BUILTIN_DEP=false
+ 
+ 
+diff --git a/docker/worker/.env.example b/docker/worker/.env.example
+index 3e5b3024ade..f42b94ba0d5 100644
+--- a/docker/worker/.env.example
++++ b/docker/worker/.env.example
+@@ -41,7 +41,10 @@ WORKER_PORT=5566
+ # LOG_SANITIZE_BODY_FIELDS=password,pwd,pass,secret,token,apikey,api_key,accesstoken,access_token,refreshtoken,refresh_token,clientsecret,client_secret,privatekey,private_key,secretkey,secret_key,auth,authorization,credential,credentials
+ # LOG_SANITIZE_HEADER_FIELDS=authorization,x-api-key,x-auth-token,cookie
+ # TOOL_FUNCTION_BUILTIN_DEP=crypto,fs
+-# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,puppeteer,playwright,@zilliz/milvus2-sdk-node
++# WARNING: never add puppeteer or playwright here (or to ALLOW_BUILTIN_DEP) - their launch() APIs pass
++# caller-controlled executablePath/args straight into child_process.spawn, giving sandboxed JS full OS
++# command execution, and their file:// page navigation allows arbitrary host file read.
++# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,@zilliz/milvus2-sdk-node
+ # ALLOW_BUILTIN_DEP=false
+ 
+ 
+diff --git a/packages/components/src/utils.ts b/packages/components/src/utils.ts
+index b8b39cbc2d3..e5c764f3f2e 100644
+--- a/packages/components/src/utils.ts
++++ b/packages/components/src/utils.ts
+@@ -51,6 +51,9 @@ if (USE_AWS_SECRETS_MANAGER) {
+ 
+ /*
+  * List of dependencies allowed to be import in @flowiseai/nodevm
++ *
++ * Do NOT add 'puppeteer' or 'playwright' here (or via TOOL_FUNCTION_EXTERNAL_DEP): their launch()
++ * APIs forward executablePath/args to child_process.spawn, which is a sandbox escape.
+  */
+ export const availableDependencies = [
+     '@aws-sdk/client-bedrock-runtime',
+diff --git a/packages/server/.env.example b/packages/server/.env.example
+index fba505f2e57..f87bdd34b39 100644
+--- a/packages/server/.env.example
++++ b/packages/server/.env.example
+@@ -41,7 +41,10 @@ PORT=3000
+ # LOG_SANITIZE_BODY_FIELDS=password,pwd,pass,secret,token,apikey,api_key,accesstoken,access_token,refreshtoken,refresh_token,clientsecret,client_secret,privatekey,private_key,secretkey,secret_key,auth,authorization,credential,credentials
+ # LOG_SANITIZE_HEADER_FIELDS=authorization,x-api-key,x-auth-token,cookie
+ # TOOL_FUNCTION_BUILTIN_DEP=crypto,fs
+-# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,puppeteer,playwright,@zilliz/milvus2-sdk-node
++# WARNING: never add puppeteer or playwright here (or to ALLOW_BUILTIN_DEP) - their launch() APIs pass
++# caller-controlled executablePath/args straight into child_process.spawn, giving sandboxed JS full OS
++# command execution, and their file:// page navigation allows arbitrary host file read.
++# TOOL_FUNCTION_EXTERNAL_DEP=moment,lodash,pg,mysql2,mongodb,ioredis,redis,typeorm,@zilliz/milvus2-sdk-node
+ # ALLOW_BUILTIN_DEP=false
+ 
+ 

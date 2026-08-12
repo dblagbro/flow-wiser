@@ -1,0 +1,53 @@
+From 35cc11b5c1a79fae9e0df307c73fcdcf18828b11 Mon Sep 17 00:00:00 2001
+From: Ruiming Zhao <uuzzrm@gmail.com>
+Date: Tue, 11 Aug 2026 18:22:02 -0700
+Subject: [PATCH] fix(mcp): clarify missing remote server URL
+
+---
+ packages/components/nodes/tools/MCP/core.test.ts | 13 ++++++++++++-
+ packages/components/nodes/tools/MCP/core.ts      |  4 +++-
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/packages/components/nodes/tools/MCP/core.test.ts b/packages/components/nodes/tools/MCP/core.test.ts
+index e97e874516c..acbef7cc0ac 100644
+--- a/packages/components/nodes/tools/MCP/core.test.ts
++++ b/packages/components/nodes/tools/MCP/core.test.ts
+@@ -5,7 +5,8 @@ import {
+     validateEnvironmentVariables,
+     validateMCPServerConfig,
+     sanitizeMCPToolDescription,
+-    sanitizeMCPToolName
++    sanitizeMCPToolName,
++    MCPToolkit
+ } from './core'
+ 
+ describe('MCP Security Validations', () => {
+@@ -753,3 +754,13 @@ describe('sanitizeMCPToolName', () => {
+         warnSpy.mockRestore()
+     })
+ })
++
++describe('MCPToolkit', () => {
++    it('explains how to configure a missing remote URL', async () => {
++        const toolkit = new MCPToolkit({ command: 'npx', args: ['some-server'] }, 'sse')
++
++        await expect(toolkit.createClient()).rejects.toThrow(
++            'URL is required for remote MCP transport. For stdio servers, set CUSTOM_MCP_PROTOCOL=stdio and provide command/args.'
++        )
++    })
++})
+diff --git a/packages/components/nodes/tools/MCP/core.ts b/packages/components/nodes/tools/MCP/core.ts
+index 09f60d9643a..e6caf93483d 100644
+--- a/packages/components/nodes/tools/MCP/core.ts
++++ b/packages/components/nodes/tools/MCP/core.ts
+@@ -118,7 +118,9 @@ export class MCPToolkit extends BaseToolkit {
+             await client.connect(transport)
+         } else {
+             if (this.serverParams.url === undefined) {
+-                throw new Error('URL is required for SSE transport')
++                throw new Error(
++                    'URL is required for remote MCP transport. For stdio servers, set CUSTOM_MCP_PROTOCOL=stdio and provide command/args.'
++                )
+             }
+ 
+             const baseUrl = new URL(this.serverParams.url)
