@@ -373,31 +373,47 @@ proves the lockfile agrees with the manifests; it says nothing about whether the
 still type-checks. Any lockfile-wide operation needs `pnpm build` **and** `pnpm test` before it is
 proposed, not just an install.
 
-### RM-18 · `main`'s tree has never been built on Node 22 — and a local attempt to check was invalid
+### RM-18 · `main` on Node 22 — verified green in CI; an invalid local result retracted
 
-**Status:** OPEN · **Opened:** 2026-08-12 · **Gap, plus a retraction**
+**Status:** ✅ **CLOSED 2026-08-12** — proven in CI. The retraction below is kept deliberately.
 
-**The gap.** Node 22 is verified in CI **only for the `apache2-only` line** — PR #15's Node CI
-passed on `22.23.2`. `main`'s CI matrix is still `24.15.0`, so **no clean environment has ever
-built `main`'s tree on Node 22.** When the Node 22 change reaches `main`, that will be the first
-time. Do not assume it works.
+**The gap, as it stood.** Node 22 was verified in CI only for the `apache2-only` line (PR #15).
+`main`'s matrix was `24.15.0`, so no clean environment had ever built `main`'s tree on Node 22.
 
-**Action:** before `apache2-only` merges to `main`, run `main`'s tree through CI with the Node 22
-matrix — **in CI, on runner-local disk**, not on a developer machine. Extend RM-12 (image build
-and boot) to cover it.
+**Resolved by direct measurement.** A throwaway branch was cut from `origin/main` @ `24ac3f92`
+with **one line changed** — `node-version: [24.15.0]` → `[22.23.2]` — and dispatched via
+`workflow_dispatch`, making the Node version the single variable. Same tree, same lockfile, clean
+runner on local disk.
 
-**Related, and solid:** `@types/node@26.2.0` entered `main` at `69b281db` (the nanoid merge). It
-is absent from `afd88ac6` (fw10) and absent from the `apache2-only` line, which carries every
-other `@types/node` from `12.20.55` to `24.13.2`. This was part of the ~141 duplicate versions the
-dependabot review assessed as benign — that review checked they were not _new packages_ and that
-the security pins held, but **did not check whether any of them changed type resolution.** A new
-major `@types/node` plausibly can. Impact **unverified**; verify it in the same CI run.
+> **Run:** <https://github.com/dblagbro/flow-wiser/actions/runs/31617333079> · sha `6ae67f32` ·
+> 2026-08-12 · **conclusion: success**
+>
+> Job `build (ubuntu-latest, 22.23.2)` — **all 16 steps green**, including `pnpm install`,
+> `pnpm lint`, `pnpm build`, `Assert no test file is silently undiscovered`, `pnpm test:coverage`
+> and `Cypress test`.
+>
+> The branch was deleted after the run. Actions run records persist, so the evidence stands.
+
+**Conclusions:**
+
+1. `main`'s tree builds, lints, unit-tests and passes e2e on Node 22. ADR-0004 now has clean CI
+   evidence on **both** lines — `apache2-only` (PR #15) and `main` (this run).
+2. **`@types/node@26.2.0` is exonerated.** It entered `main` at `69b281db` (the nanoid merge) and
+   is absent from `afd88ac6` and from `apache2-only`. It was present in this green run, so it does
+   not break the build. The concern was reasonable — the dependabot review had checked the ~141
+   duplicate versions for _new packages_ and for security pins, but not for changed type
+   resolution — and it is now closed by evidence rather than assumption.
+3. The run covered two gates never reached locally: test discovery and Cypress e2e.
 
 ---
 
-**The retraction.** An earlier claim in this session — _"`main`'s server package fails to build on
-Node 22"_ — is **withdrawn**. It was observed, but the environment producing it was invalid, and
-which failures were real can no longer be separated from which were artifacts.
+**The retraction — kept on purpose.** An earlier claim in this session — _"`main`'s server package
+fails to build on Node 22"_ — was **wrong**, and the run above proves it: the identical tree,
+lockfile and Node version pass cleanly in an uncontaminated environment. The `flowise#build`
+LangGraph errors were artifacts of a broken local setup, not defects.
+
+The local result was not merely noisy, it was **inverted** — it reported a blocking failure where
+none exists. Had it been acted on, it would have stalled PR #15 over nothing.
 
 Three methodology errors, recorded so the same evidence is not trusted later:
 
@@ -420,6 +436,12 @@ Three methodology errors, recorded so the same evidence is not trusted later:
 5. **CI is the authoritative signal.** A local run on this NFS-mounted, multi-checkout machine is
    a hint. When local and CI disagree, CI wins — and when a local result would change a decision,
    reproduce it in CI before acting.
+
+**The cheap instrument that settled it, for reuse.** Cut a branch from the ref under test, change
+**one** value, push, and `gh workflow run <workflow> --ref <branch>`. `workflow_dispatch` avoids
+opening a PR, so there is nothing to merge by accident; delete the branch afterwards and the run
+record persists as evidence. It took minutes and produced an answer no amount of local iteration
+could — because the local environment was the thing at fault.
 
 The `pnpm dedupe` finding (RM-17) is **unaffected**: it was isolated, single-variable, toggled both
 ways, and completed before any of the above.
