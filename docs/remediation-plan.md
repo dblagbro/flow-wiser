@@ -373,6 +373,64 @@ proves the lockfile agrees with the manifests; it says nothing about whether the
 still type-checks. Any lockfile-wide operation needs `pnpm build` **and** `pnpm test` before it is
 proposed, not just an install.
 
+### RM-19 · `faiss-node`'s CMake build is flaky in CI — every gate is unreliable at some rate
+
+**Status:** OPEN · **Opened:** 2026-08-12 · **Demonstrated, not suspected**
+
+`pnpm install` failed in CI while compiling `faiss-node`:
+
+```text
+node_modules/faiss-node install: CMake Error at
+  /usr/local/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake:233 (message):
+-- Configuring incomplete, errors occurred!
+##[error]Process completed with exit code 1
+```
+
+**Proven flaky by the change set, not by re-rolling.** On `ops/methodology-and-node-22`:
+
+| Commit            | What changed                        | Result                    |
+| ----------------- | ----------------------------------- | ------------------------- |
+| `3ad65d6e`        | code                                | ✅ success                |
+| `0efadea6`        | docs                                | ✅ success                |
+| `312d21cb`        | **`docs/remediation-plan.md` only** | ❌ failure (1m34s)        |
+| `312d21cb` re-run | **nothing**                         | ✅ success (all 16 steps) |
+
+A Markdown file cannot break a native CMake compile, and the re-run passed the identical commit.
+`faiss-node@0.5.1` is the same on `main` and this branch, and `main`'s Node 22 probe
+(run `31617333079`) installed it successfully **14 minutes before** this failure.
+
+**Why it matters more than one red run.** `faiss-node` is one of only two entries in
+`pnpm.onlyBuiltDependencies` (with `sqlite3`), so it is one of the few packages that actually
+compiles during install — and it sits in `pnpm install`, the **first** step of every CI job. A
+non-deterministic failure there means:
+
+1. Every gate in this repository — lint, build, tests, discovery, Cypress — is unreliable at some
+   rate, because none of them run if install fails.
+2. **A real failure can be waved away as "just faiss again".** That is the expensive part. A
+   normalised flake trains everyone, human and agent, to re-run instead of read. `PROCESS-GAPS.md`
+   G1 is about controls that do not run; this is a control whose _result_ cannot be trusted, which
+   corrodes the same way.
+
+**The failure was fast** (1m34s vs the usual ~7m), which is a useful signature: install-stage
+failures die early, so a short red run is more likely environmental than a genuine defect.
+
+**Action:**
+
+1. Capture the full CMake output from a failing run — the two lines above are the summary, not the
+   cause. `FindPackageHandleStandardArgs` failing usually means a missing system package
+   (BLAS/LAPACK/OpenMP) or a CMake version incompatibility.
+2. Pin the environment rather than retry it: install the required system dependencies explicitly in
+   the workflow, and/or pin CMake, so the build stops depending on whatever the runner image ships.
+   Note the runner now carries **CMake 3.31**.
+3. If `faiss-node` is not actually needed for CI, drop it from `onlyBuiltDependencies` for CI runs —
+   nothing in the test suite obviously requires a compiled FAISS.
+4. Until fixed, **do not treat a red `pnpm install` as automatically flaky.** Read the failing step
+   first; only the `faiss-node` CMake signature is known-flaky.
+
+**Do not "fix" this by adding a blanket retry to the workflow.** That converts a visible flake into
+an invisible one and is the same class of error as relaxing a gate to make it pass
+(`AGENTS.md §11`).
+
 ### RM-18 · `main` on Node 22 — verified green in CI; an invalid local result retracted
 
 **Status:** ✅ **CLOSED 2026-08-12** — proven in CI. The retraction below is kept deliberately.
