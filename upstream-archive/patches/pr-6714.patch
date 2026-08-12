@@ -1,0 +1,659 @@
+From c16d1a11389e40b5146ca268b7eba09b66d22766 Mon Sep 17 00:00:00 2001
+From: sarveshpatil-plivo <sarvesh.patil@plivo.com>
+Date: Thu, 6 Aug 2026 17:45:58 +0530
+Subject: [PATCH 1/2] feat: add Plivo tool nodes (Send SMS, Make Call) and
+ credential
+
+---
+ .../credentials/PlivoApi.credential.ts        |  33 +++++
+ .../Plivo/PlivoMakeCall/PlivoMakeCall.ts      | 135 ++++++++++++++++++
+ .../nodes/tools/Plivo/PlivoMakeCall/plivo.png | Bin 0 -> 2559 bytes
+ .../tools/Plivo/PlivoSendSMS/PlivoSendSMS.ts  | 125 ++++++++++++++++
+ .../nodes/tools/Plivo/PlivoSendSMS/plivo.png  | Bin 0 -> 2559 bytes
+ 5 files changed, 293 insertions(+)
+ create mode 100644 packages/components/credentials/PlivoApi.credential.ts
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.ts
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoMakeCall/plivo.png
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.ts
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoSendSMS/plivo.png
+
+diff --git a/packages/components/credentials/PlivoApi.credential.ts b/packages/components/credentials/PlivoApi.credential.ts
+new file mode 100644
+index 00000000000..140a77e285c
+--- /dev/null
++++ b/packages/components/credentials/PlivoApi.credential.ts
+@@ -0,0 +1,33 @@
++import { INodeParams, INodeCredential } from '../src/Interface'
++
++class PlivoApi implements INodeCredential {
++    label: string
++    name: string
++    version: number
++    description: string
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Plivo API'
++        this.name = 'plivoApi'
++        this.version = 1.0
++        this.description =
++            'Find your Auth ID and Auth Token on the <a target="_blank" href="https://cx.plivo.com/">Plivo console</a> dashboard.'
++        this.inputs = [
++            {
++                label: 'Auth ID',
++                name: 'authId',
++                type: 'string',
++                placeholder: '<PLIVO_AUTH_ID>'
++            },
++            {
++                label: 'Auth Token',
++                name: 'authToken',
++                type: 'password',
++                placeholder: '<PLIVO_AUTH_TOKEN>'
++            }
++        ]
++    }
++}
++
++module.exports = { credClass: PlivoApi }
+diff --git a/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.ts b/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.ts
+new file mode 100644
+index 00000000000..4503bc7ff34
+--- /dev/null
++++ b/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.ts
+@@ -0,0 +1,135 @@
++import axios from 'axios'
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../../src/utils'
++
++class PlivoMakeCallTool extends Tool {
++    name = 'plivo_make_call'
++    description =
++        'Place an outbound phone call through Plivo. The input to this tool is the destination phone number to call in E.164 format. Leave the input empty to call the number configured on the node.'
++    private authId: string
++    private authToken: string
++    private from: string
++    private to: string
++    private answerUrl: string
++
++    constructor(authId: string, authToken: string, from: string, to: string, answerUrl: string) {
++        super()
++        this.authId = authId
++        this.authToken = authToken
++        this.from = from
++        this.to = to
++        this.answerUrl = answerUrl
++    }
++
++    async _call(input: string): Promise<string> {
++        try {
++            const destination = (input || '').trim() || this.to
++            if (!destination) {
++                return 'Failed to place call: no destination number provided'
++            }
++
++            const endpoint = `https://api.plivo.com/v1/Account/${this.authId}/Call/`
++
++            const response = await axios.post(
++                endpoint,
++                {
++                    from: this.from,
++                    to: destination,
++                    answer_url: this.answerUrl
++                },
++                {
++                    auth: { username: this.authId, password: this.authToken },
++                    validateStatus: () => true
++                }
++            )
++
++            const data = response.data
++
++            if (response.status !== 201) {
++                return `Failed to place call (HTTP ${response.status}): ${JSON.stringify(data)}`
++            }
++
++            return `Successfully fired call to ${destination}. Request UUID: ${data.request_uuid}`
++        } catch (error) {
++            return `Failed to place call: ${error}`
++        }
++    }
++}
++
++class PlivoMakeCall_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Plivo Make Call'
++        this.name = 'plivoMakeCall'
++        this.version = 1.0
++        this.type = 'PlivoMakeCall'
++        this.icon = 'plivo.png'
++        this.category = 'Tools'
++        this.description = 'Place an outbound phone call using the Plivo Voice API'
++        this.baseClasses = [this.type, ...getBaseClasses(PlivoMakeCallTool)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['plivoApi']
++        }
++        this.inputs = [
++            {
++                label: 'From Number',
++                name: 'from',
++                type: 'string',
++                placeholder: '+14150000002',
++                description: 'The caller ID, a Plivo phone number in E.164 format'
++            },
++            {
++                label: 'To Number',
++                name: 'to',
++                type: 'string',
++                placeholder: '+14150000001',
++                description: 'Default destination number in E.164 format. Can be overridden by the tool input at runtime',
++                optional: true
++            },
++            {
++                label: 'Answer URL',
++                name: 'answerUrl',
++                type: 'string',
++                placeholder: 'https://example.com/answer',
++                description: 'URL Plivo fetches on answer to retrieve the call-flow XML'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const authId = getCredentialParam('authId', credentialData, nodeData)
++        const authToken = getCredentialParam('authToken', credentialData, nodeData)
++        const from = nodeData.inputs?.from as string
++        const to = nodeData.inputs?.to as string
++        const answerUrl = nodeData.inputs?.answerUrl as string
++
++        if (!authId || !authToken) {
++            throw new Error('Plivo Auth ID and Auth Token are required')
++        }
++        if (!from) {
++            throw new Error('From Number is required')
++        }
++        if (!answerUrl) {
++            throw new Error('Answer URL is required')
++        }
++
++        return new PlivoMakeCallTool(authId, authToken, from, to, answerUrl)
++    }
++}
++
++module.exports = { nodeClass: PlivoMakeCall_Tools }
+diff --git a/packages/components/nodes/tools/Plivo/PlivoMakeCall/plivo.png b/packages/components/nodes/tools/Plivo/PlivoMakeCall/plivo.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b5fd0f5bead555335d335ae6599b9781c58758e
+GIT binary patch
+literal 2559
+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
+VevEh$)7t<5002ovPDHLkV1l}I1uFmm
+
+literal 0
+HcmV?d00001
+
+diff --git a/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.ts b/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.ts
+new file mode 100644
+index 00000000000..1691d461af9
+--- /dev/null
++++ b/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.ts
+@@ -0,0 +1,125 @@
++import axios from 'axios'
++import { Tool } from '@langchain/core/tools'
++import { ICommonObject, INode, INodeData, INodeParams } from '../../../../src/Interface'
++import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../../src/utils'
++
++class PlivoSendSMSTool extends Tool {
++    name = 'plivo_send_sms'
++    description = 'Send an SMS message through Plivo. The input to this tool is the text body of the message to send.'
++    private authId: string
++    private authToken: string
++    private src: string
++    private dst: string
++
++    constructor(authId: string, authToken: string, src: string, dst: string) {
++        super()
++        this.authId = authId
++        this.authToken = authToken
++        this.src = src
++        this.dst = dst
++    }
++
++    async _call(input: string): Promise<string> {
++        try {
++            const text = (input || '').trim()
++            if (!text) {
++                return 'Failed to send SMS: message text is empty'
++            }
++
++            const endpoint = `https://api.plivo.com/v1/Account/${this.authId}/Message/`
++
++            const response = await axios.post(
++                endpoint,
++                {
++                    src: this.src,
++                    dst: this.dst,
++                    text: text,
++                    type: 'sms'
++                },
++                {
++                    auth: { username: this.authId, password: this.authToken },
++                    validateStatus: () => true
++                }
++            )
++
++            const data = response.data
++
++            if (response.status !== 202) {
++                return `Failed to send SMS (HTTP ${response.status}): ${JSON.stringify(data)}`
++            }
++
++            const messageUuid = Array.isArray(data.message_uuid) ? data.message_uuid.join(', ') : data.message_uuid
++            return `Successfully queued SMS to ${this.dst}. Message UUID: ${messageUuid}`
++        } catch (error) {
++            return `Failed to send SMS: ${error}`
++        }
++    }
++}
++
++class PlivoSendSMS_Tools implements INode {
++    label: string
++    name: string
++    version: number
++    type: string
++    icon: string
++    category: string
++    description: string
++    baseClasses: string[]
++    credential: INodeParams
++    inputs: INodeParams[]
++
++    constructor() {
++        this.label = 'Plivo Send SMS'
++        this.name = 'plivoSendSMS'
++        this.version = 1.0
++        this.type = 'PlivoSendSMS'
++        this.icon = 'plivo.png'
++        this.category = 'Tools'
++        this.description = 'Send an SMS message using the Plivo Messaging API'
++        this.baseClasses = [this.type, ...getBaseClasses(PlivoSendSMSTool)]
++        this.credential = {
++            label: 'Connect Credential',
++            name: 'credential',
++            type: 'credential',
++            credentialNames: ['plivoApi']
++        }
++        this.inputs = [
++            {
++                label: 'From Number',
++                name: 'src',
++                type: 'string',
++                placeholder: '+14150000002',
++                description: 'The sender ID, which can be a Plivo phone number, a short code, or an alphanumeric sender ID where permitted'
++            },
++            {
++                label: 'To Number',
++                name: 'dst',
++                type: 'string',
++                placeholder: '+14150000001',
++                description: 'Destination number in E.164 format. Multiple recipients are joined with a < character'
++            }
++        ]
++    }
++
++    async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
++        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
++        const authId = getCredentialParam('authId', credentialData, nodeData)
++        const authToken = getCredentialParam('authToken', credentialData, nodeData)
++        const src = nodeData.inputs?.src as string
++        const dst = nodeData.inputs?.dst as string
++
++        if (!authId || !authToken) {
++            throw new Error('Plivo Auth ID and Auth Token are required')
++        }
++        if (!src) {
++            throw new Error('From Number is required')
++        }
++        if (!dst) {
++            throw new Error('To Number is required')
++        }
++
++        return new PlivoSendSMSTool(authId, authToken, src, dst)
++    }
++}
++
++module.exports = { nodeClass: PlivoSendSMS_Tools }
+diff --git a/packages/components/nodes/tools/Plivo/PlivoSendSMS/plivo.png b/packages/components/nodes/tools/Plivo/PlivoSendSMS/plivo.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b5fd0f5bead555335d335ae6599b9781c58758e
+GIT binary patch
+literal 2559
+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
+VevEh$)7t<5002ovPDHLkV1l}I1uFmm
+
+literal 0
+HcmV?d00001
+
+
+From bb351f97aadab0eb677131f8ed4e09e10dd65b3d Mon Sep 17 00:00:00 2001
+From: sarveshpatil-plivo <sarvesh.patil@plivo.com>
+Date: Thu, 6 Aug 2026 17:45:59 +0530
+Subject: [PATCH 2/2] test: add unit tests for Plivo tool nodes
+
+---
+ .../Plivo/PlivoMakeCall/PlivoMakeCall.test.ts | 98 +++++++++++++++++++
+ .../Plivo/PlivoSendSMS/PlivoSendSMS.test.ts   | 88 +++++++++++++++++
+ 2 files changed, 186 insertions(+)
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.test.ts
+ create mode 100644 packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.test.ts
+
+diff --git a/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.test.ts b/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.test.ts
+new file mode 100644
+index 00000000000..b59d5ff2e96
+--- /dev/null
++++ b/packages/components/nodes/tools/Plivo/PlivoMakeCall/PlivoMakeCall.test.ts
+@@ -0,0 +1,98 @@
++const { nodeClass: PlivoMakeCall_Tools } = require('./PlivoMakeCall')
++import axios from 'axios'
++import { INodeData } from '../../../../src/Interface'
++
++jest.mock('../../../../src/utils', () => ({
++    getBaseClasses: jest.fn(() => ['Tool']),
++    getCredentialData: jest.fn(async () => ({ authId: 'MATESTAUTHID', authToken: 'test_auth_token' })),
++    getCredentialParam: jest.fn((name: string, credentialData: any) => credentialData[name])
++}))
++
++jest.mock('axios')
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++function createNodeData(inputs: any): INodeData {
++    return {
++        id: 'test-node',
++        label: 'Plivo Make Call',
++        name: 'plivoMakeCall',
++        type: 'PlivoMakeCall',
++        icon: 'plivo.png',
++        version: 1.0,
++        category: 'Tools',
++        baseClasses: ['PlivoMakeCall', 'Tool'],
++        credential: 'cred-1',
++        inputs
++    } as INodeData
++}
++
++const validInputs = {
++    from: '+14150000002',
++    to: '+14150000001',
++    answerUrl: 'https://example.com/answer'
++}
++
++describe('PlivoMakeCall', () => {
++    let nodeClass: any
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++        nodeClass = new PlivoMakeCall_Tools()
++    })
++
++    describe('init', () => {
++        it('throws when the From Number is missing', async () => {
++            await expect(nodeClass.init(createNodeData({ answerUrl: 'https://example.com/answer' }), '', {})).rejects.toThrow(
++                'From Number is required'
++            )
++        })
++
++        it('throws when the Answer URL is missing', async () => {
++            await expect(nodeClass.init(createNodeData({ from: '+14150000002' }), '', {})).rejects.toThrow('Answer URL is required')
++        })
++
++        it('returns the tool when the inputs are valid', async () => {
++            const tool = await nodeClass.init(createNodeData(validInputs), '', {})
++            expect(tool).toBeDefined()
++            expect(tool.name).toBe('plivo_make_call')
++        })
++    })
++
++    describe('_call', () => {
++        it('posts to the Plivo Voice API and returns the request UUID on 201', async () => {
++            mockedAxios.post.mockResolvedValue({
++                status: 201,
++                data: { request_uuid: 'req-123', api_id: 'api-1', message: 'call fired' }
++            })
++
++            const tool = await nodeClass.init(createNodeData(validInputs), '', {})
++            const result = await tool._call('+14150000009')
++
++            expect(mockedAxios.post).toHaveBeenCalledTimes(1)
++            const [url, body, config] = mockedAxios.post.mock.calls[0] as any[]
++            expect(url).toBe('https://api.plivo.com/v1/Account/MATESTAUTHID/Call/')
++            expect(body).toEqual({ from: '+14150000002', to: '+14150000009', answer_url: 'https://example.com/answer' })
++            expect(config.auth).toEqual({ username: 'MATESTAUTHID', password: 'test_auth_token' })
++            expect(result).toContain('req-123')
++        })
++
++        it('falls back to the node To Number when the tool input is empty', async () => {
++            mockedAxios.post.mockResolvedValue({ status: 201, data: { request_uuid: 'req-456' } })
++
++            const tool = await nodeClass.init(createNodeData(validInputs), '', {})
++            await tool._call('')
++
++            const [, body] = mockedAxios.post.mock.calls[0] as any[]
++            expect(body.to).toBe('+14150000001')
++        })
++
++        it('returns a failure message on a non-201 response', async () => {
++            mockedAxios.post.mockResolvedValue({ status: 400, data: { error: 'invalid number' } })
++
++            const tool = await nodeClass.init(createNodeData(validInputs), '', {})
++            const result = await tool._call('+14150000009')
++
++            expect(result).toContain('Failed to place call')
++        })
++    })
++})
+diff --git a/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.test.ts b/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.test.ts
+new file mode 100644
+index 00000000000..310bd3385da
+--- /dev/null
++++ b/packages/components/nodes/tools/Plivo/PlivoSendSMS/PlivoSendSMS.test.ts
+@@ -0,0 +1,88 @@
++const { nodeClass: PlivoSendSMS_Tools } = require('./PlivoSendSMS')
++import axios from 'axios'
++import { INodeData } from '../../../../src/Interface'
++
++jest.mock('../../../../src/utils', () => ({
++    getBaseClasses: jest.fn(() => ['Tool']),
++    getCredentialData: jest.fn(async () => ({ authId: 'MATESTAUTHID', authToken: 'test_auth_token' })),
++    getCredentialParam: jest.fn((name: string, credentialData: any) => credentialData[name])
++}))
++
++jest.mock('axios')
++const mockedAxios = axios as jest.Mocked<typeof axios>
++
++function createNodeData(inputs: any): INodeData {
++    return {
++        id: 'test-node',
++        label: 'Plivo Send SMS',
++        name: 'plivoSendSMS',
++        type: 'PlivoSendSMS',
++        icon: 'plivo.png',
++        version: 1.0,
++        category: 'Tools',
++        baseClasses: ['PlivoSendSMS', 'Tool'],
++        credential: 'cred-1',
++        inputs
++    } as INodeData
++}
++
++describe('PlivoSendSMS', () => {
++    let nodeClass: any
++
++    beforeEach(() => {
++        jest.clearAllMocks()
++        nodeClass = new PlivoSendSMS_Tools()
++    })
++
++    describe('init', () => {
++        it('throws when the From Number is missing', async () => {
++            await expect(nodeClass.init(createNodeData({ dst: '+14150000001' }), '', {})).rejects.toThrow('From Number is required')
++        })
++
++        it('throws when the To Number is missing', async () => {
++            await expect(nodeClass.init(createNodeData({ src: '+14150000002' }), '', {})).rejects.toThrow('To Number is required')
++        })
++
++        it('returns the tool when the inputs are valid', async () => {
++            const tool = await nodeClass.init(createNodeData({ src: '+14150000002', dst: '+14150000001' }), '', {})
++            expect(tool).toBeDefined()
++            expect(tool.name).toBe('plivo_send_sms')
++        })
++    })
++
++    describe('_call', () => {
++        it('posts to the Plivo Messages API and returns the message UUID on 202', async () => {
++            mockedAxios.post.mockResolvedValue({
++                status: 202,
++                data: { message_uuid: ['abc-123'], api_id: 'api-1', message: 'message(s) queued' }
++            })
++
++            const tool = await nodeClass.init(createNodeData({ src: '+14150000002', dst: '+14150000001' }), '', {})
++            const result = await tool._call('hello there')
++
++            expect(mockedAxios.post).toHaveBeenCalledTimes(1)
++            const [url, body, config] = mockedAxios.post.mock.calls[0] as any[]
++            expect(url).toBe('https://api.plivo.com/v1/Account/MATESTAUTHID/Message/')
++            expect(body).toEqual({ src: '+14150000002', dst: '+14150000001', text: 'hello there', type: 'sms' })
++            expect(config.auth).toEqual({ username: 'MATESTAUTHID', password: 'test_auth_token' })
++            expect(result).toContain('abc-123')
++        })
++
++        it('returns a failure message on a non-202 response', async () => {
++            mockedAxios.post.mockResolvedValue({ status: 400, data: { error: 'invalid destination' } })
++
++            const tool = await nodeClass.init(createNodeData({ src: '+14150000002', dst: '+14150000001' }), '', {})
++            const result = await tool._call('hi')
++
++            expect(result).toContain('Failed to send SMS')
++        })
++
++        it('does not call the API when the message text is empty', async () => {
++            const tool = await nodeClass.init(createNodeData({ src: '+14150000002', dst: '+14150000001' }), '', {})
++            const result = await tool._call('   ')
++
++            expect(mockedAxios.post).not.toHaveBeenCalled()
++            expect(result).toContain('message text is empty')
++        })
++    })
++})
