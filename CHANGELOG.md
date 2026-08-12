@@ -28,6 +28,33 @@ first.
 
 ---
 
+## [Unreleased]
+
+### Changed — Node.js 22 is now the supported runtime
+
+The project standardised on **Node.js 22**. Previously five different Node versions were declared
+across eleven locations — `20`, `20.20.2`, `22`, `24` and `24.15.0` — including a `.nvmrc` and
+`engines.node` asking for a version this project's own notes record as unbuildable
+(`better-sqlite3` fails to compile under node-gyp on Node 24). All eleven are now aligned:
+`.nvmrc`, both `engines.node` fields, all three Dockerfile `ARG NODE_VERSION` defaults, the CI test
+matrix, the package publish workflows, and both image-build workflow defaults.
+
+**This changes the runtime shipped in images from Node 20 to Node 22**, and `engines.node: ^22`
+will now refuse an install on Node 20 or 24. Contributors should run `nvm use` to pick up
+`v22.23.2`.
+
+Rationale and the full before/after table:
+`docs/decisions/ADR-0004-node-version-conflict.md`.
+
+### Fixed — the worker image could not be built
+
+`docker/worker/Dockerfile` pinned `FROM node:24-alpine` **hardcoded, with no build argument**, so
+CI could not override it the way it overrode the other two Dockerfiles. Since Node 24 cannot
+compile `better-sqlite3`, the worker image could not build at all. It now takes
+`ARG NODE_VERSION=22` like the others.
+
+---
+
 ## [3.1.4-fw10] — 2026-08-10
 
 **A sweep of all 116 upstream security advisories against this tree.** Four were still present. Two

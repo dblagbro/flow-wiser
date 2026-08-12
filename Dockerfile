@@ -1,7 +1,7 @@
 # Build the monorepo from source.
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22 \
 #     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 #
@@ -19,11 +19,16 @@
 # It is kept for reproducing and diagnosing the upstream images, not for
 # publishing ours.
 
-# Node 20, not 24. better-sqlite3 fails to compile under node-gyp on Node 24
-# ("gyp ERR! not ok", node-gyp 8.4.1), and every published flowiseai/flowise image
-# actually runs v20.20.2 -- so the 24 here could never have produced a working build.
-# Same defect as docker/Dockerfile's ARG NODE_VERSION=24, fixed there in an earlier commit.
-ARG NODE_VERSION=20
+# Node 22 -- the supported version for this project. See
+# docs/decisions/ADR-0004-node-version-conflict.md (Accepted 2026-08-11).
+#
+# History: upstream defaulted this to 24, which cannot build -- better-sqlite3 fails
+# to compile under node-gyp on Node 24 ("gyp ERR! not ok", node-gyp 8.4.1). It was
+# then set to 20 to match what every published flowiseai/flowise image actually ran
+# (v20.20.2). Node 20 is now near end of support, so the project standardised on 22.
+#
+# This value must stay in step with .nvmrc, `engines.node`, and the CI Node matrix.
+ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-alpine
 
 # Install system dependencies and build tools
@@ -110,7 +115,7 @@ RUN chown -R node:node .
 # The bin has to work, not just exist.
 RUN cd / && flowise --version
 
-# Switch to non-root user (node user already exists in node:20-alpine)
+# Switch to non-root user (the node user already exists in the node:*-alpine base)
 USER node
 
 EXPOSE 3000
