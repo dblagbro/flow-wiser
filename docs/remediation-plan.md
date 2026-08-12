@@ -110,17 +110,50 @@ reinstall. Re-verified through the husky path: known-bad rejected (exit 1), know
 This is a textbook G1 recurrence — a verified control silently deactivated by an unrelated routine
 command. It is why RM-11 (an automated parity/liveness check) matters more than the one-time fix.
 
-### RM-04 · CI workflow execution is unverified on this branch
+### RM-04 · `Proprietary Path Guard` has never run and cannot run — CONFIRMED
 
-**Status:** OPEN · **Opened:** 2026-08-11
+**Status:** OPEN · **Confirmed 2026-08-11** · **Was: "unverified". Now: verified as broken.**
 
-`cleanroom-guard.yml`, `proprietary-path-guard.yml` and `release-gate.yml` exist, but whether they
-**ran on `ffae9952`** has not been confirmed. `PROCESS-GAPS.md` G1 records `Proprietary Path Guard`
-skipping 57/57 runs because it was gated `if: github.repository == 'FlowiseAI/Flowise'` — inherited
-from upstream and structurally incapable of running in a fork.
+Observed directly by pushing `ops/methodology-and-node-22` and reading the run list:
 
-**Action:** inspect recent runs; confirm each required check executed on this branch and that
-`skipped` is not being counted as `success`.
+| Workflow                 | Result         | Duration                  |
+| ------------------------ | -------------- | ------------------------- |
+| `Clean-room guard`       | ✅ **success** | 17s — genuinely executing |
+| `Proprietary Path Guard` | ❌ **skipped** | 1s                        |
+
+**Skipped on every run in the visible history** — this branch push, the `main` push 21h earlier,
+and the `apache2-only` pull request. Never once executed.
+
+**Cause, still present at `proprietary-path-guard.yml:34`:**
+
+```yaml
+if: github.repository == 'FlowiseAI/Flowise'
+```
+
+This is the **identical line** `PROCESS-GAPS.md` G1 identified as the cause of 57/57 skips. G1's
+corrective action rewrote `cleanroom-guard.yml` — which now correctly runs on `branches: ['**']`
+and passes — but **`proprietary-path-guard.yml` was never fixed.** It is upstream's own workflow,
+inherited by the fork, and structurally incapable of ever running here: the condition can never be
+true in `dblagbro/flow-wiser`.
+
+G1's own lesson applies to G1's own remediation: fixing one control and assuming its sibling was
+covered is how the condition survived. The guard has sat in the workflow list looking like
+enforcement for the entire life of the fork.
+
+**Mitigating:** `cleanroom-guard.yml` does run and does check the tree, so the clean-room property
+is not unguarded in CI. The local `.githooks/pre-commit` chain also runs now (RM-03). The exposure
+is that a workflow named as a control contributes nothing.
+
+**Action — requires authorization (`AGENTS.md §11` — changing a CI guard):**
+
+1. Either delete `proprietary-path-guard.yml` as dead inherited weight, or change the condition to
+   `github.repository == 'dblagbro/flow-wiser'` (or drop the `if:` entirely).
+2. **Verify both halves before trusting it:** push a branch containing a deliberate violation and
+   confirm the run **fails**; push a clean branch and confirm it **passes**. A guard observed only
+   passing has not been tested.
+3. Audit every remaining workflow for the same inherited-condition pattern.
+4. Confirm `skipped` is not counted as `success` anywhere a gate aggregates results (CI-01/CI-02 in
+   `bug-log.md` touch this).
 
 ### RM-05 · `.husky/pre-push` protects nothing here
 
@@ -283,6 +316,113 @@ scoped to catch exactly this class of silent divergence.
 **Standing lesson:** `.gitignore` protects git and nothing else. Every tool that globs the working
 tree — linters, formatters, bundlers, test runners, doc generators, secret scanners — needs its own
 exclusion, and each is a separate opportunity to read a secret.
+
+### RM-17 · `pnpm dedupe` breaks the build — do not run it
+
+**Status:** ⛔ **CLOSED 2026-08-11 as WON'T DO** · **Standing caution, not open work**
+
+`pnpm dedupe` on `main` @ `24ac3f92` **breaks `flowise-components`**. Do not run it, and do not
+accept a PR that does, however attractive the lockfile reduction looks.
+
+**What it promises.** 611 lockfile entries removed, 133 added (net −478); `pnpm-lock.yaml`
+47,202 → 41,542 lines (**−12%**); `nanoid` consolidated from `3.3.17` + `3.3.18` to a single
+`3.3.18`; no security pin touched (`vm2@3.11.5`, `multer@2.2.0`, `basic-ftp@5.2.1`, `tar-fs@3.1.1`
+all intact). `pnpm install --frozen-lockfile` still passes afterwards.
+
+**What it costs.** `pnpm build` fails at `flowise-components` with four `TS2550` errors:
+
+```text
+nodes/agents/ConversationalAgent/ConversationalAgent.ts(240,39): error TS2550:
+  Property 'at' does not exist on type '(BaseMessage<...> | BaseMessagePromptTemplate<...>)[]'.
+  Try changing the 'lib' compiler option to 'es2022' or later.
+```
+
+…plus the same in `ConversationalRetrievalToolAgent`, `ToolAgent` and `LLMChain`.
+
+**Controlled test — the lockfile is the only variable.** Same worktree, same Node v22.23.2, same
+pnpm 10.26.0, `packages/components` build:
+
+| Lockfile                   | Result       |
+| -------------------------- | ------------ |
+| merged `main` (`24ac3f92`) | ✅ exit 0    |
+| after `pnpm dedupe`        | ❌ TS2550 ×4 |
+
+Restoring the pre-dedupe lockfile restores the build. Toggled both ways.
+
+**Two hypotheses tested and discarded, recorded so they are not re-investigated:**
+
+-   _"dedupe consolidated LangChain to incompatible types."_ **No** — `@langchain/core@1.1.20` and
+    `langchain@0.3.6`/`1.2.18` are identical before and after.
+-   _"Node 22 cannot build `flowise-components`."_ **No** — it builds fine on Node 22 with the
+    pre-dedupe lockfile. This exonerates ADR-0004.
+
+**Probable mechanism, unconfirmed.** pnpm keys packages with their peer resolutions
+(`@langchain/core@1.1.20(openai@x)`). Dedupe collapses variants of the same version that carry
+_different resolved types_, so `packages/components` ends up type-checking against a different
+instance. `tsconfig` sets `lib: ["ES2020","ES2021.String"]`, under which `Array.prototype.at`
+does not exist — one variant evidently supplied a definition that satisfied it and the survivor
+does not. Confirming this is not required to act on the finding.
+
+**If the `nanoid` duplication is worth removing**, do it narrowly: a `pnpm.overrides` entry
+pinning `nanoid` to `3.3.18`. That is the project's established pattern (see `PROJECT-LOG.md` on
+the `@anupamme` CVE adoptions), touches one package instead of 478, and can be verified in
+isolation. Do not reach for `dedupe` to achieve it.
+
+**Wider lesson.** `--frozen-lockfile` passing does **not** mean a lockfile change is safe. It
+proves the lockfile agrees with the manifests; it says nothing about whether the resolved tree
+still type-checks. Any lockfile-wide operation needs `pnpm build` **and** `pnpm test` before it is
+proposed, not just an install.
+
+### RM-18 · `main`'s tree has never been built on Node 22 — and a local attempt to check was invalid
+
+**Status:** OPEN · **Opened:** 2026-08-12 · **Gap, plus a retraction**
+
+**The gap.** Node 22 is verified in CI **only for the `apache2-only` line** — PR #15's Node CI
+passed on `22.23.2`. `main`'s CI matrix is still `24.15.0`, so **no clean environment has ever
+built `main`'s tree on Node 22.** When the Node 22 change reaches `main`, that will be the first
+time. Do not assume it works.
+
+**Action:** before `apache2-only` merges to `main`, run `main`'s tree through CI with the Node 22
+matrix — **in CI, on runner-local disk**, not on a developer machine. Extend RM-12 (image build
+and boot) to cover it.
+
+**Related, and solid:** `@types/node@26.2.0` entered `main` at `69b281db` (the nanoid merge). It
+is absent from `afd88ac6` (fw10) and absent from the `apache2-only` line, which carries every
+other `@types/node` from `12.20.55` to `24.13.2`. This was part of the ~141 duplicate versions the
+dependabot review assessed as benign — that review checked they were not _new packages_ and that
+the security pins held, but **did not check whether any of them changed type resolution.** A new
+major `@types/node` plausibly can. Impact **unverified**; verify it in the same CI run.
+
+---
+
+**The retraction.** An earlier claim in this session — _"`main`'s server package fails to build on
+Node 22"_ — is **withdrawn**. It was observed, but the environment producing it was invalid, and
+which failures were real can no longer be separated from which were artifacts.
+
+Three methodology errors, recorded so the same evidence is not trusted later:
+
+| Error                                                                                                                            | What it produced                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ran a foreground `pnpm --filter flowise build` **while** a background `pnpm build && pnpm test` was running on the same worktree | `flowise#build` failure and ~10 test failures. Exposed by impossible timings — suites reporting **13,586 s** and **18,023 s** in a run lasting minutes. Two `tsc` processes reading each other's half-written `dist/`                                                    |
+| `pnpm --filter <pkg> build` instead of `pnpm build`                                                                              | `TS2307 Cannot find module 'flowise-components'`. `--filter` runs that package's own `tsc` and **does not build its dependencies**; turbo's `dependsOn: ["^build"]` is what orders them                                                                                  |
+| Assumed `TURBO_CACHE_DIR` isolated the cache                                                                                     | turbo 1.10 **ignores** it and caches in `node_modules/.cache/turbo`. Reported `3 cached, 5 total` on a freshly wiped checkout, reusing artifacts across three different commits. Each rerun failed in a _different_ package — the signature of stale cache, not a defect |
+
+**Rules taken from this, applicable to any future verification here:**
+
+1. **One build at a time per worktree.** Never run a second build or test against a tree that
+   already has one in flight.
+2. **Always `pnpm build`**, never `pnpm --filter … build`, when the result is meant to prove
+   anything — only the full run respects build order.
+3. **Trust nothing after a cache-affecting change** unless `node_modules/.cache/turbo` was removed;
+   setting `TURBO_CACHE_DIR` does not do it.
+4. **One commit per worktree.** Checking out several commits into one worktree, with installs and
+   `dist/` wipes between, produces results attributable to nothing.
+5. **CI is the authoritative signal.** A local run on this NFS-mounted, multi-checkout machine is
+   a hint. When local and CI disagree, CI wins — and when a local result would change a decision,
+   reproduce it in CI before acting.
+
+The `pnpm dedupe` finding (RM-17) is **unaffected**: it was isolated, single-variable, toggled both
+ways, and completed before any of the above.
 
 ### RM-06 · `STATUS.md` contradicts the tree — REVIEW REQUIRED
 

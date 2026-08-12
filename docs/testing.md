@@ -155,3 +155,27 @@ unaffected because they do not start the CLI.
 Nothing functional was tested. No API, security, UI, ops, data or infrastructure domain was
 exercised; no instance was started. A green build is not a working release — see
 [`release-readiness.md`](release-readiness.md) and RM-12.
+
+## Verifying locally — read before trusting a local run
+
+This machine will produce convincing wrong answers if a run is set up carelessly. Every rule below
+was bought with a false result (RM-18).
+
+-   **One build at a time per worktree.** A second build against a tree that already has one running
+    makes two `tsc` processes read each other's half-written `dist/`. It fails in plausible places.
+    The tell is timings: suites reported **13,586 s** and **18,023 s** in a run lasting minutes.
+-   **Use `pnpm build`, never `pnpm --filter <pkg> build`,** when the result is meant to prove
+    something. `--filter` runs that package's own `tsc` without building its dependencies; only the
+    full turbo run honours `dependsOn: ["^build"]`.
+-   **`TURBO_CACHE_DIR` does not isolate turbo 1.10.** It caches in `node_modules/.cache/turbo`.
+    Remove that directory, or a "clean" run silently reuses artifacts from another commit.
+-   **One commit per worktree.** Several checkouts in one worktree, with installs and `dist/` wipes
+    between, yields results attributable to nothing.
+-   **`--frozen-lockfile` passing is not proof a lockfile change is safe.** It proves the lockfile
+    agrees with the manifests; it says nothing about whether the tree still type-checks. Any
+    lockfile-wide change needs `pnpm build` **and** `pnpm test` (RM-17).
+-   **CI is authoritative.** Local runs here are hints. When they disagree, CI wins; when a local
+    result would change a decision, reproduce it in CI first.
+
+Useful for isolation: a **fresh** git worktree on local disk (`/home/dblagbro`), one commit, one
+install, one build — then delete it. Do not reuse it for a second commit.
