@@ -69,7 +69,7 @@
         "@uiw/react-codemirror": "^4.21.21",
         "axios": "1.15.0",
         "clsx": "^1.1.1",
-        "dompurify": "^3.2.6",
+        "dompurify": "^3.4.13",
         "dotenv": "^16.0.0",
         "flowise-embed": "latest",
         "flowise-embed-react": "latest",
