@@ -71,6 +71,17 @@ jobs:
                   sudo apt-get update -qq
                   sudo apt-get install -y --no-install-recommends libopenblas-dev liblapack-dev
 
+            # Runs before install so a divergence is reported in seconds rather than behind a
+            # seven-minute build. It needs no dependencies -- plain Node reading files.
+            #
+            # ADR-0004 exists because ten locations carried five different Node versions, one of
+            # them hardcoded with no build arg so CI could not override it. Those were aligned by
+            # hand; per ADR-0003 that is not a control, because nothing fails when the property
+            # stops holding. This is the control (RM-11). It also checks the three secret-ignore
+            # lists agree, after `pnpm lint` opened a credential export (RM-16).
+            - name: Assert version and ignore-list parity
+              run: node scripts/assert-version-parity.js
+
             - run: pnpm install
             - run: pnpm lint
             - run: pnpm build
