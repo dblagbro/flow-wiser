@@ -109,10 +109,11 @@ protects nothing in this repository. Flagged, not changed: it affects push behav
 
 ## Drift
 
-1. **`STATUS.md` (2026-08-05) contradicts the tree.** It states the auth/RBAC work is "not
-   started", entities are "not registered", "no route file points at the new RBAC", and the 127
-   licensed files are "not deleted". All four are contradicted by the observations above. It is
-   public-facing and carries licensing claims → **REVIEW REQUIRED**, human rewrite.
+1. ~~**`STATUS.md` contradicts the tree.**~~ **WITHDRAWN 2026-08-12 — this drift did not exist.**
+   The claims quoted here ("not started", "not registered", "not deleted") came from a **stale
+   docs-only copy dated 2026-08-05** that occupied the working directory before the repository
+   was materialized — not from `docs/STATUS.md`. The real file is dated 2026-08-09 and says the
+   opposite: released, Apache-2.0-only, licensed files deleted, RBAC shipped. See RM-06.
 2. **Migration counts differ across engines** (53/55/57/56) — unverified whether legitimate.
 3. **`testing.md`, `bug-log.md`, `release-readiness.md` are pinned to the `3.1.4-fw8` QA run**
    while the tree is `3.1.4-fw10`. Their findings may be closed, superseded or still open;

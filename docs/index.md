@@ -27,15 +27,15 @@ Documents fall into two kinds:
 
 ## Product and architecture
 
-| Topic                                                           | Authoritative                          | Kind                              |
-| --------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
-| Purpose, standing requirements, what is in and out of scope     | [`product.md`](product.md)             | standing                          |
-| Architecture, module boundaries, dependency direction           | [`architecture.md`](architecture.md)   | standing                          |
-| Structural map — entry points, routes, entities, queues, config | [`project-map.md`](project-map.md)     | standing                          |
-| What is actually true right now — shipped state                 | [`current-state.md`](current-state.md) | standing                          |
-| Significant decisions                                           | [`decisions/`](decisions/)             | point-in-time                     |
-| Narrative history, findings, rejected approaches                | [`PROJECT-LOG.md`](PROJECT-LOG.md)     | append-only                       |
-| Public-facing status narrative                                  | [`STATUS.md`](STATUS.md)               | standing ⚠️ **stale — see below** |
+| Topic                                                           | Authoritative                          | Kind          |
+| --------------------------------------------------------------- | -------------------------------------- | ------------- |
+| Purpose, standing requirements, what is in and out of scope     | [`product.md`](product.md)             | standing      |
+| Architecture, module boundaries, dependency direction           | [`architecture.md`](architecture.md)   | standing      |
+| Structural map — entry points, routes, entities, queues, config | [`project-map.md`](project-map.md)     | standing      |
+| What is actually true right now — shipped state                 | [`current-state.md`](current-state.md) | standing      |
+| Significant decisions                                           | [`decisions/`](decisions/)             | point-in-time |
+| Narrative history, findings, rejected approaches                | [`PROJECT-LOG.md`](PROJECT-LOG.md)     | append-only   |
+| Public-facing status narrative                                  | [`STATUS.md`](STATUS.md)               | standing      |
 
 **UI/design:** there is deliberately no `design.md`. A standing product requirement is that
 `packages/ui` stays essentially unchanged, so there is no design surface this project owns.
@@ -97,12 +97,12 @@ If that changes, add `design.md` and list it here.
 
 Recorded rather than silently corrected, because these touch product and licensing claims.
 
-1. **`STATUS.md` is materially stale.** Dated 2026-08-05, it describes the auth/RBAC replacement
-   as "not started", "not wired", and the commercially-licensed files as "not deleted". As of
-   `apache2-only` @ `ffae9952` the observable tree contradicts all three — see
-   [`current-state.md`](current-state.md) for what was actually verified. `STATUS.md` is
-   public-facing and contains licensing claims, so it needs a human to rewrite it.
-   Tracked in [`remediation-plan.md`](remediation-plan.md).
+1. ~~**`STATUS.md` is materially stale.**~~ **WITHDRAWN 2026-08-12 — this was raised in error.**
+   The quoted phrases came from a **stale docs-only copy dated 2026-08-05** that occupied the
+   working directory before the repository was checked out over it, not from `docs/STATUS.md`.
+   The real file is dated 2026-08-09 and records the opposite: released, Apache-2.0-only, licensed
+   files deleted, RBAC shipped. It needs no rewrite, and no licensing question was ever open.
+   See RM-06 in [`remediation-plan.md`](remediation-plan.md) for how the error propagated.
 
 2. **`testing.md`, `bug-log.md` and `release-readiness.md` are pinned to the `3.1.4-fw8` QA run**
    while `package.json` reads `3.1.4-fw10`. They are treated as authoritative _and_ standing:
