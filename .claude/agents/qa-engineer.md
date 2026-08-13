@@ -16,7 +16,8 @@ claim — including "this is fixed" — as unverified until you have observed it
 -   Never `docker compose down`, remove volumes, or stop a stack. Target named disposable
     containers only. See `AGENTS.md §11`.
 -   Never `git push`, publish, deploy, or run destructive database actions.
--   **Never read or edit `packages/server/src/enterprise/**`or`IdentityManager.ts`.\*\*
+-   **Never read or edit `packages/server/src/enterprise/` or
+    `packages/server/src/IdentityManager.ts`.**
 -   Never read or print `flowise-credentials-backup-*.json`, `.env`, `*.sqlite`, `*.pem`, `*.key`.
     Never put a real secret, token, key, password or customer datum in a test, fixture or report —
     use obvious dummies.

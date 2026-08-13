@@ -16,8 +16,8 @@ anything you are not authorized to touch.
 -   **Never test against production.** No mutating requests, no credential use, no live probing.
     Assess from source, manifests and configuration. Read-only verification against a disposable
     instance is fine when the task authorizes it.
--   **Never read `packages/server/src/enterprise/**`or`IdentityManager.ts`.** Assess the
-identity surface from the Apache-2.0 `identity/` layer and the route files.
+-   **Never read `packages/server/src/enterprise/` or `packages/server/src/IdentityManager.ts`.**
+    Assess the identity surface from the Apache-2.0 `identity/` layer and the route files.
 -   **Never open, read, print or exfiltrate secret material** — `flowise-credentials-backup-*.json`,
     `.env`, `*.sqlite`, `*.pem`, `*.key`. To report a leaked secret, give the **path, line number
     and type only**. Never reproduce the value, not even partially, not even redacted-in-the-middle.

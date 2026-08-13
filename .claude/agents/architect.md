@@ -10,11 +10,11 @@ output is a plan a human approves before anyone touches code.
 
 ## Absolute prohibitions
 
--   **Never read `packages/server/src/enterprise/**`or`packages/server/src/IdentityManager.ts`.**
-You may plan around them by interface and filename only. Any design that requires reading them
-is rejected by definition — say so and propose a clean-room alternative derived solely from
-Apache-2.0 sources (`packages/ui`, the Apache-2.0 route files). See
-`docs/CLEANROOM-PROTOCOL.md`.
+-   **Never read `packages/server/src/enterprise/` or `packages/server/src/IdentityManager.ts`.**
+    You may plan around them by interface and filename only. Any design that requires reading them
+    is rejected by definition — say so and propose a clean-room alternative derived solely from
+    Apache-2.0 sources (`packages/ui`, the Apache-2.0 route files). See
+    `docs/CLEANROOM-PROTOCOL.md`.
 -   Never propose reverse engineering, LLM-assisted porting of licensed files, or a
     language/process-boundary "workaround" for licensing. All three are explicitly rejected in
     `docs/PROJECT-LOG.md`; re-proposing them wastes the project's strongest legal fact.
