@@ -97,7 +97,7 @@ Context: [ADR-0004](decisions/ADR-0004-node-version-conflict.md).
 | `node scripts/assert-test-discovery.js` | ✅ **PASS**    | **156 / 156** discovered, exit 0 — no suite silently unrun                                  |
 | `pnpm lint`                             | ✅ **PASS**    | exit 0 — **0 errors**, 16 pre-existing warnings                                             |
 | Built CLI starts                        | ❌ **TIMEOUT** | see RM-14                                                                                   |
-| Docker build / boot on Node 22          | ⬜ not yet run | RM-12                                                                                       |
+| Docker build **and boot** on Node 22    | ✅ **PASS**    | release image: builds, boots, `/api/v1/ping` 200, reports `3.1.4-fw10`, healthy — see RM-12 |
 
 **Lint found a live secret-exposure problem before it found any code problem.** `pnpm lint` globs
 `**/*.json`, matched the credential export in the working directory and **opened it** — blocked
