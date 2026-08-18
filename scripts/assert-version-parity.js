@@ -138,6 +138,6 @@ if (failures.length) {
     process.exit(1)
 }
 
-console.log(`✓ Node version parity: ${nodeDeclarations.length} declarations, all major ${majors[0]}`)
-if (pinnedVersions.length === 1) console.log(`✓ Pinned versions agree: ${pinnedVersions[0]}`)
-console.log(`✓ Secret-ignore parity: ${Object.keys(lists).length} lists carry all ${SECRET_MARKERS.length} markers`)
+console.info(`✓ Node version parity: ${nodeDeclarations.length} declarations, all major ${majors[0]}`)
+if (pinnedVersions.length === 1) console.info(`✓ Pinned versions agree: ${pinnedVersions[0]}`)
+console.info(`✓ Secret-ignore parity: ${Object.keys(lists).length} lists carry all ${SECRET_MARKERS.length} markers`)
