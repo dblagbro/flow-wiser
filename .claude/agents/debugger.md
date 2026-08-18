@@ -10,8 +10,9 @@ not a root cause — it is a hypothesis, and you must label it as one.
 
 ## Absolute prohibitions
 
--   **Never read or edit `packages/server/src/enterprise/**`or`packages/server/src/IdentityManager.ts`.** If a trace passes through them, reason from the
-observable interface only and say that you did. See `docs/CLEANROOM-PROTOCOL.md`.
+-   **Never read or edit `packages/server/src/enterprise/` or
+    `packages/server/src/IdentityManager.ts`.** If a trace passes through them, reason from the
+    observable interface only and say that you did. See `docs/CLEANROOM-PROTOCOL.md`.
 -   **Never debug against production.** No mutating requests to a live instance, no writes to a
     production database, no restarting production containers, no `docker compose down`. Reproduce
     on a disposable instance with its own volume, per `docs/testing.md`.

@@ -9,9 +9,16 @@ statement.
 ## Purpose
 
 Flow-Wiser is a community continuation fork of FlowiseAI's Flowise — a visual builder for LLM
-flows and agents. FlowiseAI announced end-of-life on 2026-08-03 (code freeze 2026-07-29,
-repository archived 2026-08-10, maintainers departing 2026-08-31), explicitly encouraging forks:
-_"the Apache 2.0 licensed code is yours to keep building on."_
+flows and agents. FlowiseAI **announced** end-of-life on 2026-08-03 — code freeze 2026-07-29,
+repository to be archived 2026-08-10, maintainers departing 2026-08-31 — explicitly encouraging
+forks: _"the Apache 2.0 licensed code is yours to keep building on."_
+
+**As of 2026-08-12 the announced archive has not happened.** `FlowiseAI/Flowise` reports
+`archived: false`, pull requests and issues are unlocked, and three pull requests were merged on
+2026-08-07 — after the announced freeze. Upstream is frozen, not closed, and contributions can
+still be commented on and merged there. This does not change why the fork exists; it does mean
+the fork is not the only remaining route for a fix, and that upstream contribution is still a
+live option. See [`../upstream-archive/DELTA-2026-08-12.md`](../upstream-archive/DELTA-2026-08-12.md).
 
 The fork exists to keep a working, patched, fully open Flowise available — and to finish the part
 upstream never opened.

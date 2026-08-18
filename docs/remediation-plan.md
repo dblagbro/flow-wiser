@@ -504,16 +504,57 @@ could — because the local environment was the thing at fault.
 The `pnpm dedupe` finding (RM-17) is **unaffected**: it was isolated, single-variable, toggled both
 ways, and completed before any of the above.
 
-### RM-06 · `STATUS.md` contradicts the tree — REVIEW REQUIRED
+### RM-06 · WITHDRAWN — the drift it reported never existed
 
-**Status:** OPEN · **Opened:** 2026-08-11 · **Needs a human**
+**Status:** ❌ **WITHDRAWN 2026-08-12.** Raised in error. No action needed, and none was ever needed.
 
-Dated 2026-08-05, it states the auth/RBAC replacement is "not started", entities are "not
-registered", "no route file points at the new RBAC", and the licensed files are "not deleted".
-All four are contradicted by observation at `ffae9952` — see [`current-state.md`](current-state.md).
+**What it claimed.** That `docs/STATUS.md` states the auth/RBAC replacement is "not started",
+entities "not registered", "no route file points at the new RBAC", and the licensed files "not
+deleted" — all contradicted by the tree, and therefore REVIEW REQUIRED because the file carries
+licensing claims.
 
-It is **public-facing and contains licensing claims**. An incorrect licensing claim has already
-been published three times on this project. A human rewrites this one.
+**What is actually true.** `docs/STATUS.md` is dated **2026-08-09** and says the opposite:
+
+| Row                                                 | Says                                                 |
+| --------------------------------------------------- | ---------------------------------------------------- |
+| `3.1.4-fw8` — Apache-2.0-only                       | ✅ Released                                          |
+| The 127 commercially licensed files                 | ✅ Deleted, and the build fails if any trace returns |
+| RBAC — 82 permissions, server-side, deny-by-default | ✅ Shipped                                           |
+| MFA, SSO, audit trail, encryption at rest           | ✅ Shipped                                           |
+
+None of the quoted phrases appear in it.
+
+**Where the quotes came from.** A **stale docs-only copy dated 2026-08-05** that occupied
+`/mnt/s/code/flow-wiser` before the repository was materialized there. That directory held six
+Markdown files and a `docs/` folder and **no source code at all**. It was read during discovery,
+the repository was then checked out over it, and the earlier reading was carried forward as though
+it described the tree.
+
+**Why it is recorded rather than deleted.** The failure is worth more than the entry:
+
+-   An artifact was read **before** the thing it describes existed, and the reading was never
+    re-taken afterwards. Every later observation was compared against a document from a different
+    directory and a different week.
+-   It produced a **false blocker on the most sensitive topic in the project** — licensing — and
+    invoked "an incorrect licensing claim was published three times" to justify escalating it. A
+    fabricated REVIEW REQUIRED on licensing costs real human attention and erodes the credibility
+    of genuine ones.
+-   It was repeated across `current-state.md`, `index.md` and several session reports before anyone
+    opened the actual file. Nothing in the process caught it, because the claim was self-consistent
+    everywhere it had been copied to.
+
+**Prevention.** Re-read source documents **after** any change to what the working tree contains,
+and quote a file only from the path currently under analysis. When reporting that document X
+contradicts the code, cite `X:line` from the tree being examined — a claim that cannot name a line
+in the current tree is not evidence. This is the documentation analogue of RM-18's lesson about
+trusting a contaminated local environment.
+
+**Nothing about the licensing position was ever in question.** `enterprise/` and
+`IdentityManager.ts` are absent from the tree, `identity/` is wired, and `LICENSE.md` already
+asserts Apache-2.0 in its entirety, backed by `CLEANROOM-ATTESTATION.md`. See
+[`current-state.md`](current-state.md).
+
+### RM-07 · Migration counts differ across engines
 
 ### RM-07 · Migration counts differ across engines
 

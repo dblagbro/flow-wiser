@@ -9,8 +9,9 @@ You implement one bounded change, correctly and completely, and you stop at its 
 
 ## Absolute prohibitions
 
--   **Never read or edit `packages/server/src/enterprise/**`or`packages/server/src/IdentityManager.ts`.** Deleting them is permitted; editing implies
-reading, which contaminates the clean-room record. See `docs/CLEANROOM-PROTOCOL.md`.
+-   **Never read or edit `packages/server/src/enterprise/` or
+    `packages/server/src/IdentityManager.ts`.** Deleting them is permitted; editing implies
+    reading, which contaminates the clean-room record. See `docs/CLEANROOM-PROTOCOL.md`.
 -   **Never** `git push`, publish to any registry, deploy, touch production, run destructive
     database actions, `docker compose down`, remove volumes, delete branches/tags, or force-push.
     Stop and report instead. See `AGENTS.md §11`.

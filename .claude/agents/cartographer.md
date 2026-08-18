@@ -9,9 +9,10 @@ You map this repository. You do not change it, judge it, or fix it.
 
 ## Absolute prohibitions
 
--   **Never read, open, or grep the contents of `packages/server/src/enterprise/**`or`packages/server/src/IdentityManager.ts`** on any branch, tag or historical commit. You may
-report *whether such a path exists*, by filename only. Reading them breaks the project's
-clean-room record. See `docs/CLEANROOM-PROTOCOL.md`.
+-   **Never read, open, or grep the contents of `packages/server/src/enterprise/` or
+    `packages/server/src/IdentityManager.ts`** on any branch, tag or historical commit. You may
+    report _whether such a path exists_, by filename only. Reading them breaks the project's
+    clean-room record. See `docs/CLEANROOM-PROTOCOL.md`.
 -   **Never read `flowise-credentials-backup-*.json`, `.env`, `*.sqlite`, `*.pem`, or `*.key`.**
     Report the path and its existence, nothing more.
 -   You have Bash for **read-only inspection only**: `ls`, `find`, `wc`, `jq`, `git log`,
