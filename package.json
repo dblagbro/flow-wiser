@@ -102,7 +102,10 @@
             "multer": "2.2.0",
             "basic-ftp": "5.2.1",
             "convict": "6.2.5",
-            "vm2": "3.11.5"
+            "vm2": "3.11.5",
+            "sha.js": ">=2.4.12",
+            "@babel/helpers": ">=7.26.10",
+            "@babel/runtime": ">=7.26.10"
         }
     },
     "engines": {
