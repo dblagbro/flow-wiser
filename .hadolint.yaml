@@ -1,0 +1,55 @@
+# hadolint configuration for Flow-Wiser.
+#
+# Threshold is `warning`, not `error`. At `error` hadolint only fails on parse
+# errors -- it exits 0 on `FROM node:latest`, on `ADD` of a remote tarball, on a
+# `COPY --from` referencing an undefined stage. A gate that passes those is not a
+# gate. Verified: a deliberately bad Dockerfile exits 0 at `error` and 1 at
+# `warning`.
+#
+# Each ignore below is a deliberate choice with a reason. They are ignores, not
+# a blanket threshold raise, so anything NOT listed here still fails the build.
+
+failure-threshold: warning
+
+ignored:
+    # `cd / && flowise --version`. Deliberate: the point is to prove the bin
+    # resolves from OUTSIDE the app directory, because every recovery message the
+    # server prints tells an operator to run `flowise admin:create`. WORKDIR would
+    # test the opposite of what matters.
+    - DL3003
+
+    # "Last USER should not be root" -- fires on docker/Dockerfile's BUILD stage.
+    # The final stage sets `USER node`. hadolint evaluates stages independently
+    # and cannot see that.
+    - DL3002
+
+    # Non-numeric user id. `node` is the user the official node:*-alpine images
+    # create; using the name is correct and matches upstream.
+    - DL3066
+
+    # Consecutive RUN instructions. Cosmetic. The separation here is deliberate:
+    # docker/Dockerfile keeps its security pins in ONE install with a single gate
+    # after all mutations, and splitting or merging RUN steps for tidiness is
+    # exactly how 3.1.4-fw2 shipped a reverted pin.
+    - DL3059
+
+    # `apk --update` without --no-cache, worker image only. Cosmetic; the layer is
+    # not reused.
+    - DL3019
+
+    # JSON notation for CMD/ENTRYPOINT. Fires on the HEALTHCHECK:
+    #   CMD curl -fsS http://localhost:${PORT:-3000}/api/v1/ping || exit 1
+    # Shell form is REQUIRED here -- JSON form performs no variable expansion, so
+    # ${PORT:-3000} would be passed literally, and `|| exit 1` would not work.
+    # Following this rule would break the healthcheck it is complaining about.
+    - DL3025
+# NOT ignored, deliberately:
+#
+#   DL3018  "pin versions in apk add"
+#           This is real, and this project of all projects should honour it -- an
+#           unpinned install is the defect the fork was founded on. It is not
+#           ignored here; it is tracked as remediation work. Alpine package pins
+#           are brittle (versions vanish from the repo index), so it needs a
+#           considered fix, not a silenced rule.
+#
+#   (DL3025 is ignored above -- shell form is required for the healthcheck.)
