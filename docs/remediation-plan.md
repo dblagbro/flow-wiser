@@ -64,16 +64,55 @@ precisely what produced ADR-0004. Per ADR-0003, aligning values is not a control
 the three Dockerfile `ARG NODE_VERSION` defaults, and the workflow Node versions. **Verify both
 halves**: deliberately skew one value and confirm the job fails; restore it and confirm it passes.
 
-### RM-12 · Images move from Node 20 to Node 22 — needs runtime verification
+### RM-12 · Images on Node 22 — release image built and booted, VERIFIED
 
-**Status:** OPEN · **Opened:** 2026-08-11
+**Status:** ✅ **CLOSED for the release image, 2026-08-12.** Two of three Dockerfiles outstanding —
+see below.
 
-Published images ran Node v20.20.2. They will now be built on 22. A Node major bump is exactly the
-change that compiles cleanly and fails at runtime.
+Published images ran Node v20.20.2. A major bump is exactly the change that compiles cleanly and
+fails at runtime, so a successful build was never going to be sufficient.
 
-**Action:** before any release, `docker build` each of the three Dockerfiles on Node 22 and **boot**
-the resulting image — not just compile it. Confirm `/api/v1/ping` responds and migrations run.
-Record in `docs/testing.md`. Do not publish an image on the strength of a successful build alone.
+**Built and booted** — `Dockerfile` (the Apache-2.0-only image built from source, i.e. the actual
+release artifact):
+
+```bash
+docker build --pull --build-arg NODE_VERSION=22 --build-arg FLOWISE_VERSION=3.1.4-fw10 \
+  -t flow-wiser:node22-verify .
+docker run -d --name fw-rm12-boot -p 3987:3000 \
+  -e IDENTITY_ENCRYPTION_KEY=... -e FLOWISE_SESSION_PEPPER=... flow-wiser:node22-verify
+```
+
+| Check                                  | Result                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| Build                                  | ✅ exit 0                                                                         |
+| Licence gate inside the image          | ✅ `CLEAN: no enterprise/ path, no IdentityManager artifact, no upstream-archive` |
+| CLI runs                               | ✅ `flowise/3.1.4-fw10 linux-x64 node-v22.23.2`                                   |
+| **Boots**                              | ✅ `/api/v1/ping` → **200 `pong`** in ~10s                                        |
+| **Reports its own version truthfully** | ✅ `/api/v1/version` → `{"version":"3.1.4-fw10"}`                                 |
+| `HEALTHCHECK`                          | ✅ container reached `(healthy)`                                                  |
+| Node inside the image                  | ✅ `v22.23.2`                                                                     |
+| Errors in boot log                     | ✅ none                                                                           |
+
+The version endpoint matters more than it looks: an image whose tag and contents disagreed is the
+defect this fork was founded on. Here the requested build arg, the tree, the CLI and the running
+server all report `3.1.4-fw10`.
+
+**Teardown confirmed.** The container was named and disposable, created no volumes, and was removed
+— 62 running containers back to 61. The other 61 on this host were never touched. The image is kept
+locally for reference and was **not pushed anywhere**.
+
+**Still outstanding:**
+
+1. **`docker/worker/Dockerfile`** — not yet built on Node 22. It was the file that hardcoded
+   `node:24-alpine` with no build arg, so it is the one most likely to surprise. Should be built
+   and booted before any queue-mode release.
+2. **`docker/Dockerfile`** — **deliberately not built.** It runs `npm install -g flowise@<version>`,
+   which fetches FlowiseAI's published package containing the compiled `dist/enterprise/` output and
+   `dist/IdentityManager.js` under the Commercial License. Its own header says it "does NOT produce
+   an Apache-2.0-only image and cannot" and is kept only for reproducing upstream images. Building
+   it would materialise commercially licensed content on disk for no release benefit. If it is ever
+   needed for diagnosis, that is a deliberate, separately authorised act — not part of a routine
+   release check.
 
 ## Priority 2 — controls that exist but do not run
 
