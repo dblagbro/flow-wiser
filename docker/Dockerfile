@@ -113,12 +113,12 @@ ARG CONNECT_SQLITE3_VERSION=0.9.16
 # exfiltrate provider API keys. Patching Flowise itself does NOT close this,
 # because vm2 is a transitive dependency and its version is not pinned anywhere.
 #
-# 3.11.5 is the current published release and is not deprecated.
+# 3.11.6 is the current published release and is not deprecated.
 #
 # Longer term vm2 should be replaced outright (isolated-vm), or custom-code
 # nodes disabled on internet-facing deployments. vm2 has produced a fresh escape
 # in essentially every release line, so pinning is mitigation, not a fix.
-ARG VM2_VERSION=3.11.5
+ARG VM2_VERSION=3.11.6
 
 # Apply BOTH security pins in a SINGLE npm install, then assert at the very end.
 #

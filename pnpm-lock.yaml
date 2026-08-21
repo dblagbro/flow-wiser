@@ -42,7 +42,7 @@ overrides:
   multer: 2.2.0
   basic-ftp: 5.2.1
   convict: 6.2.5
-  vm2: 3.11.5
+  vm2: 3.11.6
   sha.js: '>=2.4.12'
   '@babel/helpers': '>=7.26.10'
   '@babel/runtime': '>=7.26.10'
@@ -744,8 +744,8 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
       vm2:
-        specifier: 3.11.5
-        version: 3.11.5
+        specifier: 3.11.6
+        version: 3.11.6
       weaviate-client:
         specifier: 3.12.0
         version: 3.12.0(encoding@0.1.13)
@@ -19832,8 +19832,8 @@ packages:
       terser:
         optional: true
 
-  vm2@3.11.5:
-    resolution: {integrity: sha512-RSrkBiwrj6FRU+QdqNs6KG0XdlvJCjpQ4GXiqmMbrhmwfu5k/XIMpAer0L8f6iuf0uJ3a4T1xJN126Q8yf0VIA==}
+  vm2@3.11.6:
+    resolution: {integrity: sha512-35hVTcKieg7jJMntHhgWT5c2a1J2vmpXm66Xs1Z8ayHOJTj8rzIlXKzba3nO1Om/sonmnkjlAOMt9p8lYJXsWw==}
     engines: {node: '>=6.0'}
     hasBin: true
 
@@ -44483,7 +44483,7 @@ snapshots:
       sass: 1.71.1
       terser: 5.29.1
 
-  vm2@3.11.5:
+  vm2@3.11.6:
     dependencies:
       acorn: 8.16.0
       acorn-walk: 8.3.5
