@@ -101,18 +101,33 @@ server all report `3.1.4-fw10`.
 — 62 running containers back to 61. The other 61 on this host were never touched. The image is kept
 locally for reference and was **not pushed anywhere**.
 
-**Still outstanding:**
+**`docker/worker/Dockerfile` — built and booted 2026-08-21. ✅**
 
-1. **`docker/worker/Dockerfile`** — not yet built on Node 22. It was the file that hardcoded
-   `node:24-alpine` with no build arg, so it is the one most likely to surprise. Should be built
-   and booted before any queue-mode release.
-2. **`docker/Dockerfile`** — **deliberately not built.** It runs `npm install -g flowise@<version>`,
-   which fetches FlowiseAI's published package containing the compiled `dist/enterprise/` output and
-   `dist/IdentityManager.js` under the Commercial License. Its own header says it "does NOT produce
-   an Apache-2.0-only image and cannot" and is kept only for reproducing upstream images. Building
-   it would materialise commercially licensed content on disk for no release benefit. If it is ever
-   needed for diagnosis, that is a deliberate, separately authorised act — not part of a routine
-   release check.
+This was the file that hardcoded `node:24-alpine` with no build arg, so it could not be overridden
+from CI and, given the Node 24 native-module failure, could not build at all. Now overridable and
+verified end to end:
+
+| Check                                                                  | Result                                                                                                                      |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `docker build --build-arg NODE_VERSION=22 -f docker/worker/Dockerfile` | ✅ exit 0                                                                                                                   |
+| Container starts                                                       | ✅ Up, `node v22.23.2` inside                                                                                               |
+| First boot attempt, **no Redis**                                       | reached Redis connect and retried — proof the app loaded and native bindings resolved, but **not** a boot                   |
+| Boot **with** Redis on a throwaway network                             | ✅ `Worker created successfully for queue "flowise-queue-schedule"`, `Redis client ready and connected`, **0 Redis errors** |
+
+The first attempt is recorded because it is the more instructive one: a queue worker with no broker
+starts, logs, and stays up. Reading that as "boots" would have been wrong — it needed a real Redis
+to reach steady state, and only then did the queue workers actually get created.
+
+Teardown confirmed: both containers and the throwaway network removed by name, no volumes created,
+nothing else on the host touched.
+
+**Still outstanding:** 2. **`docker/Dockerfile`** — **deliberately not built.** It runs `npm install -g flowise@<version>`,
+which fetches FlowiseAI's published package containing the compiled `dist/enterprise/` output and
+`dist/IdentityManager.js` under the Commercial License. Its own header says it "does NOT produce
+an Apache-2.0-only image and cannot" and is kept only for reproducing upstream images. Building
+it would materialise commercially licensed content on disk for no release benefit. If it is ever
+needed for diagnosis, that is a deliberate, separately authorised act — not part of a routine
+release check.
 
 ## Priority 2 — controls that exist but do not run
 
