@@ -2,78 +2,75 @@
 [ -f "$(dirname "$0")/_/husky.sh" ] && . "$(dirname "$0")/_/husky.sh"
 
 # =============================================================================
-# OSS Guardrail: Prevent pushing proprietary code to OSS repository
+# Pre-push guard: never push commercially licensed paths or secret material.
+#
+# What was here before, and why it was replaced (RM-05):
+#
+# This hook was inherited from upstream. It ran on every push, but its body was
+# wrapped in a test for whether the push URL matched `FlowiseAI/Flowise` -- which
+# is never true in this fork. Inside that dead branch it blocked `extensions/`
+# and `apps/*`, neither of which exists in this repository. So it executed on
+# every push, checked nothing, exited 0, and appeared in the hook list as though
+# pushes were guarded. A control that cannot fail is worse than no control,
+# because it is counted as one (PROCESS-GAPS G1).
+#
+# It now guards what this repository actually cares about, on every push,
+# regardless of remote.
 # =============================================================================
 
-# Paths that should NEVER go to OSS (explicitly blocked)
-BLOCKED_PATHS="^extensions/"
+set -u
 
-# Allowed apps (whitelist) - everything else in apps/ is blocked
-ALLOWED_APPS="^apps/oss-app/"
+remote="${1:-}"
+url="${2:-}"
 
-# Get the remote being pushed to
-remote="$1"
-url="$2"
+# Paths under FlowiseAI's Commercial License. Deletion is permitted and is the
+# goal; adding or modifying them is not. See docs/CLEANROOM-PROTOCOL.md.
+LICENSED='^packages/server/src/(enterprise/|IdentityManager\.ts)'
 
-# Check if pushing to OSS remote (FlowiseAI/Flowise)
-if echo "$url" | grep -qE "FlowiseAI/Flowise(\.git)?$"; then
-    echo "🔒 Pushing to OSS repo - checking for proprietary code..."
+# Secret-shaped files. .gitignore should already stop these, but .gitignore only
+# protects git's index -- a file force-added with `git add -f` reaches a commit,
+# and this is the last check before it leaves the machine. See RM-16.
+SECRETS='(credentials-backup|\.sqlite3?$|(^|/)\.env$|\.pem$|\.p12$|id_rsa$|service-account.*\.json$)'
 
-    # Read stdin for refs being pushed
-    while read local_ref local_sha remote_ref remote_sha; do
-        # Skip delete operations
-        if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
-            continue
-        fi
+fail=0
 
-        # Get list of files to check based on whether this is a new or existing branch
-        if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-            # New branch - check ALL files across ALL commits being pushed
-            # Find merge base with remote's main/master to determine the branch point
-            base=$(git merge-base "$local_sha" "$remote/main" 2>/dev/null || \
-                   git merge-base "$local_sha" "$remote/master" 2>/dev/null || \
-                   echo "")
-            if [ -n "$base" ]; then
-                # Found common ancestor - diff from there to get all new files
-                files_to_check=$(git diff --name-only "$base..$local_sha")
-            else
-                # No common ancestor - check all files in all commits on this branch
-                files_to_check=$(git log --name-only --pretty=format: "$local_sha" | sort -u)
-            fi
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        base=$(git merge-base "$local_sha" "$remote/main" 2>/dev/null \
+            || git merge-base "$local_sha" "$remote/apache2-only" 2>/dev/null || echo "")
+        if [ -n "$base" ]; then
+            files=$(git diff --name-only "$base..$local_sha")
         else
-            # Existing branch - check only files changed in new commits
-            files_to_check=$(git diff --name-only "$remote_sha..$local_sha")
+            files=$(git log --name-only --pretty=format: "$local_sha" | sort -u)
         fi
+    else
+        files=$(git diff --name-only "$remote_sha..$local_sha")
+    fi
 
-        # Check for proprietary paths
-        # Note: || true prevents grep's exit code 1 (no match) from aborting the subshell
-        violations=$(
-            {
-                echo "$files_to_check" | grep -E "$BLOCKED_PATHS" || true
-                echo "$files_to_check" | grep -E "^apps/" | grep -vE "$ALLOWED_APPS" || true
-            } 2>/dev/null | sort -u
-        )
+    # Licensed paths: additions and modifications only. A deletion is the goal.
+    added_or_modified=$(git diff --name-status "${remote_sha:-$base}..$local_sha" 2>/dev/null \
+        | awk '$1 != "D" { print $2 }' || echo "$files")
+    lic=$(echo "$added_or_modified" | grep -E "$LICENSED" || true)
+    if [ -n "$lic" ]; then
+        echo "" >&2
+        echo "  ✗ PUSH REJECTED — commercially licensed paths" >&2
+        echo "$lic" | sed 's/^/      /' >&2
+        echo "  Deleting these is permitted; adding or modifying them is not." >&2
+        echo "  See docs/CLEANROOM-PROTOCOL.md" >&2
+        fail=1
+    fi
 
-        if [ -n "$violations" ]; then
-            echo ""
-            echo "❌ BLOCKED: Push contains changes to proprietary paths!"
-            echo ""
-            echo "The following files cannot be pushed to OSS:"
-            echo "$violations" | sed 's/^/  - /'
-            echo ""
-            echo "Proprietary paths that are blocked:"
-            echo "  - extensions/           (all extensions)"
-            echo "  - apps/*                (except apps/oss-app/)"
-            echo ""
-            echo "Only apps/oss-app/ is allowed in the OSS repository."
-            echo ""
-            echo "These paths are reserved for proprietary extensions."
-            echo ""
-            exit 1
-        fi
-    done
+    sec=$(echo "$files" | grep -EI "$SECRETS" || true)
+    if [ -n "$sec" ]; then
+        echo "" >&2
+        echo "  ✗ PUSH REJECTED — secret-shaped files" >&2
+        echo "$sec" | sed 's/^/      /' >&2
+        echo "  Never push credential exports, databases, .env files or private keys." >&2
+        fail=1
+    fi
+done
 
-    echo "✅ No proprietary code detected - push allowed"
-fi
-
+[ "$fail" = "0" ] || exit 1
 exit 0

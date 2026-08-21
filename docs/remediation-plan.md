@@ -101,18 +101,33 @@ server all report `3.1.4-fw10`.
 — 62 running containers back to 61. The other 61 on this host were never touched. The image is kept
 locally for reference and was **not pushed anywhere**.
 
-**Still outstanding:**
+**`docker/worker/Dockerfile` — built and booted 2026-08-21. ✅**
 
-1. **`docker/worker/Dockerfile`** — not yet built on Node 22. It was the file that hardcoded
-   `node:24-alpine` with no build arg, so it is the one most likely to surprise. Should be built
-   and booted before any queue-mode release.
-2. **`docker/Dockerfile`** — **deliberately not built.** It runs `npm install -g flowise@<version>`,
-   which fetches FlowiseAI's published package containing the compiled `dist/enterprise/` output and
-   `dist/IdentityManager.js` under the Commercial License. Its own header says it "does NOT produce
-   an Apache-2.0-only image and cannot" and is kept only for reproducing upstream images. Building
-   it would materialise commercially licensed content on disk for no release benefit. If it is ever
-   needed for diagnosis, that is a deliberate, separately authorised act — not part of a routine
-   release check.
+This was the file that hardcoded `node:24-alpine` with no build arg, so it could not be overridden
+from CI and, given the Node 24 native-module failure, could not build at all. Now overridable and
+verified end to end:
+
+| Check                                                                  | Result                                                                                                                      |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `docker build --build-arg NODE_VERSION=22 -f docker/worker/Dockerfile` | ✅ exit 0                                                                                                                   |
+| Container starts                                                       | ✅ Up, `node v22.23.2` inside                                                                                               |
+| First boot attempt, **no Redis**                                       | reached Redis connect and retried — proof the app loaded and native bindings resolved, but **not** a boot                   |
+| Boot **with** Redis on a throwaway network                             | ✅ `Worker created successfully for queue "flowise-queue-schedule"`, `Redis client ready and connected`, **0 Redis errors** |
+
+The first attempt is recorded because it is the more instructive one: a queue worker with no broker
+starts, logs, and stays up. Reading that as "boots" would have been wrong — it needed a real Redis
+to reach steady state, and only then did the queue workers actually get created.
+
+Teardown confirmed: both containers and the throwaway network removed by name, no volumes created,
+nothing else on the host touched.
+
+**Still outstanding:** 2. **`docker/Dockerfile`** — **deliberately not built.** It runs `npm install -g flowise@<version>`,
+which fetches FlowiseAI's published package containing the compiled `dist/enterprise/` output and
+`dist/IdentityManager.js` under the Commercial License. Its own header says it "does NOT produce
+an Apache-2.0-only image and cannot" and is kept only for reproducing upstream images. Building
+it would materialise commercially licensed content on disk for no release benefit. If it is ever
+needed for diagnosis, that is a deliberate, separately authorised act — not part of a routine
+release check.
 
 ## Priority 2 — controls that exist but do not run
 
@@ -595,8 +610,6 @@ asserts Apache-2.0 in its entirety, backed by `CLEANROOM-ATTESTATION.md`. See
 
 ### RM-07 · Migration counts differ across engines
 
-### RM-07 · Migration counts differ across engines
-
 **Status:** OPEN · **Opened:** 2026-08-11 · **Unverified**
 
 sqlite 53 · postgres 55 · mysql 57 · mariadb 56. `AGENTS.md §5` requires all four. Some of the
@@ -617,16 +630,75 @@ overwriting the fw8 record.
 
 ## Priority 4 — coverage gaps
 
-### RM-09 · No secret, container or shell scanning available
+### RM-09 · Secret scanning enabled and verified; container linting deliberately not
 
-**Status:** OPEN · **Opened:** 2026-08-11
+**Status:** ✅ **gitleaks CLOSED 2026-08-19** · hadolint **blocked on RM-20**
 
-`gitleaks`, `trufflehog`, `trivy`, `hadolint` and `shellcheck` are all absent from this machine.
-`.github/workflows/security-scan.yml.disabled` is written and ready but deliberately not enabled —
-enabling an unverifiable gate is the failure mode `PROCESS-GAPS.md` G1 warns against.
+`security-scan.yml` shipped `.disabled` because the scanners were not installed and it had
+therefore never been observed to fail on anything. Both are now installed locally
+(`gitleaks 8.30.1`, `hadolint 2.15.1`) and were tested before anything was enabled.
 
-**Action:** install at least `gitleaks` and `hadolint`, verify each fires on a known-bad input and
-passes on a known-good one, then rename the workflow to `.yml`.
+**gitleaks — both halves verified, now enabled:**
+
+| Input                                         | Result                      |
+| --------------------------------------------- | --------------------------- |
+| known-bad — three planted non-example secrets | `leaks found: 3`, exit 1 ✅ |
+| known-good — this repository, git mode        | `no leaks found`, exit 0 ✅ |
+
+The first known-bad attempt used `AKIAIOSFODNN7EXAMPLE` and found **nothing** — that is AWS's
+canonical documentation key and gitleaks allowlists it. A known-bad input that cannot fail proves
+nothing, and it nearly produced the conclusion "gitleaks does not work here". Replaced with
+real-shaped values.
+
+**Why git mode and not `--no-git`.** A working-tree scan reports 21 findings, all noise:
+5 in `packages/server/dist/` (gitignored build output, 0 tracked files), 10 in `upstream-archive/`
+(archived upstream advisories, discussions and contributor patches — third-party content, not our
+secrets), and 1 dummy token fixture in an `mcp-server` unit test. Git mode sees committed content
+only, and is clean.
+
+**hadolint — configured, verified, and deliberately NOT gated.** `.hadolint.yaml` is committed.
+The threshold is `warning`, not `error`: at `error` hadolint exits **0** on `FROM node:latest`, on
+an `ADD` of a remote tarball, and on a `COPY --from` referencing an undefined stage. It fails only
+on parse errors. A gate that passes all of that is not a gate.
+
+At `warning` our Dockerfiles fail on **DL3018 (pin versions in `apk add`), six times** — see RM-20.
+Five other rules are ignored individually, each with its reason in the file, rather than by raising
+the threshold, so anything not listed still fails. `DL3025` is among them because the rule is wrong
+here: the healthcheck needs shell form for `${PORT:-3000}` expansion and `|| exit 1`, and following
+the rule would break the healthcheck it complains about.
+
+**DL3018 is not ignored, and should not be.** Silencing "pin your versions" in this repository would
+be indefensible — an unpinned install is the defect this fork was founded on. Enabling hadolint today
+means a permanently red gate; silencing the rule means a gate that ignores the one thing it most
+needs to catch. The honest state is: config ready, rule outstanding.
+
+### RM-20 · Six unpinned `apk add` calls across the three Dockerfiles
+
+**Status:** OPEN · **Opened:** 2026-08-19 · **Blocks enabling hadolint (RM-09)**
+
+`hadolint` DL3018 fires six times:
+
+| File                       | Lines      |
+| -------------------------- | ---------- |
+| `Dockerfile`               | 35         |
+| `docker/Dockerfile`        | 47, 155    |
+| `docker/worker/Dockerfile` | 15, 17, 20 |
+
+Every one installs Alpine packages without a version — `apk add --no-cache python3 make g++ …`.
+
+**Why it matters here more than in most repositories.** This project exists because an unpinned
+`npm install -g flowise` froze a Docker layer and shipped three mislabelled images. The identical
+failure mode is live in the `apk` layer: the same Dockerfile text can produce different system
+packages on different days, and nothing asserts otherwise.
+
+**Why it is not a five-minute fix.** Alpine package versions are removed from the repository index
+when the distribution moves on, so a hard pin makes the image un-buildable later — trading a silent
+drift for a loud one. The usual answer is pinning against a specific Alpine release plus a
+periodically refreshed lockfile, which is a real change to how these images are built.
+
+**Action:** decide the pinning strategy (pin + refresh cadence, or an Alpine-release-pinned base with
+documented drift), apply it to all six, then enable hadolint in `security-scan.yml` and verify both
+halves — skew one pin and confirm the job fails.
 
 ### RM-10 · No Kubernetes or IaC
 

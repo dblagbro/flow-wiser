@@ -1,0 +1,68 @@
+# Secret scanning.
+#
+# Enabled 2026-08-19, after both halves were verified locally with the same tool
+# version CI runs. Previously shipped as security-scan.yml.disabled precisely
+# because it had not been -- PROCESS-GAPS G1: a control is not in place until it
+# has been observed FAILING on a known-bad input and PASSING on a known-good one.
+#
+# gitleaks, verified:
+#   known-bad   three planted non-example secrets  -> "leaks found: 3", exit 1
+#   known-good  this repository, git mode          -> "no leaks found", exit 0
+#
+# The first known-bad attempt used AKIAIOSFODNN7EXAMPLE and found nothing --
+# that is AWS's canonical documentation key and gitleaks allowlists it. A test
+# input that cannot fail proves nothing; it was replaced with real-shaped values.
+#
+# Git mode, not --no-git. Scanning the working tree surfaces 21 findings that are
+# all noise: build output under packages/server/dist (gitignored, 0 tracked
+# files), third-party content in upstream-archive/ (archived upstream advisories,
+# discussions and contributor patches -- not our secrets), and one dummy token
+# fixture in an mcp-server unit test. Git mode sees committed content only and is
+# clean.
+#
+# hadolint is NOT enabled here. See .hadolint.yaml and RM-20: our Dockerfiles
+# still trip DL3018 (pin versions in apk add) six times, and silencing that rule
+# in THIS repository would be indefensible -- an unpinned install is the defect
+# the fork was founded on. Enabling it today would mean a permanently red gate;
+# silencing it would mean a gate that ignores the one thing it should catch.
+# The config is committed and ready; the rule needs fixing, not muting.
+
+name: Security scan
+
+on:
+    push:
+        branches: ['**']
+    pull_request:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    secrets:
+        name: Secret scan
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0 # a secret committed and later removed is still leaked
+
+            - name: gitleaks
+              uses: gitleaks/gitleaks-action@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Assert no credential export or database is tracked
+              # Belt and braces alongside gitleaks: this catches a secret-SHAPED
+              # file by name even when its contents do not match a gitleaks rule.
+              run: |
+                  set -euo pipefail
+                  BAD=$(git ls-files \
+                    | grep -iE 'credentials-backup|\.sqlite3?$|\.env$|\.pem$|\.p12$|id_rsa|service-account.*\.json' \
+                    || true)
+                  if [ -n "$BAD" ]; then
+                    echo "::error::Secret-shaped files are tracked in git:"
+                    echo "$BAD" | sed 's/^/  /'
+                    exit 1
+                  fi
+                  echo "No secret-shaped files tracked."
