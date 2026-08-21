@@ -595,8 +595,6 @@ asserts Apache-2.0 in its entirety, backed by `CLEANROOM-ATTESTATION.md`. See
 
 ### RM-07 · Migration counts differ across engines
 
-### RM-07 · Migration counts differ across engines
-
 **Status:** OPEN · **Opened:** 2026-08-11 · **Unverified**
 
 sqlite 53 · postgres 55 · mysql 57 · mariadb 56. `AGENTS.md §5` requires all four. Some of the
