@@ -345,7 +345,6 @@ const AccountSettings = () => {
                 setOldPassword('')
                 setNewPassword('')
                 setConfirmPassword('')
-                await logoutApi.request()
                 enqueueSnackbar({
                     message: 'Password updated',
                     options: {
@@ -358,6 +357,18 @@ const AccountSettings = () => {
                         )
                     }
                 })
+                // Sign out last, and only after the confirmation has had time to render. Queuing
+                // the snackbar first is not enough on its own: `logoutApi` tears down the session
+                // and the client redirects to /signin in the same tick, unmounting the snackbar
+                // before it paints. Observed in a browser -- the password changed correctly and
+                // NEITHER the success nor the failure message was ever visible, so a successful
+                // change was indistinguishable from a failure.
+                //
+                // The pause is for the human, not the machine. The credential is already changed
+                // server-side by this point; this only delays tearing down a session whose
+                // password no longer exists, which is why it is deliberately short.
+                await new Promise((resolve) => setTimeout(resolve, 1500))
+                await logoutApi.request()
             }
         } catch (error) {
             enqueueSnackbar({
