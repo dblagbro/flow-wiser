@@ -45,7 +45,7 @@ Full detail per finding lives in the domain reports; this is the register.
 
 -   Findings recorded: **31**
 -   Fixed in PR #8: **13**
--   Open: **15**
+-   Open: **14**
 
 ## The pattern underneath
 
