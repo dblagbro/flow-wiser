@@ -319,21 +319,32 @@ const AccountSettings = () => {
                 return
             }
 
-            const obj = {
-                id: currentUser.id,
-                oldPassword,
-                newPassword,
-                confirmPassword
+            // Change the password through the endpoint that implements it.
+            //
+            // This previously called `userApi.updateUser` -> `PUT /user`, which is one of the five
+            // identity-administration endpoints this build answers 501 on ("User administration is
+            // not available on this instance"). Upstream's password change went through their
+            // commercially licensed user-administration backend; the clean-room replacement puts a
+            // signed-in user's own password change on `POST /account/reset-password` instead, and
+            // the Account page was never repointed. The endpoint has existed and worked the whole
+            // time -- `views/auth/resetPassword.jsx` already uses it for the forced-change flow.
+            //
+            // Body shape matches that screen exactly (nested under `user`, `currentPassword` and
+            // `password`), because the route documents the nested form as what the shipped client
+            // sends. `confirmPassword` is not transmitted: it is a client-side confirmation and the
+            // equality check has already run above.
+            const body = {
+                user: {
+                    email: currentUser.email,
+                    currentPassword: oldPassword,
+                    password: newPassword
+                }
             }
-            const saveProfileResp = await userApi.updateUser(obj)
-            const pwdPayload = saveProfileResp.data
-            const updatedUser = pwdPayload?.user ?? pwdPayload
-            if (updatedUser) {
-                store.dispatch(userProfileUpdated(updatedUser))
+            const saveProfileResp = await accountApi.resetPassword(body)
+            if (saveProfileResp.data) {
                 setOldPassword('')
                 setNewPassword('')
                 setConfirmPassword('')
-                await logoutApi.request()
                 enqueueSnackbar({
                     message: 'Password updated',
                     options: {
@@ -346,6 +357,18 @@ const AccountSettings = () => {
                         )
                     }
                 })
+                // Sign out last, and only after the confirmation has had time to render. Queuing
+                // the snackbar first is not enough on its own: `logoutApi` tears down the session
+                // and the client redirects to /signin in the same tick, unmounting the snackbar
+                // before it paints. Observed in a browser -- the password changed correctly and
+                // NEITHER the success nor the failure message was ever visible, so a successful
+                // change was indistinguishable from a failure.
+                //
+                // The pause is for the human, not the machine. The credential is already changed
+                // server-side by this point; this only delays tearing down a session whose
+                // password no longer exists, which is why it is deliberately short.
+                await new Promise((resolve) => setTimeout(resolve, 1500))
+                await logoutApi.request()
             }
         } catch (error) {
             enqueueSnackbar({

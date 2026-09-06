@@ -30,7 +30,12 @@ LICENSED='^packages/server/src/(enterprise/|IdentityManager\.ts)'
 # Secret-shaped files. .gitignore should already stop these, but .gitignore only
 # protects git's index -- a file force-added with `git add -f` reaches a commit,
 # and this is the last check before it leaves the machine. See RM-16.
-SECRETS='(credentials-backup|\.sqlite3?$|(^|/)\.env$|\.pem$|\.p12$|id_rsa$|service-account.*\.json$)'
+#
+# Kept in step with the secret section of .gitignore, .dockerignore, .prettierignore
+# and .eslintrc.js (AGENTS.md §9). The earlier pattern missed .key, .pfx, keystores,
+# the non-rsa SSH key types, *secret*.json, and any .env.<env> variant -- each a way a
+# real secret could have shipped. .env.example templates are excluded below.
+SECRETS='(credentials-backup|\.sqlite3?$|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$|\.p12$|\.pfx$|\.keystore$|\.jks$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$|service-account.*\.json$|secret.*\.json$)'
 
 fail=0
 
@@ -62,7 +67,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         fail=1
     fi
 
-    sec=$(echo "$files" | grep -EI "$SECRETS" || true)
+    # .env.example templates are documentation, not secrets — never block them.
+    sec=$(echo "$files" | grep -EI "$SECRETS" | grep -vE '(^|/)\.env\.example$' || true)
     if [ -n "$sec" ]; then
         echo "" >&2
         echo "  ✗ PUSH REJECTED — secret-shaped files" >&2

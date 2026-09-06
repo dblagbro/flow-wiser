@@ -55,6 +55,31 @@ WORKDIR /usr/src/flowise
 # Copy app source
 COPY . .
 
+# Secret gate — fail the build loudly if any credential or key artifact reached the
+# image, BEFORE the long dependency install. `.dockerignore` is supposed to keep these
+# out of the build context, but .dockerignore being out of step with the other ignore
+# lists is exactly how a real production credential export (flowise-credentials-backup-*.json,
+# root-owned 0600, sitting in the working directory) could have been baked in under
+# `COPY . .` and then published on a Docker Hub push. An exclusion is not a control until
+# something asserts it held: this is that assertion. Mirrors the licensed-artifact gate below.
+RUN SECRETS="$(find . -type f \( \
+        -name '*credentials-backup*' -o \
+        -name 'flowise-credentials-backup-*.json' -o \
+        -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o \
+        -name '*.keystore' -o -name '*.jks' -o \
+        -name 'id_rsa' -o -name 'id_dsa' -o -name 'id_ecdsa' -o -name 'id_ed25519' -o \
+        -name '*service-account*.json' -o -name '*secret*.json' -o \
+        -name '.env' -o -name '.env.*' ! -name '.env.example' -o \
+        -name '*.sqlite' -o -name '*.sqlite3' \
+      \) -not -path './node_modules/*' -print 2>/dev/null)" \
+    && if [ -n "${SECRETS}" ]; then \
+         echo "FATAL: secret/credential artifacts present in the build context:" >&2; \
+         echo "${SECRETS}" >&2; \
+         echo "They must be excluded in .dockerignore and never shipped in an image." >&2; \
+         exit 1; \
+       fi \
+    && echo "CLEAN: no credential export, key, .env or database file in the build context"
+
 # Assert the tree is the version this build claims to be.
 #
 # The version the server reports comes from packages/server/package.json -- the

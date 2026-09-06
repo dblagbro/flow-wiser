@@ -30,6 +30,46 @@ first.
 
 ## [Unreleased]
 
+### Security — closed a Docker credential-leak path and applied dependency fixes
+
+-   **SEC-B-10 (critical):** the root `Dockerfile` does `COPY . .` and `.dockerignore` did not
+    exclude `*credentials-backup*`, so the production credential export in the working directory
+    could bake into an image layer and publish on a Docker Hub push. `.dockerignore` is now in step
+    with the other three ignore lists, and the Dockerfile fails the build if any credential/key
+    artifact reaches the context. Both halves tested.
+-   Secret scanning hardened: `.husky/pre-push` regex widened (`.key`, `.pfx`, keystores, non-rsa
+    SSH keys, `*secret*.json`, `.env.<env>`), the CI tracked-file check aligned, and a `.gitleaks.toml`
+    added so a full-history scan is clean (0 leaks) instead of 32 inherited example/archive findings.
+-   **SEC-DEP-01:** same-major security bumps via `pnpm.overrides` (the mechanism that actually moves
+    the resolved tree here) — four of six open Dependabot criticals (handlebars, shell-quote,
+    websocket-driver, fast-xml-parser) plus axios, ws, node-forge, @xmldom/xmldom, @grpc/grpc-js and
+    others. Verified in the built image, which boots clean. Major-bump-only and no-patch cases
+    (tar, nodemailer, undici@6, xlsx, expr-eval) deferred with reasons in `docs/bug-log.md`.
+
+### Fixed — Account Settings could not change your own password, and hid the outcome
+
+Two defects on `/account`, found by auditing the deployed instance with Playwright.
+
+**UI-08** — `savePassword` called `userApi.updateUser` -> `PUT /user`, one of five deliberate
+501 stubs on this build. Changing your own password from the UI was impossible; it surfaced as
+_"User administration is not available on this instance"_. It now calls
+`POST /account/reset-password`, which exists, is Apache-2.0, and already backs the forced-change
+flow in `views/auth/resetPassword.jsx`.
+
+**UI-09** — the success snackbar was queued _after_ `logoutApi.request()`, which tears down the
+session and redirects to `/signin` in the same tick, unmounting the snackbar before it painted.
+Neither the success nor the failure message was ever visible, so a successful password change was
+indistinguishable from a failure — which is why UI-08 was reported as a different bug than it was.
+Reordering alone does not fix it, because the redirect still wins the tick; sign-out now waits
+1500 ms. The credential is already changed server-side by that point.
+
+Verified end-to-end in a browser: `POST /account/reset-password` returned 200, "Password updated"
+rendered, the new password authenticated and the old one was refused.
+
+**Known, not fixed: UI-10.** `saveProfileData` still calls `userApi.updateUser` -> the same 501
+stub, so saving Name/Email on that page fails too and those fields render blank. That one needs
+the user-administration backend built, not repointing. Tracked in `docs/bug-log.md`.
+
 ### Changed — Node.js 22 is now the supported runtime
 
 The project standardised on **Node.js 22**. Previously five different Node versions were declared
