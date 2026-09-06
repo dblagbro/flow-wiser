@@ -1,0 +1,41 @@
+# gitleaks configuration for Flow-Wiser.
+#
+# Purpose: make a FULL-HISTORY scan (`gitleaks detect`) come back clean, so a genuinely
+# new secret is visible instead of being lost among inherited noise. Without this, a full
+# scan reports 32 findings — every one triaged on 2026-09-06 as either third-party archived
+# data or an example/test placeholder, none a Flow-Wiser secret — and that constant noise is
+# exactly what lets a real leak hide. The CI job scans new commits per push and stays green;
+# this file makes the deeper scan meaningful too.
+#
+# useDefault keeps the entire built-in ruleset. The allowlist below is deliberately narrow:
+# whole-tree only for upstream-archive/ (third-party captured material), and specific files
+# for placeholders and test fixtures. A real secret added anywhere else — including new files
+# under these packages — is still caught.
+
+title = "Flow-Wiser gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Inherited upstream noise and known non-secret fixtures (triaged 2026-09-06)"
+
+paths = [
+    # Third-party material captured before upstream's 2026-08-10 archival: advisory JSON,
+    # issue/discussion exports, and community PR patches. The embedded JWTs, API keys and
+    # AWS tokens belong to upstream reporters and examples, not to Flow-Wiser. This tree is
+    # also excluded from the image (.dockerignore) and the linters.
+    '''upstream-archive/''',
+
+    # Example OpenAI key in an upstream example file (deleted from the current tree; present
+    # only in history) and the example API-doc spec.
+    '''packages/server/src/example\.ts''',
+    '''packages/api-documentation/src/yml/swagger\.yml''',
+
+    # Placeholder value: metrics/otel/otel.config.yml ships `key: "replace_api_key"`.
+    '''metrics/otel/otel\.config\.yml''',
+
+    # Dummy tokens in unit-test fixtures, e.g. `const token = 'abcdef1234567890abcdef1234567890'`.
+    '''packages/server/src/services/mcp-server/index\.test\.ts''',
+    '''packages/server/test/enterprise/utils/url\.util\.test\.ts''',
+]

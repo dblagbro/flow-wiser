@@ -58,7 +58,8 @@ jobs:
               run: |
                   set -euo pipefail
                   BAD=$(git ls-files \
-                    | grep -iE 'credentials-backup|\.sqlite3?$|\.env$|\.pem$|\.p12$|id_rsa|service-account.*\.json' \
+                    | grep -iE 'credentials-backup|\.sqlite3?$|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$|\.p12$|\.pfx$|\.keystore$|\.jks$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$|service-account.*\.json$|secret.*\.json$' \
+                    | grep -vE '(^|/)\.env\.example$' \
                     || true)
                   if [ -n "$BAD" ]; then
                     echo "::error::Secret-shaped files are tracked in git:"
