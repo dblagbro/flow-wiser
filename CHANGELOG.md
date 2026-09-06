@@ -30,6 +30,22 @@ first.
 
 ## [Unreleased]
 
+### Security — closed a Docker credential-leak path and applied dependency fixes
+
+-   **SEC-B-10 (critical):** the root `Dockerfile` does `COPY . .` and `.dockerignore` did not
+    exclude `*credentials-backup*`, so the production credential export in the working directory
+    could bake into an image layer and publish on a Docker Hub push. `.dockerignore` is now in step
+    with the other three ignore lists, and the Dockerfile fails the build if any credential/key
+    artifact reaches the context. Both halves tested.
+-   Secret scanning hardened: `.husky/pre-push` regex widened (`.key`, `.pfx`, keystores, non-rsa
+    SSH keys, `*secret*.json`, `.env.<env>`), the CI tracked-file check aligned, and a `.gitleaks.toml`
+    added so a full-history scan is clean (0 leaks) instead of 32 inherited example/archive findings.
+-   **SEC-DEP-01:** same-major security bumps via `pnpm.overrides` (the mechanism that actually moves
+    the resolved tree here) — four of six open Dependabot criticals (handlebars, shell-quote,
+    websocket-driver, fast-xml-parser) plus axios, ws, node-forge, @xmldom/xmldom, @grpc/grpc-js and
+    others. Verified in the built image, which boots clean. Major-bump-only and no-patch cases
+    (tar, nodemailer, undici@6, xlsx, expr-eval) deferred with reasons in `docs/bug-log.md`.
+
 ### Fixed — Account Settings could not change your own password, and hid the outcome
 
 Two defects on `/account`, found by auditing the deployed instance with Playwright.
