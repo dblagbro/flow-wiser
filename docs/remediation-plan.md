@@ -620,13 +620,19 @@ migrations and a test asserting parity. Do not "fix" counts by generating stubs.
 
 ### RM-08 · QA documents are pinned to `3.1.4-fw8` while the tree is `fw10`
 
-**Status:** OPEN · **Opened:** 2026-08-11
+**Status:** PARTIAL · **Opened:** 2026-08-11 · **Current-state drift corrected 2026-09-11**
 
 `testing.md`, `bug-log.md` and `release-readiness.md` describe the fw8 QA run. Whether each fw8
 finding is closed, superseded or still open at fw10 is unverified.
 
-**Action:** a `master-qa` run at fw10, appending a new dated section to each rather than
-overwriting the fw8 record.
+**Done 2026-09-11 (drift correction):** `STATUS.md` now states fw10 as the current, deployed
+build (it had said fw8 was "the build to deploy"); `testing.md` and `release-readiness.md` carry
+a dated banner marking them as the fw8 point-in-time record with fw10 current. This stops a reader
+mistaking fw8 for the current state.
+
+**Still outstanding:** a `master-qa` run at fw10, appending a new dated section to each rather than
+overwriting the fw8 record. The drift is corrected; the fresh QA sweep is not a doc edit and remains
+open.
 
 ## Priority 4 — coverage gaps
 

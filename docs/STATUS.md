@@ -1,6 +1,6 @@
 # Status — building in the open
 
-**Last updated: 2026-08-09**
+**Last updated: 2026-09-11**
 
 This project is developed in public, including the unfinished parts. Work-in-progress is
 pushed as it is written, before it compiles or runs.
@@ -18,15 +18,27 @@ That is deliberate, for three reasons:
 
 ## What actually works right now
 
-**`3.1.4-fw8` is released and is the build to deploy.** It is Apache-2.0-only, it boots, a
-fresh install works, and — new in fw8 — its released commit passes CI.
+**`3.1.4-fw10` is the current build and is what is deployed.** It is Apache-2.0-only, it
+boots, a fresh install works, and its commit passes CI. Production runs
+`dblagbro/flow-wiser:3.1.4-fw10-askdevin2` (the account-page password fix, UI-08/09), with
+`askdevin3` — the same tree plus the secret-egress and dependency security hardening below —
+built, verified and staged for deploy.
 
-That last clause is the point of the release. `fw5`, `fw6` and `fw7` were tagged, published
-and deployed while Node CI was failing, and nothing said so; a 30-test suite covering the
-recovery CLI had never executed at all. The code in those releases was sound and is running
-in production, but the _evidence_ for it was not, and this page has said "✅ Shipped" in
-places where the check backing it was not running. `docs/PROCESS-GAPS.md` (G9–G11) records
-how that happened and what now prevents it.
+> **Update 2026-09-11 — security pass (SEC-B-10, SEC-DEP-01).** Closed a critical
+> credential-leak path (`COPY . .` + a `.dockerignore` that did not exclude credential
+> exports — a build could have baked the production credential dump into an image layer),
+> hardened the secret-scanning controls (pre-push, gitleaks CI, `.gitleaks.toml`), and
+> applied same-major dependency fixes for the open Dependabot criticals/highs. The same fix
+> is proposed for `main` in PR #30. See `docs/bug-log.md` (SEC-B-10, SEC-DEP-01) and
+> `CHANGELOG.md`. A full `master-qa` sweep at fw10 is still outstanding (RM-08).
+
+The "passes CI" clause has been the point since **fw8**, which was the first release whose
+commit CI actually verified. `fw5`, `fw6` and `fw7` were tagged, published and deployed while
+Node CI was failing, and nothing said so; a 30-test suite covering the recovery CLI had never
+executed at all. The code in those releases was sound and is running in production, but the
+_evidence_ for it was not, and this page had said "✅ Shipped" in places where the check
+backing it was not running. `docs/PROCESS-GAPS.md` (G9–G11) records how that happened and what
+now prevents it.
 
 **Read [BASELINE-3.1.4-fw8.md](BASELINE-3.1.4-fw8.md) before testing anything.** It states
 what is verified, by which check, and what is explicitly not fixed.
@@ -43,29 +55,29 @@ what is verified, by which check, and what is explicitly not fixed.
 > archive that may yet happen — but it is a snapshot, not a rescue, and it was already stale
 > within 48 hours. See [`../upstream-archive/DELTA-2026-08-12.md`](../upstream-archive/DELTA-2026-08-12.md).
 
-| Thing                                                                  | State                                                                                                        |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **`3.1.4-fw8` — Apache-2.0-only**                                      | ✅ **Released.** Built from source at `dblagbro/flow-wiser`                                                  |
-| The 127 commercially licensed files                                    | ✅ Deleted, and the build fails if any trace returns                                                         |
-| Authentication, sessions, SSO login methods                            | ✅ Shipped                                                                                                   |
-| MFA — TOTP + hashed recovery codes                                     | ✅ Shipped. Upstream had none                                                                                |
-| RBAC — 82 permissions, server-side, deny-by-default                    | ✅ Shipped                                                                                                   |
-| Multi-tenancy — organisations, workspaces, tenant key                  | ✅ Shipped                                                                                                   |
-| Audit trail, encryption at rest with key rotation                      | ✅ Shipped                                                                                                   |
-| Recovery CLI — nine commands, `/dev/tty` passwords only                | ✅ Shipped                                                                                                   |
-| Migration from an existing Flowise 3.x database                        | ✅ Shipped, verified against a production copy                                                               |
-| Fresh install on SQLite / Postgres / MySQL / MariaDB                   | ✅ Fixed and verified                                                                                        |
-| Docker image version pinning                                           | ✅ Fixed and shipped                                                                                         |
-| `connect-sqlite3` boot crash (upstream #6688)                          | ✅ Root-caused, fixed, reported upstream — and now unreachable, the file that threw is deleted               |
-| `NODE_VERSION=24` unbuildable default                                  | ✅ Fixed                                                                                                     |
-| `vm2` 3.11.2 → 3.11.5 (6 critical sandbox escapes)                     | ✅ Fixed in the source tree as of `fw4`; before that, only in the npm-install Dockerfile                     |
-| Upstream archive (347 PRs, 698 issues, 116 advisories)                 | ✅ Captured 2026-08-05 · refreshed 2026-08-12 — see note below                                               |
-| Chatflow version history                                               | ✅ Shipped in `fw5` — git-backed, `isomorphic-git`                                                           |
-| Credential encryption — AES-256-GCM, key versioning, rotation          | ✅ Shipped in `fw6`. Legacy `crypto-js` records still readable; `credential:rotate-encryption` migrates them |
-| Audit export with a reproducible SHA-256 manifest, and retention       | ✅ Shipped in `fw6`/`fw7`                                                                                    |
-| `CODE_EXECUTION_MODE` — `disabled` \| `e2b` \| `vm2`, e2b fails closed | ✅ Shipped in `fw7`                                                                                          |
-| HSTS at the edge                                                       | ✅ Shipped in `fw8`, verified from outside the network                                                       |
-| CI green on the released commit — 974 tests, lint, build, Cypress      | ✅ First true in `fw8`                                                                                       |
+| Thing                                                                               | State                                                                                                        |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **`3.1.4-fw10` — Apache-2.0-only** (current; fw8 was the first CI-verified release) | ✅ **Released and deployed** (`…-askdevin2`). Built from source at `dblagbro/flow-wiser`                     |
+| The 127 commercially licensed files                                                 | ✅ Deleted, and the build fails if any trace returns                                                         |
+| Authentication, sessions, SSO login methods                                         | ✅ Shipped                                                                                                   |
+| MFA — TOTP + hashed recovery codes                                                  | ✅ Shipped. Upstream had none                                                                                |
+| RBAC — 82 permissions, server-side, deny-by-default                                 | ✅ Shipped                                                                                                   |
+| Multi-tenancy — organisations, workspaces, tenant key                               | ✅ Shipped                                                                                                   |
+| Audit trail, encryption at rest with key rotation                                   | ✅ Shipped                                                                                                   |
+| Recovery CLI — nine commands, `/dev/tty` passwords only                             | ✅ Shipped                                                                                                   |
+| Migration from an existing Flowise 3.x database                                     | ✅ Shipped, verified against a production copy                                                               |
+| Fresh install on SQLite / Postgres / MySQL / MariaDB                                | ✅ Fixed and verified                                                                                        |
+| Docker image version pinning                                                        | ✅ Fixed and shipped                                                                                         |
+| `connect-sqlite3` boot crash (upstream #6688)                                       | ✅ Root-caused, fixed, reported upstream — and now unreachable, the file that threw is deleted               |
+| `NODE_VERSION=24` unbuildable default                                               | ✅ Fixed                                                                                                     |
+| `vm2` 3.11.2 → 3.11.5 (6 critical sandbox escapes)                                  | ✅ Fixed in the source tree as of `fw4`; before that, only in the npm-install Dockerfile                     |
+| Upstream archive (347 PRs, 698 issues, 116 advisories)                              | ✅ Captured 2026-08-05 · refreshed 2026-08-12 — see note below                                               |
+| Chatflow version history                                                            | ✅ Shipped in `fw5` — git-backed, `isomorphic-git`                                                           |
+| Credential encryption — AES-256-GCM, key versioning, rotation                       | ✅ Shipped in `fw6`. Legacy `crypto-js` records still readable; `credential:rotate-encryption` migrates them |
+| Audit export with a reproducible SHA-256 manifest, and retention                    | ✅ Shipped in `fw6`/`fw7`                                                                                    |
+| `CODE_EXECUTION_MODE` — `disabled` \| `e2b` \| `vm2`, e2b fails closed              | ✅ Shipped in `fw7`                                                                                          |
+| HSTS at the edge                                                                    | ✅ Shipped in `fw8`, verified from outside the network                                                       |
+| CI green on the released commit — 974 tests, lint, build, Cypress                   | ✅ First true in `fw8`                                                                                       |
 
 ## What is not done
 
