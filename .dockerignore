@@ -17,11 +17,41 @@ packages/ui/.env
 **/.env.*.local
 
 # Local databases and secrets must never enter the build context either.
+#
+# This list MUST stay in step with the secret section of .gitignore, .prettierignore
+# and .eslintrc.js ignorePatterns (AGENTS.md §9). It was NOT: the root Dockerfile does
+# `COPY . .`, and a real production credential export (flowise-credentials-backup-*.json,
+# root-owned 0600) sits in the working directory. Excluded from git and the linters but
+# NOT here, it would have entered the build context and baked into an image layer under
+# `COPY . .` — and a Docker Hub push would have published production credentials. The
+# Dockerfile now also asserts no such artifact reached the image, as defense in depth.
 *.sqlite
 *.sqlite3
 *.db
 **/*.pem
 **/*.key
+**/*.keys
+**/*.p12
+**/*.pfx
+**/*.keystore
+**/*.jks
+# Credential exports and database dumps (the real leak that motivated this block).
+flowise-credentials-backup-*.json
+*credentials-backup*
+# Private keys and cloud service-account material.
+**/id_rsa
+**/id_dsa
+**/id_ecdsa
+**/id_ed25519
+**/*service-account*.json
+**/*secret*.json
+# Any .env variant, keeping the example templates.
+**/.env
+**/.env.*
+!**/.env.example
+# Config backups that may embed secrets (e.g. compose/nginx snapshots).
+**/*.bak
+**/*.bak-*
 
 # Maintainer material, not runtime material.
 #
