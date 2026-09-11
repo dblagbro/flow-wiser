@@ -1,5 +1,10 @@
 # Test plan and coverage — `3.1.4-fw8-rc2`
 
+> **Note 2026-09-11:** this is the **fw8** QA record, kept as-is. The current tree is **fw10**
+> (deployed as `…-askdevin2`). A full `master-qa` sweep at fw10 has not been run — it is tracked
+> as **RM-08** in `docs/remediation-plan.md`. Security work landed since fw8 is in
+> `docs/bug-log.md` (SEC-B-09, SEC-B-10, SEC-DEP-01) and `CHANGELOG.md`.
+
 **Run started:** 2026-08-09 · **Status:** Phase 2 in progress
 
 ## Release target under test

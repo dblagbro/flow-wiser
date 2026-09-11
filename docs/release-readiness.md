@@ -1,21 +1,26 @@
 # Release readiness — `3.1.4-fw8`
 
+> **Note 2026-09-11:** this document records the **fw8** release assessment and is kept as the
+> point-in-time record. The current tree is **fw10** (deployed as `…-askdevin2`; `askdevin3`
+> staged). A fresh release-readiness assessment at fw10 is tracked as **RM-08** in
+> `docs/remediation-plan.md`. Do not read the verdict below as the current state.
+
 **Verdict: NOT RELEASABLE as `rc2`. Blocked on redeploy and re-verification of `rc3`.**
 
 **Assessed:** 2026-08-10 · **Candidate:** `3.1.4-fw8-rc3` (building) · **Branch:** `fix/open-core-route-gating`, PR #8
 
 ## Gate status
 
-| Gate | State |
-|---|---|
-| CI on the release commit | ✅ green (required checks pass) |
-| Lint / build / tests | ✅ 0 errors · 6/6 packages · 980 tests |
-| Test discovery | ✅ 156/156 — no suite silently unrun |
-| Nine QA blockers | ✅ fixed in the tree |
-| **Fixes verified on a built image** | ❌ **NOT DONE** — this is the gate |
+| Gate                                     | State                                                         |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| CI on the release commit                 | ✅ green (required checks pass)                               |
+| Lint / build / tests                     | ✅ 0 errors · 6/6 packages · 980 tests                        |
+| Test discovery                           | ✅ 156/156 — no suite silently unrun                          |
+| Nine QA blockers                         | ✅ fixed in the tree                                          |
+| **Fixes verified on a built image**      | ❌ **NOT DONE** — this is the gate                            |
 | **Live disclosure closed in production** | ❌ **STILL OPEN** — fix is in the tree, production runs `rc2` |
-| QA artifacts removed | ❌ three containers, 305 test credentials still up |
-| Exposed credential rotated | ❌ operator action |
+| QA artifacts removed                     | ❌ three containers, 305 test credentials still up            |
+| Exposed credential rotated               | ❌ operator action                                            |
 
 ## Why rc2 cannot ship
 
