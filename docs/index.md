@@ -75,15 +75,16 @@ If that changes, add `design.md` and list it here.
 
 ## Release and platform
 
-| Topic                                | Authoritative                                    | Kind          |
-| ------------------------------------ | ------------------------------------------------ | ------------- |
-| Release gate status and criteria     | [`release-readiness.md`](release-readiness.md)   | standing      |
-| User-visible change history          | [`../CHANGELOG.md`](../CHANGELOG.md)             | append-only   |
-| Release notes                        | `RELEASE-NOTES-*.md`                             | point-in-time |
-| Publication procedure                | `PUBLISH-*.md`                                   | point-in-time |
-| Version baseline                     | [`BASELINE-3.1.4-fw8.md`](BASELINE-3.1.4-fw8.md) | point-in-time |
-| Backup, recovery, irreplaceable data | [`backup-plan.md`](backup-plan.md)               | standing      |
-| Container / K8s / cloud posture      | [`platform-roadmap.md`](platform-roadmap.md)     | standing      |
+| Topic                                | Authoritative                                              | Kind          |
+| ------------------------------------ | ---------------------------------------------------------- | ------------- |
+| Release gate status and criteria     | [`release-readiness.md`](release-readiness.md)             | standing      |
+| User-visible change history          | [`../CHANGELOG.md`](../CHANGELOG.md)                       | append-only   |
+| Release notes                        | `RELEASE-NOTES-*.md`                                       | point-in-time |
+| Publication procedure                | `PUBLISH-*.md`                                             | point-in-time |
+| Version baseline                     | [`BASELINE-3.1.4-fw8.md`](BASELINE-3.1.4-fw8.md)           | point-in-time |
+| Backup, recovery, irreplaceable data | [`backup-plan.md`](backup-plan.md)                         | standing      |
+| Secret rotation / deploy runbook     | [`RUNBOOK-secret-rotation.md`](RUNBOOK-secret-rotation.md) | standing      |
+| Container / K8s / cloud posture      | [`platform-roadmap.md`](platform-roadmap.md)               | standing      |
 
 ## Market
 
