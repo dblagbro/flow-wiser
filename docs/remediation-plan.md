@@ -211,14 +211,19 @@ is that a workflow named as a control contributes nothing.
 
 ### RM-05 · `.husky/pre-push` protects nothing here
 
-**Status:** OPEN · **Opened:** 2026-08-11 · **Low risk, needs confirmation**
+**Status:** ✅ **CLOSED 2026-09-06** — replaced with a real guard, both halves verified
 
-It triggers only when the push URL matches `FlowiseAI/Flowise`, and blocks `extensions/` and
-`apps/` — neither of which exists in this repository. Inherited upstream cruft. It gives a false
-impression that pushes are guarded.
+It used to trigger only when the push URL matched `FlowiseAI/Flowise`, blocking `extensions/` and
+`apps/` — neither of which exists here. Inherited upstream cruft that gave a false impression pushes
+were guarded.
 
-**Action:** replace with a guard meaningful here (licensed paths, secret patterns) or remove it.
-Touches push behaviour, so **confirm with a human** before changing.
+**Done:** `.husky/pre-push` now guards, on every push regardless of remote: licensed paths
+(`enterprise/`, `IdentityManager.ts`) and secret-shaped files (credential exports, `.env`/`.env.<env>`,
+`.pem`/`.key`/`.p12`/`.pfx`/keystores, SSH keys, `*secret*.json`, `service-account*.json`; `.env.example`
+excluded). Verified end-to-end through the husky path that actually runs (per the RM-05→G1 lesson): a
+force-added `server.key` is REJECTED (exit 1), an ordinary file passes (exit 0). The same hardened
+pattern is mirrored in `.gitignore`, `.dockerignore`, `.prettierignore`, `.eslintrc.js` and the CI
+tracked-file check (AGENTS.md §9). See `docs/bug-log.md` SEC-B-10.
 
 ### RM-13 · pnpm's skipped build scripts — deliberate policy, not a gap
 
