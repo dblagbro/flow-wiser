@@ -1,6 +1,6 @@
 # Status — building in the open
 
-**Last updated: 2026-09-11**
+**Last updated: 2026-09-16**
 
 This project is developed in public, including the unfinished parts. Work-in-progress is
 pushed as it is written, before it compiles or runs.
@@ -20,9 +20,11 @@ That is deliberate, for three reasons:
 
 **`3.1.4-fw10` is the current build and is what is deployed.** It is Apache-2.0-only, it
 boots, a fresh install works, and its commit passes CI. Production runs
-`dblagbro/flow-wiser:3.1.4-fw10-askdevin2` (the account-page password fix, UI-08/09), with
-`askdevin3` — the same tree plus the secret-egress and dependency security hardening below —
-built, verified and staged for deploy.
+`dblagbro/flow-wiser:3.1.4-fw10-askdevin3` (deployed 2026-09-13; the account-page password
+fix UI-08/09, plus the secret-egress and dependency security hardening below). `TRUST_PROXY`
+is set (SEC-B-09). **Still pending:** the encryption-key/pepper rotation (SEC-B-08) — the
+running keyring reports `active=v1` (single key), so the rotation in `secure-prod.sh` has not
+been applied; those secret values are unchanged.
 
 > **Update 2026-09-11 — security pass (SEC-B-10, SEC-DEP-01).** Closed a critical
 > credential-leak path (`COPY . .` + a `.dockerignore` that did not exclude credential
@@ -57,7 +59,7 @@ what is verified, by which check, and what is explicitly not fixed.
 
 | Thing                                                                               | State                                                                                                        |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **`3.1.4-fw10` — Apache-2.0-only** (current; fw8 was the first CI-verified release) | ✅ **Released and deployed** (`…-askdevin2`). Built from source at `dblagbro/flow-wiser`                     |
+| **`3.1.4-fw10` — Apache-2.0-only** (current; fw8 was the first CI-verified release) | ✅ **Released and deployed** (`…-askdevin3`, 2026-09-13). Built from source at `dblagbro/flow-wiser`         |
 | The 127 commercially licensed files                                                 | ✅ Deleted, and the build fails if any trace returns                                                         |
 | Authentication, sessions, SSO login methods                                         | ✅ Shipped                                                                                                   |
 | MFA — TOTP + hashed recovery codes                                                  | ✅ Shipped. Upstream had none                                                                                |
