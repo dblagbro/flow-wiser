@@ -123,7 +123,7 @@
         }
     },
     "engines": {
-        "node": "^24",
+        "node": "^22",
         "pnpm": "^10.26.0"
     },
     "resolutions": {

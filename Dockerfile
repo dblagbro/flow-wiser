@@ -1,7 +1,7 @@
 # Build the monorepo from source.
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22 \
 #     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 #
@@ -23,7 +23,7 @@
 # ("gyp ERR! not ok", node-gyp 8.4.1), and every published flowiseai/flowise image
 # actually runs v20.20.2 -- so the 24 here could never have produced a working build.
 # Same defect as docker/Dockerfile's ARG NODE_VERSION=24, fixed there in an earlier commit.
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-alpine
 
 # Install system dependencies and build tools
