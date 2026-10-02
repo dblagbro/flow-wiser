@@ -135,18 +135,25 @@ export class TypeORMDriver extends VectorStoreDriver {
                 return documentRow
             })
 
-            const documentRepository = instance.appDataSource.getRepository(instance.documentEntity)
             const _batchSize = this.nodeData.inputs?.batchSize
             const chunkSize = _batchSize ? parseInt(_batchSize, 10) : 500
 
-            for (let i = 0; i < rows.length; i += chunkSize) {
-                const chunk = rows.slice(i, i + chunkSize)
-                try {
-                    await documentRepository.save(chunk)
-                } catch (e) {
-                    console.error(e)
-                    throw new Error(`Error inserting: ${chunk[0].pageContent}`)
-                }
+            // Atomic upsert (#5611 / SEC-B-13): the chunks were each saved in their own transaction,
+            // so a mid-batch failure left earlier chunks committed and the document store stuck at
+            // UPSERTING forever. Wrap the whole batch in one transaction — all chunks commit or none do.
+            try {
+                await instance.appDataSource.transaction(async (manager) => {
+                    const txRepository = manager.getRepository(instance.documentEntity)
+                    for (let i = 0; i < rows.length; i += chunkSize) {
+                        await txRepository.save(rows.slice(i, i + chunkSize))
+                    }
+                })
+            } catch (e) {
+                // Surface the REAL fault, not the document's page content (which both hid the actual
+                // error from the caller and leaked document text into logs/error messages).
+                const detail = e instanceof Error ? e.message : String(e)
+                console.error('[Postgres vectorstore] upsert failed:', detail)
+                throw new Error(`Error inserting documents into Postgres vector store: ${detail}`)
             }
         }
 

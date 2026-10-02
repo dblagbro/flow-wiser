@@ -13,7 +13,10 @@ export enum DocumentStoreStatus {
     STALE = 'STALE',
     NEW = 'NEW',
     UPSERTING = 'UPSERTING',
-    UPSERTED = 'UPSERTED'
+    UPSERTED = 'UPSERTED',
+    // #5611: a failed upsert had no state to land in, so the store sat at UPSERTING forever. A
+    // failure is now representable and set by the upsert error path.
+    FAILED = 'FAILED'
 }
 
 export interface IDocumentStore {
