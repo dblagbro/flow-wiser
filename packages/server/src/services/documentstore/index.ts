@@ -1276,9 +1276,10 @@ export const insertIntoVectorStore = async ({
     orgId,
     workspaceId
 }: IExecuteVectorStoreInsert) => {
+    let entity: DocumentStore | undefined
     try {
         // Step 1: Save configuration based on isStrictSave mode
-        const entity = await saveVectorStoreConfig(appDataSource, data, isStrictSave, workspaceId)
+        entity = await saveVectorStoreConfig(appDataSource, data, isStrictSave, workspaceId)
 
         // Step 2: Mark as UPSERTING before starting the operation
         entity.status = DocumentStoreStatus.UPSERTING
@@ -1289,6 +1290,16 @@ export const insertIntoVectorStore = async ({
         const indexResult = await _insertIntoVectorStoreWorkerThread(appDataSource, componentNodes, telemetry, data, orgId, workspaceId)
         return indexResult
     } catch (error) {
+        // #5611: a failed upsert must land in FAILED, not stay stuck at UPSERTING. Best-effort; a
+        // status-write failure here must not mask the original error.
+        if (entity) {
+            try {
+                entity.status = DocumentStoreStatus.FAILED
+                await appDataSource.getRepository(DocumentStore).save(entity)
+            } catch (statusError) {
+                getErrorMessage(statusError)
+            }
+        }
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: documentStoreServices.insertIntoVectorStore - ${getErrorMessage(error)}`

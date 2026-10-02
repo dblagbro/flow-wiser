@@ -3,8 +3,70 @@ import {
     convertRequireToImport,
     COMMONJS_REQUIRE_REGEX,
     IMPORT_EXTRACTION_REGEX,
-    executeJavaScriptCode
+    executeJavaScriptCode,
+    credentialAccessibleToWorkspace,
+    getCredentialData
 } from './utils'
+
+// SEC-B-12: getCredentialData decrypts and returns stored secrets. It must not hand a credential to
+// a workspace that neither owns it nor has it shared in. These tests pin the access decision and the
+// fail-closed behaviour of getCredentialData itself (it must return {} before ever decrypting).
+describe('SEC-B-12 credential workspace scoping', () => {
+    const CredentialEntity = { name: 'Credential' }
+    const WorkspaceSharedEntity = { name: 'WorkspaceShared' }
+
+    const makeOptions = (workspaceId: string | undefined, sharedRow: any, { credential }: { credential?: any } = {}) => {
+        const credRepo = { findOneBy: jest.fn().mockResolvedValue(credential ?? null) }
+        const sharedRepo = { findOneBy: jest.fn().mockResolvedValue(sharedRow) }
+        return {
+            workspaceId,
+            databaseEntities: { Credential: CredentialEntity, WorkspaceShared: WorkspaceSharedEntity },
+            appDataSource: {
+                getRepository: (e: any) => (e === WorkspaceSharedEntity ? sharedRepo : credRepo)
+            },
+            _sharedRepo: sharedRepo
+        } as any
+    }
+
+    describe('credentialAccessibleToWorkspace', () => {
+        it('allows when there is no workspace context (CLI/internal) — unchanged behaviour', async () => {
+            const opts = makeOptions(undefined, null)
+            expect(await credentialAccessibleToWorkspace({ id: 'c1', workspaceId: 'A' }, opts)).toBe(true)
+        })
+
+        it('allows a credential owned by the current workspace', async () => {
+            const opts = makeOptions('A', null)
+            expect(await credentialAccessibleToWorkspace({ id: 'c1', workspaceId: 'A' }, opts)).toBe(true)
+            expect(opts._sharedRepo.findOneBy).not.toHaveBeenCalled()
+        })
+
+        it('allows a foreign credential that is explicitly shared into the workspace', async () => {
+            const opts = makeOptions('B', { id: 's1' })
+            expect(await credentialAccessibleToWorkspace({ id: 'c1', workspaceId: 'A' }, opts)).toBe(true)
+            expect(opts._sharedRepo.findOneBy).toHaveBeenCalledWith({ workspaceId: 'B', sharedItemId: 'c1', itemType: 'credential' })
+        })
+
+        it('DENIES a foreign credential that is not shared (the IDOR the patch would have enabled)', async () => {
+            const opts = makeOptions('B', null)
+            expect(await credentialAccessibleToWorkspace({ id: 'c1', workspaceId: 'A' }, opts)).toBe(false)
+        })
+
+        it('fails closed when the share lookup throws', async () => {
+            const opts = makeOptions('B', null)
+            opts._sharedRepo.findOneBy.mockRejectedValue(new Error('db down'))
+            expect(await credentialAccessibleToWorkspace({ id: 'c1', workspaceId: 'A' }, opts)).toBe(false)
+        })
+    })
+
+    describe('getCredentialData fails closed before decrypting', () => {
+        it('returns {} for a foreign, non-shared credential (secret never decrypted/returned)', async () => {
+            // encryptedData is deliberately junk: if the guard failed open, decrypt would run and throw,
+            // not return {}. Getting {} proves we refused before touching the secret.
+            const opts = makeOptions('B', null, { credential: { id: 'c1', workspaceId: 'A', encryptedData: 'not-decryptable' } })
+            expect(await getCredentialData('c1', opts)).toEqual({})
+        })
+    })
+})
 
 describe('removeInvalidImageMarkdown', () => {
     describe('strips non-http/https image markdown', () => {
