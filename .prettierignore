@@ -22,3 +22,7 @@ flowise-credentials-backup-*.json
 **/*secret*.json
 **/*.pem
 **/*.key
+
+# sealed secret backups (docs/SECRET-HANDLING-PROTOCOL.md) — never commit, even encrypted
+secrets-sealed-*
+**/secrets-sealed-*

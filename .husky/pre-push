@@ -35,7 +35,7 @@ LICENSED='^packages/server/src/(enterprise/|IdentityManager\.ts)'
 # and .eslintrc.js (AGENTS.md §9). The earlier pattern missed .key, .pfx, keystores,
 # the non-rsa SSH key types, *secret*.json, and any .env.<env> variant -- each a way a
 # real secret could have shipped. .env.example templates are excluded below.
-SECRETS='(credentials-backup|\.sqlite3?$|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$|\.p12$|\.pfx$|\.keystore$|\.jks$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$|service-account.*\.json$|secret.*\.json$)'
+SECRETS='(credentials-backup|secrets-sealed|\.sqlite3?$|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$|\.p12$|\.pfx$|\.keystore$|\.jks$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$|service-account.*\.json$|secret.*\.json$)'
 
 fail=0
 

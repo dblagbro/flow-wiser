@@ -65,3 +65,7 @@ upstream-archive
 .git
 .github
 .githooks
+
+# sealed secret backups (docs/SECRET-HANDLING-PROTOCOL.md) — never commit, even encrypted
+secrets-sealed-*
+**/secrets-sealed-*
