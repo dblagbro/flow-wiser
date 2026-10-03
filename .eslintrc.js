@@ -32,6 +32,7 @@ module.exports = {
         // of .gitignore -- keep the two in step. See AGENTS.md section 9.
         '**/flowise-credentials-backup-*.json',
         '**/*credentials-backup*',
+        '**/secrets-sealed-*',
         '**/*.sqlite',
         '**/*.sqlite3',
         '**/.env',
