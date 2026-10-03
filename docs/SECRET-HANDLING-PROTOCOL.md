@@ -85,3 +85,31 @@ keyring uses (`identity/crypto/keyring.ts`).
 -   The agent never receives the private key or any passphrase.
 -   Sealed backups and `.env` files are never committed (enforced by `.gitignore` / `.dockerignore` /
     pre-push; see AGENTS.md §9).
+-   Sealed backups and `.env` files are never committed — enforce `secrets-sealed-*`, `.env`,
+    `*credentials-backup*`, keys, and db dumps in **every** ignore list a project uses (gitignore,
+    dockerignore, prettierignore, eslint ignore, pre-push hook).
+
+## Lifecycle tool: `secrets-keyctl.sh`
+
+One command for the whole lifecycle (you run it; your passphrase goes to GPG, never to the agent):
+
+    ./secrets-keyctl.sh init          # create keypair + export public key
+    ./secrets-keyctl.sh backup-key    # export PRIVATE key to a 0600 file -> move offline
+    ./secrets-keyctl.sh status        # key fingerprint, pubkey path, sealed backups
+    ./secrets-keyctl.sh rotate        # mint + apply + seal new secrets (wraps rotate-and-seal.sh)
+    ./secrets-keyctl.sh reinit        # exposure protocol: new keypair (then run rotate)
+    ./secrets-keyctl.sh reset         # remove local key material (double-confirm)
+
+## Granting the agent transient access (rare)
+
+The protocol is built so the agent almost never needs a plaintext secret — values flow host->file,
+not through chat. For the rare case where a command genuinely needs an existing secret:
+
+    ./secrets-keyctl.sh grant <VAR> [ttl]     # you run this; GPG prompts your passphrase
+
+`grant` decrypts just that one value into a `0600` tmpfs file (`$GRANT_DIR/<VAR>`) that auto-shreds
+after `ttl` seconds (default 300). It prints only a fingerprint + the path. The agent then uses it
+**by reference** (`export VAR="$(cat $GRANT_DIR/VAR)"`) and never prints it. `revoke` shreds all
+grants immediately. Your GPG passphrase, entered to GPG locally, is the "one-time approval" — it
+never reaches the agent. (A push-to-phone / tap-to-approve gate can be layered on top later; it needs
+a small approval service and is not required for the above to work.)
