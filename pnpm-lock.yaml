@@ -39,7 +39,7 @@ overrides:
   tmp: '>=0.2.4'
   '@elastic/transport': '>=8.9.3'
   '@modelcontextprotocol/sdk': '>=1.25.2'
-  multer: '>=2.3.0 <3'
+  multer: '>=2.4.0 <3'
   basic-ftp: 5.2.1
   convict: 6.2.5
   vm2: 3.11.6
@@ -1131,8 +1131,8 @@ importers:
         specifier: ^0.5.34
         version: 0.5.45
       multer:
-        specifier: '>=2.3.0 <3'
-        version: 2.3.0
+        specifier: '>=2.4.0 <3'
+        version: 2.4.0
       multer-azure-blob-storage:
         specifier: ^1.2.0
         version: 1.2.0
@@ -15463,8 +15463,8 @@ packages:
     peerDependencies:
       '@aws-sdk/client-s3': ^3.0.0
 
-  multer@2.3.0:
-    resolution: {integrity: sha512-cjNbm3sttszgZeGfJR124D+jFEfkXCVAsoPBmFn9X7UxmDSFHWqE2CoEj0vrmSpuAFnqWR1Szcm9QTsiHr60Xw==}
+  multer@2.4.0:
+    resolution: {integrity: sha512-7dqa0ZcFfzbefdTuIkzOSMvZWC0J7FLqBOjJUZvDCXShIURWKxAyTT1wHhnE5q19c7jOJf43IYYKjBmZVZmvhg==}
     engines: {node: '>= 10.16.0'}
 
   multicast-dns@7.2.5:
@@ -34614,7 +34614,7 @@ snapshots:
       express: 4.21.2
       form-data: 4.0.4
       lodash: 4.17.21
-      multer: 2.3.0
+      multer: 2.4.0
       node-fetch: 3.3.2
       prettier: 3.2.5
       solid-element: 1.7.0(solid-js@1.9.11)
@@ -39202,7 +39202,7 @@ snapshots:
     dependencies:
       azure-storage: 2.10.7
       express: 4.21.2
-      multer: 2.3.0
+      multer: 2.4.0
       path: 0.12.7
       uuid: 10.0.0
     transitivePeerDependencies:
@@ -39212,7 +39212,7 @@ snapshots:
     dependencies:
       '@google-cloud/storage': 7.16.0(encoding@0.1.13)
       '@types/express': 5.0.1
-      multer: 2.3.0
+      multer: 2.4.0
       urlencode: 2.0.0
       uuid: 10.0.0
     transitivePeerDependencies:
@@ -39227,11 +39227,10 @@ snapshots:
       html-comment-regex: 1.1.2
       run-parallel: 1.2.0
 
-  multer@2.3.0:
+  multer@2.4.0:
     dependencies:
       append-field: 1.0.0
       busboy: 1.6.0
-      concat-stream: 2.0.0
       type-is: 1.6.18
 
   multicast-dns@7.2.5:
