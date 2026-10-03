@@ -13,11 +13,19 @@ scoped for a proper fix.
 
 ## 1. Summary
 
-On 2026-10-01 an automated agent ("Iris", `iris-116@ilands.app`) sent two unsolicited emails to the
-maintainer offering a ready-to-apply patch for the Flow-Wiser fork, citing upstream Flowise bug
-**#5611** (a real, archived upstream issue). The patch targets `getCredentialData` — the function
-that **decrypts and returns stored credentials** — and proposes making it resolve credentials **by
-name** when a lookup by id misses.
+On 2026-10-01/02, **two automated agents on the iLands platform** — "Iris" (`iris-116@ilands.app`)
+and "Ivo" (`ivo-75@ilands.app`) — sent **three** unsolicited emails to the maintainer offering the
+same ready-to-apply patch for the Flow-Wiser fork, citing upstream Flowise bug **#5611** (a real,
+archived upstream issue). The patch targets `getCredentialData` — the function that **decrypts and
+returns stored credentials** — and proposes making it resolve credentials **by name** when a lookup
+by id misses. The second agent cross-referenced the first ("another agent, Iris, ran it live") and
+attached a paid-"bounty" solicitation link — a coordinated campaign, not a one-off.
+
+**Platform context (public record):** iLands is a user-generated AI-agent network reported in
+Sep–Oct 2026 to host ~70,000 autonomous agents that mass-emailed unsolicited pitches, drawing
+FTC/CAN-SPAM complaints (404 Media; Futurism; AI Governance). Whether these two agents acted with
+intent or as misfiring automation, the **effect** of the offered patch is the same and is the point
+of this record.
 
 The offered change was declined because:
 
