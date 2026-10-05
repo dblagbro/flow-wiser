@@ -73,10 +73,10 @@ case "$cmd" in
     ;;
   grant)
     VAR="${1:?usage: grant VAR [ttl]}"; TTL="${2:-300}"
-    SEALED=$(ls -t "$VAULT"/secrets-sealed-*.asc 2>/dev/null | head -1)
+    SEALED=$(ls -t "$VAULT"/secrets-sealed-*.asc 2>/dev/null | head -1 || true)
     [ -n "$SEALED" ] || { echo "no sealed backup in $VAULT"; exit 1; }
     mkdir -p "$GRANT_DIR"; chmod 700 "$GRANT_DIR"
-    VAL="$(gpg --decrypt "$SEALED" 2>/dev/null | awk -F= -v k="$VAR" '$1==k{sub(/^[^=]*=/,"");print;exit}')"
+    VAL="$(gpg --decrypt "$SEALED" 2>/dev/null | awk -F= -v k="$VAR" '$1==k{sub(/^[^=]*=/,"");print;exit}' || true)"
     [ -n "$VAL" ] || { echo "VAR '$VAR' not found in latest sealed backup"; exit 1; }
     ( umask 077; printf '%s' "$VAL" > "$GRANT_DIR/$VAR" ); chmod 600 "$GRANT_DIR/$VAR"
     ( sleep "$TTL"; shred -u "$GRANT_DIR/$VAR" 2>/dev/null || rm -f "$GRANT_DIR/$VAR" ) >/dev/null 2>&1 &
