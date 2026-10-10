@@ -118,7 +118,7 @@ ARG CONNECT_SQLITE3_VERSION=0.9.16
 # Longer term vm2 should be replaced outright (isolated-vm), or custom-code
 # nodes disabled on internet-facing deployments. vm2 has produced a fresh escape
 # in essentially every release line, so pinning is mitigation, not a fix.
-ARG VM2_VERSION=3.11.6
+ARG VM2_VERSION=3.12.2
 
 # Apply BOTH security pins in a SINGLE npm install, then assert at the very end.
 #
