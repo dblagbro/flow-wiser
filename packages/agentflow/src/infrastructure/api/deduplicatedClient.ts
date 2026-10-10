@@ -87,7 +87,9 @@ export function withDeduplication(
             .finally(() => inFlight.delete(key))
 
         inFlight.set(key, promise as Promise<AxiosResponse>)
-        return promise
+        // axios 1.20 types client.get<T,R,D> as Promise<AxiosResponseResult<...>> rather than
+        // Promise<R>; runtime is unchanged, so assert the wrapper's declared contract.
+        return promise as unknown as Promise<R>
     }
 
     function deduplicatedPost<T = unknown, R = AxiosResponse<T>, D = unknown>(
@@ -96,7 +98,7 @@ export function withDeduplication(
         config?: AxiosRequestConfig<D>
     ): Promise<R> {
         if (!isCacheable('post', url)) {
-            return client.post<T, R, D>(url, data, config)
+            return client.post<T, R, D>(url, data, config) as unknown as Promise<R>
         }
 
         const key = buildCacheKey('post', url, data)
@@ -116,7 +118,7 @@ export function withDeduplication(
             .finally(() => inFlight.delete(key))
 
         inFlight.set(key, promise as Promise<AxiosResponse>)
-        return promise
+        return promise as unknown as Promise<R>
     }
 
     // Use Object.create so put, delete, interceptors, defaults, etc.
