@@ -6,6 +6,10 @@ services:
         restart: always
         environment:
             - PORT=${PORT}
+            # Safe default: code execution OFF unless explicitly opted in. vm2 is deprecated/
+            # unpatchable; set CODE_EXECUTION_MODE=e2b (+ E2B_APIKEY) to run code off-host, or vm2
+            # to accept the in-process risk. See docs/security/RCE-AUDIT-2026-09-18.md (SEC-B-11).
+            - CODE_EXECUTION_MODE=${CODE_EXECUTION_MODE:-disabled}
 
             # DATABASE
             - DATABASE_PATH=${DATABASE_PATH}
