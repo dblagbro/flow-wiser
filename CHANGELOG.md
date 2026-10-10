@@ -30,6 +30,8 @@ first.
 
 ## [Unreleased]
 
+-   Security: axios 1.16.0→1.20.0 and vm2 3.11.6→3.12.2 (closed the 2026-10 advisory wave; 21 vm2 criticals). Added `scripts/security-precheck.sh` self-audit. (SEC-DEP-02)
+
 ### Security — closed a Docker credential-leak path and applied dependency fixes
 
 -   **SEC-B-10 (critical):** the root `Dockerfile` does `COPY . .` and `.dockerignore` did not
