@@ -102,7 +102,7 @@
             "multer": ">=2.3.0 <3",
             "basic-ftp": "5.2.1",
             "convict": "6.2.5",
-            "vm2": "3.11.6",
+            "vm2": "3.12.2",
             "handlebars": ">=4.7.9",
             "shell-quote": ">=1.8.4",
             "websocket-driver": ">=0.7.5",
