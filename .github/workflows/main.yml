@@ -14,7 +14,7 @@ jobs:
         strategy:
             matrix:
                 platform: [ubuntu-latest]
-                node-version: [24.15.0]
+                node-version: [22.23.2]
         runs-on: ${{ matrix.platform }}
         env:
             PUPPETEER_SKIP_DOWNLOAD: true
@@ -29,6 +29,59 @@ jobs:
                   node-version: ${{ matrix.node-version }}
                   cache: 'pnpm'
                   cache-dependency-path: 'pnpm-lock.yaml'
+
+            # faiss-node downloads a prebuilt binary from GitHub Releases and, when that download
+            # fails, falls back to cloning FAISS and compiling it. The fallback needs BLAS/LAPACK,
+            # which the runner image does not ship — so a transient network failure became a hard
+            # CI failure. Observed 2026-08-12:
+            #
+            #   prebuild-install http 503 .../faiss-node-v0.5.1-napi-v8-linux-x64.tar.gz
+            #   prebuild-install warn install No prebuilt binaries found
+            #   CMake Error at .../FindPackageHandleStandardArgs.cmake:233
+            #
+            # It presented as flakiness — same commit, same runner image, ~1 run in 3 — and it hits
+            # any branch whose lockfile differs from main's, because a different lockfile hash means
+            # a pnpm store cache miss and a real install. main appeared green only because it
+            # restored a warm cache and never built faiss-node at all.
+            #
+            # Two independent layers, because either alone leaves a live failure mode:
+            #   1. cache the downloaded prebuild, so a 503 is harmless whenever the cache hits
+            #   2. install BLAS/LAPACK, so the source fallback actually succeeds when it does not
+            #
+            # faiss-node is not optional: packages/components ships a FAISS vector store node and
+            # imports it from src/utils.ts. Dropping it from pnpm.onlyBuiltDependencies would make
+            # CI green by shipping a broken integration.
+            #
+            # See docs/remediation-plan.md RM-19.
+            - name: Cache faiss-node prebuilt binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.npm/_prebuilds
+                  # Deliberately loose restore-keys: the prebuild depends on the faiss-node version
+                  # and the N-API level, not on our lockfile. A lockfile change must not throw away
+                  # a still-valid binary — that is exactly the miss that caused the failures.
+                  key: prebuilds-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+                  restore-keys: |
+                      prebuilds-${{ runner.os }}-
+
+            - name: Install FAISS build dependencies
+              # Cheap insurance (~15s). Only used when the prebuild is unavailable, but without it
+              # that path cannot succeed at all.
+              run: |
+                  sudo apt-get update -qq
+                  sudo apt-get install -y --no-install-recommends libopenblas-dev liblapack-dev
+
+            # Runs before install so a divergence is reported in seconds rather than behind a
+            # seven-minute build. It needs no dependencies -- plain Node reading files.
+            #
+            # ADR-0004 exists because ten locations carried five different Node versions, one of
+            # them hardcoded with no build arg so CI could not override it. Those were aligned by
+            # hand; per ADR-0003 that is not a control, because nothing fails when the property
+            # stops holding. This is the control (RM-11). It also checks the three secret-ignore
+            # lists agree, after `pnpm lint` opened a credential export (RM-16).
+            - name: Assert version and ignore-list parity
+              run: node scripts/assert-version-parity.js
+
             - run: pnpm install
             - run: pnpm lint
             - run: pnpm build
