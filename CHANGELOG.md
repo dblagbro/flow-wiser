@@ -2,35 +2,45 @@
 
 All notable changes to the Flow-Wiser community continuation fork.
 
-Flow-Wiser versions are expressed as `<upstream-version>-fw<n>` — the upstream Flowise
-release this build is based on, plus a Flow-Wiser revision number. `3.1.4-fw1` is upstream
-Flowise 3.1.4 with Flow-Wiser fix set 1 applied.
+Flow-Wiser uses **plain [SemVer](https://semver.org/)** on its own independent release line —
+`MAJOR.MINOR.PATCH`, no suffix. It is the continuation of FlowiseAI's Flowise, which reached end
+of life at `3.1.4` and was archived 2026-08-10; Flow-Wiser carries the project forward from
+**`4.0.1`**.
 
-The left component tracks upstream and only moves when upstream does. Upstream reached end
-of life at `3.1.4`, so it is not going to move again: from here, `fw<n>` is the only thing
-that advances, however large the change. `3.1.4-fw4` removing the entire commercial
-identity stack and replacing it is a bigger step than `fw1` → `fw3`, and it is still
-`3.1.4-` on the left, because inventing a `3.2.0` or `4.0.0` would claim an upstream
-release that does not exist.
+Why continue the number line rather than reset, and why that is safe now: upstream is archived and
+will never publish a `3.x` or `4.x` again, so there is no live Flowise numbering left to collide
+with. Taking the next major signals that Flow-Wiser _is_ the project's continuation, not a new
+unrelated tool. The upstream base each release derives from is recorded per entry below and in
+[ADR-0005](docs/decisions/ADR-0005-versioning-scheme.md) — as provenance, not inside the version
+string.
 
-Two consequences worth stating, since both have bitten projects that did this:
-
--   Under strict semver, `3.1.4-fw4` is a **pre-release of** `3.1.4` and therefore sorts
-    _below_ it. Nothing in this codebase compares versions programmatically — the version
-    endpoint reports a string and the About dialog displays it — so this is a labelling
-    quirk, not a behavioural one. Do not build release-gating logic on `semver.gt` here.
--   A `+` build-metadata suffix would sort correctly but is not a legal Docker tag
-    character, so the tag and the package version could not stay identical. They are worth
-    more identical.
+This **retires the earlier `3.1.4-fw<n>` fork-counter scheme** (`fw` stood for Flow-Wiser).
+Releases `3.1.4-fw1` … `3.1.4-fw10` are historical and keep their names in the entries below;
+`4.0.1` is the first release under the standardized scheme and directly succeeds `3.1.4-fw10`.
+The package version and the Docker tag are identical, and nothing in the codebase compares versions
+programmatically — the version endpoint reports a string and the About dialog displays it.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); latest release
 first.
 
 ---
 
-## [Unreleased]
+## [4.0.1] — 2026-10-13
 
--   Security: axios 1.16.0→1.20.0 and vm2 3.11.6→3.12.2 (closed the 2026-10 advisory wave; 21 vm2 criticals). Added `scripts/security-precheck.sh` self-audit. (SEC-DEP-02)
+_Based on Flowise 3.1.4 (upstream EOL). Succeeds `3.1.4-fw10`._
+
+### Changed — standardized the versioning scheme
+
+-   Adopted plain SemVer on an independent Flow-Wiser line and retired the `3.1.4-fw<n>`
+    fork-counter. Flow-Wiser now carries the Flowise line forward from `4.0.1`. The upstream base
+    moves to provenance (this file + ADR-0005) rather than living inside the version string. See
+    the header above and [ADR-0005](docs/decisions/ADR-0005-versioning-scheme.md). Package version
+    and Docker tag are `4.0.1`; the four workspace packages (`flowise`, `flowise-ui`,
+    `flowise-components`, and the root) move together.
+
+### Security
+
+-   axios 1.16.0→1.20.0 and vm2 3.11.6→3.12.2 (closed the 2026-10 advisory wave; 21 vm2 criticals). Added `scripts/security-precheck.sh` self-audit. (SEC-DEP-02)
 
 ### Security — closed a Docker credential-leak path and applied dependency fixes
 

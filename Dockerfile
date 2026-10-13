@@ -2,10 +2,10 @@
 #
 #   docker build --no-cache --pull \
 #     --build-arg NODE_VERSION=22 \
-#     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-#     -t dblagbro/flow-wiser:3.1.4-fw4 .
+#     --build-arg FLOWISE_VERSION=4.0.1 \
+#     -t dblagbro/flow-wiser:4.0.1 .
 #
-#   docker run -d -p 3000:3000 dblagbro/flow-wiser:3.1.4-fw4
+#   docker run -d -p 3000:3000 dblagbro/flow-wiser:4.0.1
 #
 # THIS is the Dockerfile that produces an Apache-2.0-only image. It compiles the
 # tree in this repository, from which the 127 commercially licensed files have

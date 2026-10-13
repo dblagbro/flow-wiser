@@ -1,10 +1,15 @@
 <!-- markdownlint-disable MD030 -->
 
-# Flowise, actually open source — `3.1.4-fw10`
+# Flowise, actually open source — `4.0.1`
 
 ```bash
-docker pull dblagbro/flow-wiser:3.1.4-fw10     # or :latest
+docker pull dblagbro/flow-wiser:4.0.1     # or :latest
 ```
+
+> Flow-Wiser `4.0.1` continues FlowiseAI's Flowise, which reached end of life at `3.1.4`
+> (archived 2026-08-10). It uses plain SemVer on its own line — the former `3.1.4-fw<n>` scheme is
+> retired. See [ADR-0005](docs/decisions/ADR-0005-versioning-scheme.md) and the
+> [CHANGELOG](CHANGELOG.md).
 
 Upstream Flowise was **open core**. 127 files — `packages/server/src/enterprise/` and
 `IdentityManager.ts` — carried a FlowiseAI Commercial License forbidding copying,
@@ -15,37 +20,37 @@ unauthenticated server.
 **Flow-Wiser is the first Flowise container anyone may freely redistribute.** Those files
 are gone, and authentication, RBAC, SSO, MFA, audit, encryption at rest and multi-tenancy
 have been reimplemented from scratch under Apache 2.0 — without ever reading them. The
-build now *fails* if any commercially licensed artifact appears anywhere on the image.
+build now _fails_ if any commercially licensed artifact appears anywhere on the image.
 
-**`3.1.4-fw10` is the baseline.** It is the first release whose commit passes CI — fw5, fw6
-and fw7 were tagged while the build was red and nobody was told, which is documented rather
-than quietly fixed (`docs/PROCESS-GAPS.md`, G9–G11). No product code changed between fw7 and
-fw8; what changed is that the claims about it became checkable. Start here:
+**`4.0.1` is the current release**, succeeding `3.1.4-fw10` — the baseline whose commit first
+passed CI (fw5, fw6 and fw7 were tagged while the build was red and nobody was told, which is
+documented rather than quietly fixed — `docs/PROCESS-GAPS.md`, G9–G11). The verification scope is
+unchanged from that baseline; `4.0.1` adds the versioning standardization plus the security and UI
+fixes in the [CHANGELOG](CHANGELOG.md). Start here:
 **[BASELINE-3.1.4-fw10.md](docs/BASELINE-3.1.4-fw10.md)** — what is verified, how, and what is
-explicitly *not* fixed.
+explicitly _not_ fixed.
 
-| | |
-| --- | --- |
-| Redistributable | ✅ 100% Apache 2.0, no carve-outs |
-| Authentication | ✅ Local password, sessions, SSO, TOTP MFA with recovery codes |
-| Authorization | ✅ 82 permissions, deny-by-default, **enforced server-side** |
-| Multi-tenancy | ✅ Organisations and workspaces, tenant key on the row |
-| Recovery | ✅ Nine-command CLI, passwords read from `/dev/tty` only |
-| Fresh install | ✅ SQLite, Postgres, MySQL, MariaDB |
-| Encryption at rest | ✅ AES-256-GCM, HKDF-SHA-256, per-record nonce, key versioning, rotation command |
-| HSTS at the edge | ✅ Verified on the wire from outside the network |
-| CI on the released commit | ✅ 974 tests, lint, build, Cypress — green |
-| Code sandbox | ⚠️ `vm2`, deprecated. Escapes blocked by configuration, not architecture. `CODE_EXECUTION_MODE=disabled` removes the risk class |
+|                           |                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Redistributable           | ✅ 100% Apache 2.0, no carve-outs                                                                                               |
+| Authentication            | ✅ Local password, sessions, SSO, TOTP MFA with recovery codes                                                                  |
+| Authorization             | ✅ 82 permissions, deny-by-default, **enforced server-side**                                                                    |
+| Multi-tenancy             | ✅ Organisations and workspaces, tenant key on the row                                                                          |
+| Recovery                  | ✅ Nine-command CLI, passwords read from `/dev/tty` only                                                                        |
+| Fresh install             | ✅ SQLite, Postgres, MySQL, MariaDB                                                                                             |
+| Encryption at rest        | ✅ AES-256-GCM, HKDF-SHA-256, per-record nonce, key versioning, rotation command                                                |
+| HSTS at the edge          | ✅ Verified on the wire from outside the network                                                                                |
+| CI on the released commit | ✅ 974 tests, lint, build, Cypress — green                                                                                      |
+| Code sandbox              | ⚠️ `vm2`, deprecated. Escapes blocked by configuration, not architecture. `CODE_EXECUTION_MODE=disabled` removes the risk class |
 
 📄 **[Baseline & QA scope](docs/BASELINE-3.1.4-fw10.md)** · **[CHANGELOG](CHANGELOG.md)** ·
 **[Known issues](docs/ISSUE-REGISTER.md)** · **[Compliance posture](docs/COMPLIANCE-POSTURE.md)** ·
 **[FORK.md](FORK.md)** — read before redistributing
 
-> ⚠️ **`3.1.4-fw1` through `3.1.4-fw3` are superseded and are *not* redistributable.** They
+> ⚠️ **`3.1.4-fw1` through `3.1.4-fw3` are superseded and are _not_ redistributable.** They
 > were built before the removal, from a Dockerfile that installs FlowiseAI's published npm
 > package, and so they contain the commercially licensed compiled output. The commercial
-> terms govern those images wherever you obtained them. If you are running one, move to
-> `fw8`.
+> terms govern those images wherever you obtained them. If you are running one, move to `4.0.1`.
 
 ---
 
@@ -53,11 +58,11 @@ explicitly *not* fixed.
 
 **Every official `flowiseai/flowise` image ships the `flowise@3.1.2` server — whatever tag you pulled.**
 
-| Image tag | Server package actually inside it |
-| --- | --- |
-| `flowiseai/flowise:3.1.2` | `flowise@3.1.2` |
-| `flowiseai/flowise:3.1.3` | **`flowise@3.1.2`** ❌ |
-| `flowiseai/flowise:3.1.4` | **`flowise@3.1.2`** ❌ |
+| Image tag                 | Server package actually inside it |
+| ------------------------- | --------------------------------- |
+| `flowiseai/flowise:3.1.2` | `flowise@3.1.2`                   |
+| `flowiseai/flowise:3.1.3` | **`flowise@3.1.2`** ❌            |
+| `flowiseai/flowise:3.1.4` | **`flowise@3.1.2`** ❌            |
 
 `flowise@3.1.3` and `@3.1.4` **are** published correctly on npm. No official Docker image ever contained them.
 
@@ -109,7 +114,7 @@ The build now **fails loudly** rather than shipping a mislabelled image.
 
 **3. Verify after every mutation, not after each step.**
 
-Our first attempt pinned two dependencies in separate `RUN` steps and still shipped a broken image — `npm install` re-resolves the dependency tree, so the second install silently reverted the first pin. The build printed `pinned to 0.9.16` and its assertion passed, because the assertion ran *before* the regression. That image was discarded.
+Our first attempt pinned two dependencies in separate `RUN` steps and still shipped a broken image — `npm install` re-resolves the dependency tree, so the second install silently reverted the first pin. The build printed `pinned to 0.9.16` and its assertion passed, because the assertion ran _before_ the regression. That image was discarded.
 
 There is now a single final gate after **all** package mutations:
 
@@ -117,7 +122,7 @@ There is now a single final gate after **all** package mutations:
 FINAL: flowise=3.1.4 connect-sqlite3=0.9.16 vm2=3.11.5
 ```
 
-> **Per-step assertions cannot catch a later step undoing an earlier one.** This is the general lesson, and it is the same class of failure as the original bug: something that *looks* pinned but isn't.
+> **Per-step assertions cannot catch a later step undoing an earlier one.** This is the general lesson, and it is the same class of failure as the original bug: something that _looks_ pinned but isn't.
 
 ---
 
@@ -132,10 +137,10 @@ TypeError: this.db.exec is not a function
 
 Because that dependency is also unpinned, **any Flowise container built after 0.9.17 was published fails — at any version.** Reproduced:
 
-| Build | connect-sqlite3 | Result |
-| --- | --- | --- |
-| official `3.1.3`, built earlier | 0.9.16 | boots |
-| the **same** `flowise@3.1.3`, rebuilt today | 0.9.17 | crashes identically |
+| Build                                       | connect-sqlite3 | Result              |
+| ------------------------------------------- | --------------- | ------------------- |
+| official `3.1.3`, built earlier             | 0.9.16          | boots               |
+| the **same** `flowise@3.1.3`, rebuilt today | 0.9.17          | crashes identically |
 
 So the "3.1.3 works, 3.1.4 is broken" split everyone observed is an artifact of **when each image was built** — not of anything that changed between the releases. Anyone rebuilding 3.1.3 to escape the 3.1.4 bug reproduces the crash.
 
@@ -150,12 +155,12 @@ So the "3.1.3 works, 3.1.4 is broken" split everyone observed is an artifact of 
 ## Get a working, fully patched Flowise
 
 ```bash
-docker pull dblagbro/flow-wiser:3.1.4-fw10     # or :latest
-curl -s http://localhost:3000/api/v1/version  # {"version":"3.1.4-fw10"}
+docker pull dblagbro/flow-wiser:4.0.1     # or :latest
+curl -s http://localhost:3000/api/v1/version  # {"version":"4.0.1"}
 ```
 
 ```
-flowise=3.1.4-fw10   flowise-components=3.1.4-fw10   flowise-ui=3.1.4-fw10   vm2=3.11.5
+flowise=4.0.1   flowise-components=4.0.1   flowise-ui=4.0.1   vm2=3.12.2
 ```
 
 Or build it yourself, from source, and watch the gates fire:
@@ -164,8 +169,8 @@ Or build it yourself, from source, and watch the gates fire:
 git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
 docker build --no-cache --pull \
   --build-arg NODE_VERSION=20 \
-  --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-  -t dblagbro/flow-wiser:3.1.4-fw10 .
+  --build-arg FLOWISE_VERSION=4.0.1 \
+  -t dblagbro/flow-wiser:4.0.1 .
 ```
 
 That is the **root** `Dockerfile` — note the `.` context and the absence of `-f`. It
@@ -180,13 +185,13 @@ through `fw3` came to contain it. It is kept because it reproduces and documents
 upstream container defects above, not because you should publish from it. It also cannot
 build `fw4`: that version exists only in this repository, never on npm.
 
-This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins *RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys*. As of `fw4` that pin lives in the source tree rather than only in the npm-install Dockerfile, so a source build gets it too; before `fw4` it did not.
+This closes **all 26 advisories published 2026-08-04** (10 critical, 13 high, 3 medium), including `GHSA-8gj2-2cvc-6xx7`, which required 3.1.4 and was previously unreachable because 3.1.4 would not start. It also upgrades **`vm2` 3.11.2 → 3.11.5**, closing six critical sandbox escapes — the RCE primitive that begins _RCE → read `database.sqlite` → decrypt credentials → exfiltrate API keys_. As of `fw4` that pin lives in the source tree rather than only in the npm-install Dockerfile, so a source build gets it too; before `fw4` it did not.
 
 The `connect-sqlite3` boot crash cannot occur in `fw4` at all: it threw inside
 `dist/enterprise/middleware/passport/SessionPersistance.js`, one of the deleted files, and
 nothing in the tree imports `connect-sqlite3` any more.
 
-⚠️ **Licensing — `3.1.4-fw1` through `3.1.4-fw3` only.** Like every Flowise container published before 2026-08-06, those images contain compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain them. Flow-Wiser could not and did not relicense them. **`3.1.4-fw10` is clean**: the repository no longer contains those files, the release image is built from source, and the build fails if any trace of them reaches it. See [FORK.md](FORK.md).
+⚠️ **Licensing — `3.1.4-fw1` through `3.1.4-fw3` only.** Like every Flowise container published before 2026-08-06, those images contain compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain them. Flow-Wiser could not and did not relicense them. **`4.0.1` is clean**: the repository no longer contains those files, the release image is built from source, and the build fails if any trace of them reaches it. See [FORK.md](FORK.md).
 
 ---
 
@@ -197,7 +202,7 @@ nothing in the tree imports `connect-sqlite3` any more.
 >
 > FlowiseAI [announced end of life](https://flowiseai.com/sunset) for Flowise on **2026-08-03**
 > (code freeze 2026-07-29, upstream repo archived 2026-08-10). They explicitly encouraged the
-> community to fork: *"the Apache 2.0 licensed code is yours to keep building on."*
+> community to fork: _"the Apache 2.0 licensed code is yours to keep building on."_
 >
 > This repository preserves the **complete upstream history and all 307 release tags** at final
 > commit [`ba4c6509`](https://github.com/FlowiseAI/Flowise/commit/ba4c6509), so teams running
@@ -205,9 +210,9 @@ nothing in the tree imports `connect-sqlite3` any more.
 >
 > ### ⚖️ Licensing at a glance — **100% Apache 2.0**
 >
-> | Scope | License | Redistributable? |
-> | --- | --- | --- |
-> | Everything in this repository | **Apache License 2.0** | ✅ Yes |
+> | Scope                         | License                | Redistributable? |
+> | ----------------------------- | ---------------------- | ---------------- |
+> | Everything in this repository | **Apache License 2.0** | ✅ Yes           |
 >
 > Upstream Flowise was **open core**: 127 files — `packages/server/src/enterprise/` (126) plus
 > `packages/server/src/IdentityManager.ts` — were under a FlowiseAI Commercial License that forbids
@@ -226,14 +231,13 @@ nothing in the tree imports `connect-sqlite3` any more.
 > server. **The commercially licensed files were never read.** A pre-commit hook and a CI job
 > reject any commit touching a protected path.
 >
-> - [docs/CLEANROOM-PROTOCOL.md](docs/CLEANROOM-PROTOCOL.md) — the binding process
-> - [docs/CLEANROOM-ATTESTATION.md](docs/CLEANROOM-ATTESTATION.md) — evidence, with commands you
->   can re-run yourself, including a disclosed near-miss we published rather than omitted
-> - [docs/HOW-WE-DID-THIS.md](docs/HOW-WE-DID-THIS.md) — the method, written to be reusable on
->   other open-core projects
+> -   [docs/CLEANROOM-PROTOCOL.md](docs/CLEANROOM-PROTOCOL.md) — the binding process
+> -   [docs/CLEANROOM-ATTESTATION.md](docs/CLEANROOM-ATTESTATION.md) — evidence, with commands you
+>     can re-run yourself, including a disclosed near-miss we published rather than omitted
+> -   [docs/HOW-WE-DID-THIS.md](docs/HOW-WE-DID-THIS.md) — the method, written to be reusable on
+>     other open-core projects
 >
 > 👉 **Read [FORK.md](FORK.md) before redistributing, and see [NOTICE](NOTICE) for attribution.**
->
 
 <!-- flow-wiser-community-art -->
 <p align="center">
@@ -242,7 +246,6 @@ nothing in the tree imports `connect-sqlite3` any more.
   </a>
 </p>
 <p align="center"><strong>Help keep the flow going - fork it, fix it, ship it.</strong></p>
-
 
 <p align="center">
 <img src="https://github.com/FlowiseAI/Flowise/blob/main/images/flowise_white.svg#gh-light-mode-only">
@@ -307,7 +310,7 @@ docker run -d --name flow-wiser -p 3000:3000 \
   -e IDENTITY_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -e FLOWISE_SESSION_PEPPER="$(openssl rand -base64 32)" \
   -v flow-wiser-data:/root/.flowise \
-  dblagbro/flow-wiser:3.1.4-fw10
+  dblagbro/flow-wiser:4.0.1
 ```
 
 **Record both values somewhere safe and separate from your backups.** They live only in the
@@ -340,8 +343,8 @@ mislabelled image cannot be produced:
     ```bash
     docker build --no-cache --pull \
       --build-arg NODE_VERSION=20 \
-      --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-      -t dblagbro/flow-wiser:3.1.4-fw10 .
+      --build-arg FLOWISE_VERSION=4.0.1 \
+      -t dblagbro/flow-wiser:4.0.1 .
     ```
 
 2. Run it with the same `-e`/`-v` flags shown above.
