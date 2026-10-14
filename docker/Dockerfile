@@ -19,8 +19,8 @@
 #
 #   docker build --no-cache --pull \
 #     --build-arg NODE_VERSION=22 \
-#     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-#     -t dblagbro/flow-wiser:3.1.4-fw4 .
+#     --build-arg FLOWISE_VERSION=4.0.1 \
+#     -t dblagbro/flow-wiser:4.0.1 .
 # ---------------------------------------------------------------------------
 
 # Node.js version (overridable via build-arg from CI)
