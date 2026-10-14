@@ -122,6 +122,7 @@
             "nodemailer": ">=9.1.0 <10"
         }
     },
+    "packageManager": "pnpm@10.26.0",
     "engines": {
         "node": "^24",
         "pnpm": "^10.26.0"
