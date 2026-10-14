@@ -1,0 +1,18 @@
+# Dependabot: security updates only, batched into one PR per run.
+# open-pull-requests-limit: 0 turns off routine version-update PRs; security
+# updates are unaffected by that limit and land in the `security` group.
+# pnpm version comes from "packageManager" in package.json; without it Dependabot
+# used its own pnpm and wrote lockfiles missing the `overrides:` block, which fails
+# `pnpm install --frozen-lockfile` in CI.
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: daily
+      open-pull-requests-limit: 0
+      groups:
+          security:
+              applies-to: security-updates
+              patterns:
+                  - '*'
