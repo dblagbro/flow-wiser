@@ -168,7 +168,7 @@ Or build it yourself, from source, and watch the gates fire:
 ```bash
 git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
 docker build --no-cache --pull \
-  --build-arg NODE_VERSION=20 \
+  --build-arg NODE_VERSION=22 \
   --build-arg FLOWISE_VERSION=4.0.1 \
   -t dblagbro/flow-wiser:4.0.1 .
 ```
@@ -334,7 +334,7 @@ environment variable. Open [http://localhost:3000](http://localhost:3000).
 
 ### Building the image yourself
 
-`NODE_VERSION=20` is not optional — Node 24 cannot compile `better-sqlite3`. Passing
+`NODE_VERSION=22` is not optional — Node 24 cannot compile `better-sqlite3` (ADR-0004). Passing
 `FLOWISE_VERSION` makes the build assert that the tag matches what the tree declares, so a
 mislabelled image cannot be produced:
 
@@ -342,7 +342,7 @@ mislabelled image cannot be produced:
 
     ```bash
     docker build --no-cache --pull \
-      --build-arg NODE_VERSION=20 \
+      --build-arg NODE_VERSION=22 \
       --build-arg FLOWISE_VERSION=4.0.1 \
       -t dblagbro/flow-wiser:4.0.1 .
     ```
