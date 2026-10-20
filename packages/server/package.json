@@ -174,7 +174,7 @@
         "rate-limit-redis": "^4.2.0",
         "reflect-metadata": "^0.1.13",
         "s3-streamlogger": "^1.11.0",
-        "sanitize-html": "^2.11.0",
+        "sanitize-html": "^2.18.0",
         "sqlite3": "^5.1.6",
         "stripe": "^15.6.0",
         "turndown": "^7.2.0",
