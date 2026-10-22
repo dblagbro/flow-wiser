@@ -141,7 +141,7 @@
         "rimraf": "^5.0.5",
         "ts-jest": "^29.3.2",
         "typescript": "^5.4.5",
-        "vite": "^5.0.2",
+        "vite": "^6.4.4",
         "vite-plugin-dts": "^3.7.0"
     }
 }
