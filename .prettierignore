@@ -1,3 +1,24 @@
 pnpm-lock.yaml
 upstream-archive/
 community-art/
+
+# Secret material must never be read or rewritten by a formatter.
+#
+# Prettier is invoked by `pnpm format`, and by `pnpm quick` (pretty-quick) from the
+# husky pre-commit hook. A formatter that opens a credential export can echo its
+# contents in an error, and a formatter that *rewrites* one corrupts it silently.
+#
+# .gitignore does not apply to Prettier. These mirror the secret section of
+# .gitignore and the ignorePatterns in .eslintrc.js -- keep all three in step.
+# See AGENTS.md section 9.
+flowise-credentials-backup-*.json
+*credentials-backup*
+**/*.sqlite
+**/*.sqlite3
+**/.env
+**/.env.*
+!**/.env.example
+**/*service-account*.json
+**/*secret*.json
+**/*.pem
+**/*.key

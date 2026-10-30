@@ -15,7 +15,7 @@
 # Flow-Wiser releases are built from the ROOT Dockerfile:
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22 \
 #     --build-arg FLOWISE_VERSION=<version> \
 #     -t dblagbro/flow-wiser:<version> .
 #
@@ -64,7 +64,7 @@ jobs:
             - name: Set default values
               id: defaults
               env:
-                  NODE_VERSION_INPUT: ${{ github.event.inputs.node_version || '24' }}
+                  NODE_VERSION_INPUT: ${{ github.event.inputs.node_version || '22' }}
                   TAG_VERSION_INPUT: ${{ github.event.inputs.tag_version || 'latest' }}
               run: |
                   echo "node_version=${NODE_VERSION_INPUT}" >> $GITHUB_OUTPUT

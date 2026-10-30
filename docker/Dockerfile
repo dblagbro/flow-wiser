@@ -18,7 +18,7 @@
 # The Apache-2.0-only image is built from source:
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22 \
 #     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
 #     -t dblagbro/flow-wiser:3.1.4-fw4 .
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@
 # Every published flowiseai/flowise image (3.1.2, 3.1.3, 3.1.4) actually runs
 # Node v20.20.2, so upstream CI must have been overriding this. Defaulting to 20
 # makes a plain `docker build` reproduce the shipped runtime instead of failing.
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 
 # Stage 1: Build stage
 FROM node:${NODE_VERSION}-alpine AS build
