@@ -7,7 +7,7 @@ import select
 import subprocess
 import time
 
-assert os.environ.get('CI') == 'true', 'Only run against an isolated CI database'
+assert os.environ.get('CI') in ('true', '1'), 'Only run against an isolated CI database'
 root = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
 database = pathlib.Path(os.environ['DATABASE_PATH']).resolve()
 assert database == root / 'flow-wiser-cypress-db', 'Refusing any other database path'
