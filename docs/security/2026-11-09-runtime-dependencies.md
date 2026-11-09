@@ -1,6 +1,6 @@
 # Runtime dependency and workspace-control reconciliation — 2026-11-09
 
-Status: local lint, full build, discovery and tests passed; Docker image and CI validation are pending. This is not a new release or a claim that this Git revision is deployed.
+Status: local lint, full build, discovery, tests and source-image acceptance passed. GitHub browser CI is being repaired; no source release or deployment is claimed. This is not a new release or a claim that this Git revision is deployed.
 
 The maintained main branch and the running custom fork had diverged. This change brings the tested runtime/dependency strategy into source and preserves workspace credential controls already present on apache2-only and in the deployed custom source.
 
@@ -14,6 +14,14 @@ The maintained main branch and the running custom fork had diverged. This change
 
 The parity control failed on the previous main declarations/ignore lists and passed after the change: 11 declarations on Node 22, exact pins 22.23.4, and all three ignore lists carry the required markers. Lockfile resolution completed successfully. The subsequent full local build, lint and discovery gate passed. All 3,597 tests in 157 suites across five packages passed with zero cached tasks. The new TTS credential-isolation regression fails on the previous main service for the expected unauthorized provider access and passes with the fix.
 
-Remaining before merge: Docker image build/gates and acceptance checks, and CI on the actual PR revision. Existing versioning PRs #60/#61 are separate and are not merged by this change.
+Remaining before merge: GitHub CI on the final PR revision, including the active browser authentication suite. Existing versioning PRs #60/#61 are separate and are not merged by this change.
 
 The independently deployed custom derivative used Node 22.23.4, passed 36 targeted security/recovery tests and isolated login/private-flow/logout checks. Its previously recorded package scan moved from 25 Critical / 471 High to 3 Critical / 74 High. Those results identify that derivative image, not this source revision, and are not relabeled as newly rerun tests. Remaining matches include expr-eval and build-tool Go libraries; applicability/vendor follow-up remains open. No external model or SMTP acceptance test was performed.
+
+## Image and CI evidence (08:15 UTC update)
+
+Candidate `sha256:5317fe820df3e625dd3295a9f7b302c5f09134d13d59f248f830620289132574`, built from the application/build files in `c8e4c7835be37cc2b4e5fb0be4ddc5ab91b5ba3e`, passed the Docker version/secret/licensed-artifact gates. SQLite, FAISS and Sharp load. Isolated restored-database admin creation, forced password change, login, 25-flow list/read, anonymous private-flow/credential denial, logout and session revocation passed. The clone had no published ports, production NAS or outbound network access and is now stopped. A fresh scan of this candidate reports 3 Critical / 74 High package matches; these residual findings are not declared fixed.
+
+GitHub Docker CI passed. Node CI passed lint, build, discovery and coverage, then twice failed before Cypress could run because the action used an affected `got` release under the runner's Node 24 runtime. [Cypress issue #1873](https://github.com/cypress-io/github-action/issues/1873) documents the error; [v7.4.4](https://github.com/cypress-io/github-action/releases/tag/v7.4.4) fixes it. Both action references are pinned to that release's verified commit. The two legacy CRUD browser specs are entirely commented out, so an active three-check authentication-boundary suite is added. It tests real UI rendering, protected-page navigation and anonymous API denial. Legacy CRUD coverage remains absent. CI is still required after this change; it is not skipped or marked successful by these notes.
+
+The initial native-module probe addressed an unexported package.json subpath. Correcting the harness to resolve the public component entry point passed without changing the image. Earlier Docker build attempts and their diagnostics are retained in the operator evidence.

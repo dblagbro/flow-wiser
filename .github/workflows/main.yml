@@ -97,12 +97,12 @@ jobs:
             - name: Cypress install
               run: pnpm cypress install
             - name: Install dependencies (Cypress Action)
-              uses: cypress-io/github-action@v7.1.5
+              uses: cypress-io/github-action@01e3b659a495b41649cdd0aa82e1d1624e26520b # v7.4.4
               with:
                   working-directory: ./
                   runTests: false
             - name: Cypress test
-              uses: cypress-io/github-action@v7.1.5
+              uses: cypress-io/github-action@01e3b659a495b41649cdd0aa82e1d1624e26520b # v7.4.4
               env:
                   # The server refuses to start without these, on purpose: the keyring never invents
                   # an encryption key, because a generated key silently strands every credential
