@@ -1071,3 +1071,7 @@ See [FORK.md](FORK.md) for the full licensing breakdown.
 
 Releases before this fork are upstream Flowise releases. All 307 upstream tags and 42 release
 records are preserved in this repository.
+
+## Unreleased — security reconciliation (2026-11-09)
+
+Node 22.23.4 and pnpm 10.34.5 alignment, dependency security bounds, a production-only runtime stage, and workspace credential controls. Local build and 3,597 tests pass; Docker image and CI validation are pending. See [the security brief](docs/security/2026-11-09-runtime-dependencies.md). No new release or source-revision deployment is claimed.

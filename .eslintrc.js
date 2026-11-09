@@ -14,7 +14,33 @@ module.exports = {
         }
     },
     parser: '@typescript-eslint/parser',
-    ignorePatterns: ['**/node_modules', '**/dist', '**/build', '**/coverage', '**/package-lock.json'],
+    ignorePatterns: [
+        '**/node_modules',
+        '**/dist',
+        '**/build',
+        '**/coverage',
+        '**/package-lock.json',
+        // Secret material must never be read by a linter.
+        //
+        // `pnpm lint` globs **/*.json, which matched a credential export sitting in the
+        // working directory. ESLint opened it; only a root-owned 0600 file mode stopped
+        // the read (EACCES), which also broke the lint gate outright. Had the file been
+        // readable, ESLint would have parsed it and could have echoed its contents into
+        // an error message, a log, or CI output.
+        //
+        // .gitignore does not apply to ESLint. These patterns mirror the secret section
+        // of .gitignore -- keep the two in step. See AGENTS.md section 9.
+        '**/flowise-credentials-backup-*.json',
+        '**/*credentials-backup*',
+        '**/*.sqlite',
+        '**/*.sqlite3',
+        '**/.env',
+        '**/.env.*',
+        '**/*service-account*.json',
+        '**/*secret*.json',
+        '**/*.pem',
+        '**/*.key'
+    ],
     plugins: ['unused-imports'],
     rules: {
         '@typescript-eslint/explicit-module-boundary-types': 'off',

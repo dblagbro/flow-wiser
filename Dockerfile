@@ -1,11 +1,11 @@
 # Build the monorepo from source.
 #
 #   docker build --no-cache --pull \
-#     --build-arg NODE_VERSION=20 \
+#     --build-arg NODE_VERSION=22.23.4 \
 #     --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-#     -t dblagbro/flow-wiser:3.1.4-fw4 .
+#     -t dblagbro/flow-wiser:3.1.4-fw10 .
 #
-#   docker run -d -p 3000:3000 dblagbro/flow-wiser:3.1.4-fw4
+#   docker run -d -p 3000:3000 dblagbro/flow-wiser:3.1.4-fw10
 #
 # THIS is the Dockerfile that produces an Apache-2.0-only image. It compiles the
 # tree in this repository, from which the 127 commercially licensed files have
@@ -19,12 +19,9 @@
 # It is kept for reproducing and diagnosing the upstream images, not for
 # publishing ours.
 
-# Node 20, not 24. better-sqlite3 fails to compile under node-gyp on Node 24
-# ("gyp ERR! not ok", node-gyp 8.4.1), and every published flowiseai/flowise image
-# actually runs v20.20.2 -- so the 24 here could never have produced a working build.
-# Same defect as docker/Dockerfile's ARG NODE_VERSION=24, fixed there in an earlier commit.
-ARG NODE_VERSION=20
-FROM node:${NODE_VERSION}-alpine
+# Keep the tested Node 22 runtime aligned with .nvmrc and CI.
+ARG NODE_VERSION=22.23.4
+FROM node:${NODE_VERSION}-alpine AS build
 
 # Install system dependencies and build tools
 RUN apk update && \
@@ -34,11 +31,17 @@ RUN apk update && \
     make \
     g++ \
     build-base \
+    git \
+    cmake \
+    openblas-dev \
+    lapack-dev \
+    linux-headers \
+    py3-setuptools \
     cairo-dev \
     pango-dev \
     chromium \
     curl && \
-    npm install -g pnpm@10.26.0
+    npm install -g pnpm@10.34.5
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
@@ -95,8 +98,11 @@ RUN if [ -n "${FLOWISE_VERSION}" ]; then \
     fi
 
 # Install dependencies and build (excluding sdk packages not needed for Docker)
-RUN pnpm install && \
-    pnpm build:docker
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    --mount=type=cache,target=/root/.npm \
+    pnpm install --frozen-lockfile && \
+    pnpm build:docker && \
+    CI=true pnpm --filter ./packages/server deploy --legacy --prod /opt/flowise-runtime
 
 # Final gate: the build output must contain no commercially licensed material.
 #
@@ -118,16 +124,16 @@ RUN FOUND="$(find / -xdev \( -path '*/enterprise/*' -o -name 'IdentityManager.*'
        fi \
     && echo "CLEAN: no enterprise/ path, no IdentityManager artifact, no upstream-archive anywhere in the image"
 
-# Put `flowise` on PATH.
-#
-# Every recovery message the server and CLI print names `flowise` -- "create the
-# first administrator with: flowise admin:create --email <you> --role
-# super-admin" is logged on the first boot of every new instance. pnpm links the
-# workspace bin into node_modules/.bin, but nothing put that directory on PATH,
-# so `docker exec <container> flowise admin:create` answered "not found" and the
-# operator had to know the layout of the image to get in. The commands we print
-# have to be the commands that run.
-ENV PATH=/usr/src/flowise/node_modules/.bin:$PATH
+# Start from a fresh runtime base so source and development dependencies do not
+# remain in lower image layers. pnpm deploy includes the built workspace packages.
+FROM node:${NODE_VERSION}-alpine AS runtime
+RUN apk add --no-cache libc6-compat python3 libstdc++ libgomp openblas cairo pango chromium curl
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV NODE_OPTIONS=--max-old-space-size=8192
+WORKDIR /usr/src/flowise/packages/server
+COPY --from=build /opt/flowise-runtime/ ./
+RUN ln -sf /usr/src/flowise/packages/server/bin/run /usr/local/bin/flowise
 
 # Give the node user ownership of the application files
 RUN chown -R node:node .
@@ -135,7 +141,7 @@ RUN chown -R node:node .
 # The bin has to work, not just exist.
 RUN cd / && flowise --version
 
-# Switch to non-root user (node user already exists in node:20-alpine)
+# Switch to the existing non-root node user.
 USER node
 
 EXPOSE 3000

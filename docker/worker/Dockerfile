@@ -1,4 +1,17 @@
-FROM node:24-alpine
+# Node.js version (overridable via build-arg from CI)
+#
+# Node 22 is the supported version for this project. See
+# docs/decisions/ADR-0004-node-version-conflict.md.
+#
+# This was previously a hardcoded `FROM node:24-alpine` with no build arg, so it
+# could not be overridden from CI the way the other two Dockerfiles could -- and
+# Node 24 cannot compile better-sqlite3 under node-gyp ("gyp ERR! not ok").
+# The worker image therefore could not build at all. Made overridable and aligned.
+#
+# This value must stay in step with .nvmrc, `engines.node`, and the CI Node matrix.
+# scripts/assert-version-parity.js enforces that.
+ARG NODE_VERSION=22.23.4
+FROM node:${NODE_VERSION}-alpine
 
 RUN apk add --update libc6-compat python3 make g++
 # needed for pdfjs-dist
@@ -8,7 +21,7 @@ RUN apk add --no-cache build-base cairo-dev pango-dev
 RUN apk add --no-cache chromium curl
 
 #install PNPM globally
-RUN npm install -g pnpm@10.26.0
+RUN npm install -g pnpm@10.34.5
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
