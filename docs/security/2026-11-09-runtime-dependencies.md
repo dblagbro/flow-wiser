@@ -35,3 +35,5 @@ The Node job has the stable check name `Node CI (ubuntu-latest)`. The main branc
 The Cypress action exports `CI=1` during installation (its pinned `index.js`, line218). The fixture accepts both standard true values, `1` and `true`, while retaining the exact temporary database-path check. The initial strict-value assertion failed before any account creation; it did not indicate an application authentication failure.
 
 The corrected fixture passed locally in a fresh, isolated instance of the previously validated source candidate: `CI=1` account creation succeeded, and an unexpected database path was refused before mutation. The test container was stopped afterward. This validates the fixture; final GitHub browser CI remains required.
+
+The fixture completed successfully in GitHub, then the test assertion used a result property absent from the repository-pinned Cypress version. The suite now checks the fixture success output; `cy.exec` still fails on every non-zero exit by default. No application or fixture isolation behavior changed.
