@@ -184,7 +184,8 @@ const deleteAssistant = async (assistantId: string, isDeleteBoth: any, workspace
         try {
             const assistantDetails = JSON.parse(assistant.details)
             const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
-                id: assistant.credential
+                id: assistant.credential,
+                workspaceId: workspaceId
             })
 
             if (!credential) {

@@ -51,6 +51,9 @@ if (USE_AWS_SECRETS_MANAGER) {
 
 /*
  * List of dependencies allowed to be import in @flowiseai/nodevm
+ *
+ * Do NOT add 'puppeteer' or 'playwright' here (or via TOOL_FUNCTION_EXTERNAL_DEP): their launch()
+ * APIs forward executablePath/args to child_process.spawn, which is a sandbox escape.
  */
 export const availableDependencies = [
     '@aws-sdk/client-bedrock-runtime',
@@ -742,6 +745,47 @@ export const decryptCredentialData = async (encryptedData: string): Promise<ICom
  * @param {ICommonObject} options
  * @returns {Promise<ICommonObject>}
  */
+/**
+ * SEC-B-12: decide whether a resolved credential may be used by the current workspace.
+ *
+ * `getCredentialData` decrypts and returns stored secrets. It resolved by id alone, with no tenant
+ * check, so a flow that referenced a credential id belonging to another workspace would have its
+ * secret decrypted and handed back — cross-tenant credential disclosure (IDOR). This gates that.
+ *
+ * Enforced only when a workspace context is present (`options.workspaceId`); callers with none (CLI,
+ * migrations, internal tasks) are unchanged. Sharing is preserved: a credential owned by another
+ * workspace but shared INTO this one (a `WorkspaceShared` row keyed on workspaceId + sharedItemId +
+ * itemType 'credential') is allowed. Uses `databaseEntities` only — no dependency on server code,
+ * so the components -> server boundary is respected.
+ *
+ * Fails closed: if the share lookup cannot be performed or errors, access is denied.
+ */
+export const credentialAccessibleToWorkspace = async (
+    credential: { id?: string; workspaceId?: string | null },
+    options: ICommonObject
+): Promise<boolean> => {
+    const workspaceId = options.workspaceId as string | undefined
+    // No workspace context, or credential carries no owner: preserve prior (id-only) behaviour.
+    if (!workspaceId || !credential?.workspaceId) return true
+    // Owned by this workspace.
+    if (credential.workspaceId === workspaceId) return true
+    // Otherwise it must be explicitly shared into this workspace.
+    const appDataSource = options.appDataSource as DataSource
+    const databaseEntities = options.databaseEntities as IDatabaseEntity
+    const WorkspaceShared = databaseEntities?.['WorkspaceShared']
+    if (!appDataSource || !WorkspaceShared || !credential.id) return false
+    try {
+        const shared = await appDataSource.getRepository(WorkspaceShared).findOneBy({
+            workspaceId,
+            sharedItemId: credential.id,
+            itemType: 'credential'
+        })
+        return !!shared
+    } catch {
+        return false
+    }
+}
+
 export const getCredentialData = async (selectedCredentialId: string, options: ICommonObject): Promise<ICommonObject> => {
     const appDataSource = options.appDataSource as DataSource
     const databaseEntities = options.databaseEntities as IDatabaseEntity
@@ -756,6 +800,9 @@ export const getCredentialData = async (selectedCredentialId: string, options: I
         })
 
         if (!credential) return {}
+
+        // SEC-B-12: fail closed on cross-workspace access BEFORE decrypting anything.
+        if (!(await credentialAccessibleToWorkspace(credential, options))) return {}
 
         // Decrypt credentialData
         const decryptedCredentialData = await decryptCredentialData(credential.encryptedData)

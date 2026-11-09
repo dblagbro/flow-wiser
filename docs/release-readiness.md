@@ -6,16 +6,16 @@
 
 ## Gate status
 
-| Gate | State |
-|---|---|
-| CI on the release commit | ✅ green (required checks pass) |
-| Lint / build / tests | ✅ 0 errors · 6/6 packages · 980 tests |
-| Test discovery | ✅ 156/156 — no suite silently unrun |
-| Nine QA blockers | ✅ fixed in the tree |
-| **Fixes verified on a built image** | ❌ **NOT DONE** — this is the gate |
+| Gate                                     | State                                                         |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| CI on the release commit                 | ✅ green (required checks pass)                               |
+| Lint / build / tests                     | ✅ 0 errors · 6/6 packages · 980 tests                        |
+| Test discovery                           | ✅ 156/156 — no suite silently unrun                          |
+| Nine QA blockers                         | ✅ fixed in the tree                                          |
+| **Fixes verified on a built image**      | ❌ **NOT DONE** — this is the gate                            |
 | **Live disclosure closed in production** | ❌ **STILL OPEN** — fix is in the tree, production runs `rc2` |
-| QA artifacts removed | ❌ three containers, 305 test credentials still up |
-| Exposed credential rotated | ❌ operator action |
+| QA artifacts removed                     | ❌ three containers, 305 test credentials still up            |
+| Exposed credential rotated               | ❌ operator action                                            |
 
 ## Why rc2 cannot ship
 
@@ -44,3 +44,7 @@ unauthorized burst is invisible), and the accessibility set (UI-04/06/07).
 
 None of these blocks the disclosure fix. All of them should land before this is described as a
 security-hardened release.
+
+## 2026-11-09 — runtime and workspace security source reconciliation
+
+Node 22.23.4, pnpm 10.34.5 and the dependency lockfile now align with the tested runtime strategy. Existing workspace credential guards are preserved. Local lint, full build, test discovery and all 3,597 tests in 157 suites pass. The TTS authorization regression fails before the fix and passes afterward. Docker image validation and GitHub CI remain pending. See [the dated security brief](security/2026-11-09-runtime-dependencies.md) for provenance and limitations.
