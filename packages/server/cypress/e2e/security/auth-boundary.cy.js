@@ -1,6 +1,12 @@
-/* global cy, describe, it, beforeEach */
+/* global cy, describe, it, before, beforeEach */
 
 describe('Anonymous authentication boundary', () => {
+    before(() => {
+        // This fork intentionally disables public self-registration. Use the
+        // supported recovery CLI against the isolated CI database instead.
+        cy.exec('python3 cypress/support/seed-auth.py', { timeout: 120000 }).its('exitCode').should('eq', 0)
+    })
+
     beforeEach(() => {
         cy.clearCookies()
         cy.clearLocalStorage()
