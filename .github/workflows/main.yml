@@ -11,7 +11,7 @@ permissions:
     contents: read
 jobs:
     build:
-        name: Node CI
+        name: Node CI (${{ matrix.platform }})
         strategy:
             matrix:
                 platform: [ubuntu-latest]
