@@ -37,3 +37,5 @@ The Cypress action exports `CI=1` during installation (its pinned `index.js`, li
 The corrected fixture passed locally in a fresh, isolated instance of the previously validated source candidate: `CI=1` account creation succeeded, and an unexpected database path was refused before mutation. The test container was stopped afterward. This validates the fixture; final GitHub browser CI remains required.
 
 The fixture completed successfully in GitHub, then the test assertion used a result property absent from the repository-pinned Cypress version. The suite now checks the fixture success output; `cy.exec` still fails on every non-zero exit by default. No application or fixture isolation behavior changed.
+
+A later CI attempt failed inside account creation, although the same fixture had succeeded locally and in the preceding CI run. The fixture now emits a bounded, password-redacted CLI diagnostic on failure; this intermittent failure remains unresolved and blocks merging.

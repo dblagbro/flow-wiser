@@ -5,6 +5,8 @@ import pty
 import secrets
 import select
 import subprocess
+import sys
+import re
 import time
 
 assert os.environ.get('CI') in ('true', '1'), 'Only run against an isolated CI database'
@@ -38,7 +40,11 @@ try:
                 stage = 2
                 buffer = b''
     process.wait(timeout=5)
-    assert process.returncode == 0 and stage == 2, 'CI fixture creation failed'
+    if process.returncode != 0 or stage != 2:
+        diagnostic = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', buffer.decode(errors='replace')).replace(password, '[redacted]')
+        diagnostic = ' '.join(diagnostic.split())
+        print('CI fixture failed: exit=' + str(process.returncode) + ' prompt_stage=' + str(stage) + ' ' + diagnostic[-700:], file=sys.stderr)
+        sys.exit(1)
     assert password.encode() not in buffer, 'CLI exposed generated fixture credential'
 finally:
     if process.poll() is None:
