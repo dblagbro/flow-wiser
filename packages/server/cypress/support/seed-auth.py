@@ -7,13 +7,33 @@ import select
 import subprocess
 import sys
 import re
+import sqlite3
 import time
 
 assert os.environ.get('CI') in ('true', '1'), 'Only run against an isolated CI database'
 root = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
 database = pathlib.Path(os.environ['DATABASE_PATH']).resolve()
-assert database == root / 'flow-wiser-cypress-db', 'Refusing any other database path'
+run_id = os.environ['GITHUB_RUN_ID']
+attempt = os.environ['GITHUB_RUN_ATTEMPT']
+assert run_id.isdigit() and attempt.isdigit(), 'Expected numeric CI run identifiers'
+assert database == root / ('flow-wiser-cypress-' + run_id + '-' + attempt), 'Refusing any other database path'
 assert (database / 'database.sqlite').is_file(), 'Start the CI server and migrations first'
+def fixture_ready():
+    with sqlite3.connect('file:' + str(database / 'database.sqlite') + '?mode=ro', uri=True) as connection:
+        rows = connection.execute(
+            'SELECT u.name, EXISTS(SELECT 1 FROM identity_workspace_user w WHERE w.userId=u.id), '
+            'EXISTS(SELECT 1 FROM identity_organization_user o WHERE o.userId=u.id) '
+            'FROM identity_user u WHERE u.email=?', ('cypress-auth@example.invalid',)).fetchall()
+    if not rows:
+        return False
+    assert rows == [('Cypress authentication fixture', 1, 1)], 'Unexpected existing fixture identity'
+    return True
+
+
+if fixture_ready():
+    print('Isolated CI account ready')
+    sys.exit(0)
+
 password = 'Cypress-A7!' + secrets.token_urlsafe(32)
 master, slave = pty.openpty()
 process = subprocess.Popen(
@@ -51,4 +71,5 @@ finally:
         process.kill()
         process.wait()
     os.close(master)
-print('Created isolated CI account through the recovery CLI')
+assert fixture_ready(), 'CLI did not create a complete fixture identity'
+print('Isolated CI account ready')

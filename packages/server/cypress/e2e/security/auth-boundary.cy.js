@@ -4,7 +4,7 @@ describe('Anonymous authentication boundary', () => {
     before(() => {
         // This fork intentionally disables public self-registration. Use the
         // supported recovery CLI against the isolated CI database instead.
-        cy.exec('python3 cypress/support/seed-auth.py', { timeout: 120000 }).its('stdout').should('contain', 'Created isolated CI account')
+        cy.exec('python3 cypress/support/seed-auth.py', { timeout: 120000 }).its('stdout').should('contain', 'Isolated CI account ready')
     })
 
     beforeEach(() => {

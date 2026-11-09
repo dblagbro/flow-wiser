@@ -39,3 +39,7 @@ The corrected fixture passed locally in a fresh, isolated instance of the previo
 The fixture completed successfully in GitHub, then the test assertion used a result property absent from the repository-pinned Cypress version. The suite now checks the fixture success output; `cy.exec` still fails on every non-zero exit by default. No application or fixture isolation behavior changed.
 
 A later CI attempt failed inside account creation, although the same fixture had succeeded locally and in the preceding CI run. The fixture now emits a bounded, password-redacted CLI diagnostic on failure; this intermittent failure remains unresolved and blocks merging.
+
+The diagnostic identified a duplicate synthetic account, not a password or database-lock error. Fixture setup now reuses only the exact synthetic identity after checking both workspace and organization membership; it never resets a password or overwrites an account. Each workflow run/attempt also gets a distinct temporary database path. Final browser CI remains required.
+
+The revised fixture passed fresh isolated account creation, a second invocation reusing the verified identity, and wrong-path refusal. The canary was stopped after testing.
