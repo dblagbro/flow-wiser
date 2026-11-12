@@ -42,15 +42,41 @@ jobs:
     secrets:
         name: Secret scan
         runs-on: ubuntu-latest
+        env:
+            # Pinned so the gate runs a known tool version, and cached so a transient
+            # release-CDN outage cannot gate every open PR. gitleaks/gitleaks-action@v2
+            # downloaded the binary from the GitHub release CDN on every run; two 504s
+            # crashed the action and failed Secret scan on an unrelated commit
+            # (ops note 2026-11-10). Detection is unchanged: same gitleaks version, same
+            # git mode, same .gitleaks.toml — only how the binary is obtained changed.
+            GITLEAKS_VERSION: '8.24.3'
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
               with:
                   fetch-depth: 0 # a secret committed and later removed is still leaked
 
-            - name: gitleaks
-              uses: gitleaks/gitleaks-action@v2
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Cache gitleaks binary
+              id: cache-gitleaks
+              uses: actions/cache@v4
+              with:
+                  path: ${{ runner.temp }}/gitleaks/gitleaks
+                  key: gitleaks-${{ env.GITLEAKS_VERSION }}-linux-x64
+
+            - name: Install gitleaks (pinned, retried; fail-closed)
+              if: steps.cache-gitleaks.outputs.cache-hit != 'true'
+              run: |
+                  set -euo pipefail
+                  mkdir -p "${RUNNER_TEMP}/gitleaks"
+                  curl -sSfL --retry 6 --retry-all-errors --retry-delay 5 \
+                    -o "${RUNNER_TEMP}/gitleaks.tar.gz" \
+                    "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+                  tar -xzf "${RUNNER_TEMP}/gitleaks.tar.gz" -C "${RUNNER_TEMP}/gitleaks" gitleaks
+
+            - name: gitleaks (git mode — committed content only)
+              run: |
+                  set -euo pipefail
+                  "${RUNNER_TEMP}/gitleaks/gitleaks" version
+                  "${RUNNER_TEMP}/gitleaks/gitleaks" detect --source . --redact --no-banner --exit-code 1
 
             - name: Assert no credential export or database is tracked
               # Belt and braces alongside gitleaks: this catches a secret-SHAPED
