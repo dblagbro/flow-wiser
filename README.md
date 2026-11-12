@@ -1,10 +1,15 @@
 <!-- markdownlint-disable MD030 -->
 
-# Flowise, actually open source — `3.1.4-fw10`
+# Flowise, actually open source — `4.0.1`
 
 ```bash
-docker pull dblagbro/flow-wiser:3.1.4-fw10     # or :latest
+docker pull dblagbro/flow-wiser:4.0.1     # or :latest
 ```
+
+> Flow-Wiser `4.0.1` continues FlowiseAI's Flowise, which reached end of life at `3.1.4`
+> (archived 2026-08-10). It uses plain SemVer on its own line — the former `3.1.4-fw<n>` scheme is
+> retired. See [ADR-0005](docs/decisions/ADR-0005-versioning-scheme.md) and the
+> [CHANGELOG](CHANGELOG.md).
 
 Upstream Flowise was **open core**. 127 files — `packages/server/src/enterprise/` and
 `IdentityManager.ts` — carried a FlowiseAI Commercial License forbidding copying,
@@ -17,10 +22,10 @@ are gone, and authentication, RBAC, SSO, MFA, audit, encryption at rest and mult
 have been reimplemented from scratch under Apache 2.0 — without ever reading them. The
 build now _fails_ if any commercially licensed artifact appears anywhere on the image.
 
-**`3.1.4-fw10` is the baseline.** It is the first release whose commit passes CI — fw5, fw6
-and fw7 were tagged while the build was red and nobody was told, which is documented rather
-than quietly fixed (`docs/PROCESS-GAPS.md`, G9–G11). No product code changed between fw7 and
-fw8; what changed is that the claims about it became checkable. Start here:
+**`4.0.1` is the current release**, succeeding `3.1.4-fw10` — the baseline whose commit first
+passed CI (fw5, fw6 and fw7 were tagged while the build was red and nobody was told, which is
+documented rather than quietly fixed — `docs/PROCESS-GAPS.md`, G9–G11; no product code changed
+between fw7 and fw8, only that the claims about it became checkable). Start here:
 **[BASELINE-3.1.4-fw10.md](docs/BASELINE-3.1.4-fw10.md)** — what is verified, how, and what is
 explicitly _not_ fixed.
 
@@ -44,8 +49,7 @@ explicitly _not_ fixed.
 > ⚠️ **`3.1.4-fw1` through `3.1.4-fw3` are superseded and are _not_ redistributable.** They
 > were built before the removal, from a Dockerfile that installs FlowiseAI's published npm
 > package, and so they contain the commercially licensed compiled output. The commercial
-> terms govern those images wherever you obtained them. If you are running one, move to
-> `fw8`.
+> terms govern those images wherever you obtained them. If you are running one, move to `4.0.1`.
 
 ---
 
@@ -150,12 +154,12 @@ So the "3.1.3 works, 3.1.4 is broken" split everyone observed is an artifact of 
 ## Get a working, fully patched Flowise
 
 ```bash
-docker pull dblagbro/flow-wiser:3.1.4-fw10     # or :latest
-curl -s http://localhost:3000/api/v1/version  # {"version":"3.1.4-fw10"}
+docker pull dblagbro/flow-wiser:4.0.1     # or :latest
+curl -s http://localhost:3000/api/v1/version  # {"version":"4.0.1"}
 ```
 
 ```
-flowise=3.1.4-fw10   flowise-components=3.1.4-fw10   flowise-ui=3.1.4-fw10   vm2=3.11.5
+flowise=4.0.1   flowise-components=4.0.1   flowise-ui=4.0.1   vm2=3.11.5
 ```
 
 Or build it yourself, from source, and watch the gates fire:
@@ -164,8 +168,8 @@ Or build it yourself, from source, and watch the gates fire:
 git clone https://github.com/dblagbro/flow-wiser && cd flow-wiser
 docker build --no-cache --pull \
   --build-arg NODE_VERSION=22.23.4 \
-  --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-  -t dblagbro/flow-wiser:3.1.4-fw10 .
+  --build-arg FLOWISE_VERSION=4.0.1 \
+  -t dblagbro/flow-wiser:4.0.1 .
 ```
 
 That is the **root** `Dockerfile` — note the `.` context and the absence of `-f`. It
@@ -186,7 +190,7 @@ The `connect-sqlite3` boot crash cannot occur in `fw4` at all: it threw inside
 `dist/enterprise/middleware/passport/SessionPersistance.js`, one of the deleted files, and
 nothing in the tree imports `connect-sqlite3` any more.
 
-⚠️ **Licensing — `3.1.4-fw1` through `3.1.4-fw3` only.** Like every Flowise container published before 2026-08-06, those images contain compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain them. Flow-Wiser could not and did not relicense them. **`3.1.4-fw10` is clean**: the repository no longer contains those files, the release image is built from source, and the build fails if any trace of them reaches it. See [FORK.md](FORK.md).
+⚠️ **Licensing — `3.1.4-fw1` through `3.1.4-fw3` only.** Like every Flowise container published before 2026-08-06, those images contain compiled output from `packages/server/src/enterprise/` and `IdentityManager.ts`, which are under FlowiseAI's **Commercial License**, not Apache 2.0, and their terms govern those components wherever you obtain them. Flow-Wiser could not and did not relicense them. **`4.0.1` is clean**: the repository no longer contains those files, the release image is built from source, and the build fails if any trace of them reaches it. See [FORK.md](FORK.md).
 
 ---
 
@@ -305,7 +309,7 @@ docker run -d --name flow-wiser -p 3000:3000 \
   -e IDENTITY_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -e FLOWISE_SESSION_PEPPER="$(openssl rand -base64 32)" \
   -v flow-wiser-data:/root/.flowise \
-  dblagbro/flow-wiser:3.1.4-fw10
+  dblagbro/flow-wiser:4.0.1
 ```
 
 **Record both values somewhere safe and separate from your backups.** They live only in the
@@ -338,8 +342,8 @@ mislabelled image cannot be produced:
     ```bash
     docker build --no-cache --pull \
       --build-arg NODE_VERSION=22.23.4 \
-      --build-arg FLOWISE_VERSION=3.1.4-fw10 \
-      -t dblagbro/flow-wiser:3.1.4-fw10 .
+      --build-arg FLOWISE_VERSION=4.0.1 \
+      -t dblagbro/flow-wiser:4.0.1 .
     ```
 
 2. Run it with the same `-e`/`-v` flags shown above.
