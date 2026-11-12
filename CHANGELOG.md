@@ -1108,3 +1108,21 @@ Ordinary history reads and deletion already have guards in this fork. Source
 validation is distinct from runtime deployment; a rebuilt, verified image is
 required before calling the production finding resolved. This is an
 authorization disclosure risk, not demonstrated remote code execution.
+
+## 2026-11-12 — Object-valued parameter override authorization
+
+Object-valued overrides now require the same explicit node-label/parameter
+permission as arrays and scalars before either scoped or unscoped merging. An
+unscoped object previously fell through to the generic merge even when the
+parameter was disabled, unlisted, or enabled only for a different node label.
+The global API-override switch at the call sites remains in force. Variable
+overrides retain their separate allowlist, and analytics retains its existing
+explicit exception.
+
+Nineteen synthetic helper tests exercise the actual production declaration,
+including disabled input shapes, permission isolation, allowed object/array
+merges and the existing exceptions. Four denial assertions fail on the original
+helper; all nineteen pass with the guard. No live graph or provider is exercised.
+This is a parameter-authorization defect; no public RCE was demonstrated. Source
+validation and deployment are tracked separately. See
+[the security note](docs/security/2026-11-12-object-override-authorization.md).
