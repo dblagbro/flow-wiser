@@ -158,7 +158,7 @@ record progress here, and land them in small reviewable groups.
 
 ### BL-01 · Audit and update outdated nodes in the operator's deployed chatflows
 
-**Raised:** 2026-08-11 by Operator · **Status:** Proposed · **Size:** M · **Value:** Medium
+**Raised:** 2026-08-11 by Operator · **Status:** Audit complete (2026-10-11) — upgrade pending (operator) · **Size:** M · **Value:** Medium
 
 The operator's live deployment shows many canvas nodes carrying "Node version N outdated" warnings
 across its chatflows. These should be brought up to current component versions — newer versions
@@ -188,10 +188,30 @@ instance's database, not code in this repo.
 4. Operator upgrades a pilot flow, tests it live, then proceeds in batches.
 5. Record results in `docs/qa-notes.md`.
 
+**Audit result (2026-10-11, step 1 — read-only):** snapshot of the live SQLite DB
+(`/root/.flowise/database.sqlite`, 25 chatflows), node `data.version` compared against each
+current component's `this.version` in `packages/components/nodes`.
+
+-   **214 node instances across 25 flows; 94 are outdated. Only 2 of the outdated flows are
+    `deployed=true`:** `Ask Devin - Public` (3 outdated nodes) and
+    `Janet 80th RSVP Outdialer Decision` (3). The other 23 are drafts.
+-   **Widest gaps (deployed → current), by reach:** `chatOpenAI` v2→v8.3 (15 flows), `openAIEmbeddings`
+    v1→v4 (10), `cheerioWebScraper` v1.1→v2 (12), `conversationalRetrievalQAChain` v1→v3 (12),
+    `pdfFile` v1→v2 (8), `llmChain` v1→v3 (5), `chatPromptTemplate` v1→v2 (5), `docxFile` v1→v2 (4),
+    `chatAnthropic` v7→v8 (4), `chatOllama` v2→v5 (2), `chatGoogleVertexAI` v2→v5.3 (1).
+-   **3 node types in flows have no matching `name` in current components** (renamed or removed —
+    these are the delete-and-recreate landmines from the constraints above, _not_ simple bumps):
+    `faissUpsert` (2), `faissExistingIndex` (1), `ElasticsearchIndex` (1).
+-   **Next step is an operator action:** back up flow definitions and verify the restore, then upgrade
+    the 2 deployed flows first (6 nodes total), test live, then batch the drafts. The 3 renamed/removed
+    types need manual re-wiring that preserves credential UUIDs — never delete-and-recreate.
+-   Full machine-readable report retained for this session at `scratchpad/bl01-report.json`.
+
 **Relationship to BL-02:** this is the manual version of what BL-02 automates. Doing the audit
 first is genuinely useful either way — it produces the real-world dataset of version transitions
 and parameter changes that BL-02's migration contract has to handle. **Do BL-01's audit before
-designing BL-02.**
+designing BL-02.** The audit above now gives BL-02 its real transition set — including the three
+renamed/removed types, which are the cases its migration contract most has to get right.
 
 ---
 
