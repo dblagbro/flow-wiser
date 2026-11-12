@@ -1149,6 +1149,9 @@ export const replaceInputsWithConfig = (
                 }
                 continue
             } else if (overrideConfig[config] && typeof overrideConfig[config] === 'object') {
+                if (!isParameterEnabled(flowNodeData.label, config)) {
+                    continue
+                }
                 const nodeIds = Object.keys(overrideConfig[config])
                 if (nodeIds.includes(flowNodeData.id)) {
                     // Check if this parameter is enabled
