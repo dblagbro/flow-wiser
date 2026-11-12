@@ -57,3 +57,24 @@ refusal.** See `packages/server/test/security/negative-controls.test.ts`.
 ## 2026-11-09 — runtime and workspace security source reconciliation
 
 Node 22.23.4, pnpm 10.34.5 and the dependency lockfile now align with the tested runtime strategy. Existing workspace credential guards are preserved. Local lint, full build, test discovery and all 3,597 tests in 157 suites pass. The TTS authorization regression fails before the fix and passes afterward. Docker image validation and GitHub CI remain pending. See [the dated security brief](security/2026-11-09-runtime-dependencies.md) for provenance and limitations.
+
+## 2026-11-12 — Internal chat-history permission gate
+
+The internal chat-message GET routes now require `chatflows:view` or
+`agentflows:view`, using the same existing permission middleware as ordinary
+chat history. A workspace API key with unrelated or empty grants previously
+reached the message handler. The controller's workspace restriction remains
+unchanged; this correction adds the missing operation-level permission check.
+
+Fourteen synthetic route tests cover both registered paths, anonymous and
+insufficiently privileged subjects, missing workspace scope, both viewer grants
+and the existing organization-administrator behavior. The unfixed route fails
+eight denial assertions; the fixed route passes all fourteen tests. No real
+chat history, credentials, provider calls or production mutations are involved.
+
+This is the internal-history portion of
+[GHSA-ppmg-4cx6-95hh](https://github.com/FlowiseAI/Flowise/security/advisories/GHSA-ppmg-4cx6-95hh).
+Ordinary history reads and deletion already have guards in this fork. Source
+validation is distinct from runtime deployment; a rebuilt, verified image is
+required before calling the production finding resolved. This is an
+authorization disclosure risk, not demonstrated remote code execution.
