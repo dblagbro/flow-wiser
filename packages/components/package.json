@@ -214,7 +214,7 @@
         "winston": "^3.9.0",
         "ws": "^8.18.3",
         "xlsx": "0.18.5",
-        "zod": "^3.25.76 || ^4",
+        "zod": "^4.6.6",
         "zod-to-json-schema": "^3.24.6"
     },
     "devDependencies": {
