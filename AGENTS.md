@@ -200,7 +200,12 @@ exactly like a code change.
 -   Releases follow `docs/release-readiness.md`. Its rule is absolute: a gate is passed by going
     _through_ it, not around it. A fix that exists in the tree but not in the deployed image has
     not shipped.
--   Versioning is `3.1.4-fwN`, tracking upstream's base with a fork counter.
+-   Versioning is **plain SemVer on an independent Flow-Wiser line** — `MAJOR.MINOR.PATCH`, no
+    suffix. The line continues where upstream Flowise left off: Flowise reached end of life at
+    `3.1.4` (archived 2026-08-10) and will never publish again, so Flow-Wiser carries the project
+    forward from `4.0.1`. The upstream base is recorded as provenance in `CHANGELOG.md` and
+    [ADR-0005](docs/decisions/ADR-0005-versioning-scheme.md), not encoded in the number. The old
+    `3.1.4-fwN` fork-counter scheme is retired. The Docker tag equals the package version.
 
 ## 9. Security and secrets
 
