@@ -194,7 +194,17 @@ export class VersionStore {
         await this.ensureRepo()
         if (!(await this.hasCommits())) return []
 
-        const commits = await git.log({ fs, dir: this.dir, filepath: flowPath(chatflowId), depth: limit, force: true })
+        if (!Number.isInteger(limit) || limit < 1) return []
+
+        // `git.log` with a `filepath` can return `depth + 1` entries. When the walk stops because
+        // it has collected `depth` commits, isomorphic-git also appends the commit it was looking
+        // at when it stopped — without having established that THAT commit changed the file. The
+        // repository is shared by every flow, so that trailing entry is routinely a save of some
+        // other flow: its name, the fields that changed, and its author's name and address, shown
+        // in the history of a flow it has nothing to do with. Only the first `limit` entries are
+        // known to have changed this file, so only those are returned.
+        const walked = await git.log({ fs, dir: this.dir, filepath: flowPath(chatflowId), depth: limit, force: true })
+        const commits = walked.slice(0, limit)
         const tagsByOid = await this.tagsByOid()
 
         return commits.map((entry) => ({

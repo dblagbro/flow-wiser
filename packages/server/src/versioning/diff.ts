@@ -288,7 +288,10 @@ export const filterToPromptChanges = (result: DiffResult): DiffResult => {
             if (key) currentKey = key
             return currentKey !== null && isPromptField(currentKey)
         })
-        if (lines.length === 0) continue
+        // A prompt field that merely sits within the context window of some other change is not
+        // a prompt change. Without this, the filtered view showed a hunk with nothing changed in it
+        // while reporting `identical: true`.
+        if (!lines.some((line) => line.op !== 'context')) continue
         for (const line of lines) {
             if (line.op === 'add') added++
             else if (line.op === 'remove') removed++
