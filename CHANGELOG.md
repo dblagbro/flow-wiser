@@ -25,6 +25,21 @@ first.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+-   **Flow history could include another flow's commit.** When a history request was cut off by its
+    `limit`, the result could carry one extra entry that did not belong to the flow asked about
+    (I-34). History now returns only commits that changed that flow.
+-   **Prompt-focused diff showed hunks with nothing changed in them** (I-35).
+
+### Tests
+
+-   First automated tests for the versioning subsystem — normalisation, diff, capture, restore
+    round-trip, deletion and checkpoint labels, including negative tests for the path-traversal
+    label payloads (I-03). 70 tests.
+
 ## [4.0.1] — 2026-10-13
 
 _Based on Flowise 3.1.4 (upstream EOL). Succeeds `3.1.4-fw10`._
