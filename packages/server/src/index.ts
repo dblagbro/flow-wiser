@@ -32,6 +32,7 @@ import { UsageCacheManager } from './UsageCacheManager'
 import { getEncryptionKey, getNodeModulesPackagePath } from './utils'
 import { API_KEY_BLACKLIST_URLS, WHITELIST_URLS } from './utils/constants'
 import logger, { expressRequestLogger } from './utils/logger'
+import { resolveTrustProxy } from './utils/trustProxy'
 import { RateLimiterManager } from './utils/rateLimit'
 import { SSEStreamer } from './utils/SSEStreamer'
 import { Telemetry } from './utils/telemetry'
@@ -311,20 +312,10 @@ export class App {
         this.app.use(express.json({ limit: flowise_file_size_limit, verify: captureRawBody }))
         this.app.use(express.urlencoded({ limit: flowise_file_size_limit, extended: true, verify: captureRawBody }))
 
-        // Enhanced trust proxy settings for load balancer
-        let trustProxy: string | boolean | number | undefined = process.env.TRUST_PROXY
-        if (typeof trustProxy === 'undefined' || trustProxy.trim() === '' || trustProxy === 'true') {
-            // Default to trust all proxies
-            trustProxy = true
-        } else if (trustProxy === 'false') {
-            // Disable trust proxy
-            trustProxy = false
-        } else if (!isNaN(Number(trustProxy))) {
-            // Number: Trust specific number of proxies
-            trustProxy = Number(trustProxy)
-        }
-
-        this.app.set('trust proxy', trustProxy)
+        // Which proxy hops to believe when deriving `req.ip` — see utils/trustProxy.ts (SEC-B-09).
+        const trustProxy = resolveTrustProxy(process.env.TRUST_PROXY)
+        if (trustProxy.warning) logger.warn(`⚠️ [server]: ${trustProxy.warning}`)
+        this.app.set('trust proxy', trustProxy.setting)
 
         // Allow access from specified domains
         validateCorsConfig()
