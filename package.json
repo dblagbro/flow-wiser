@@ -135,7 +135,7 @@
             "flatted": "^3.4.2",
             "follow-redirects": "^1.16.2",
             "glob@10": "^10.5.0",
-            "ip-address@10": "^10.3.1",
+            "ip-address@10": ">=10.7.4 <11",
             "joi@17": "^17.13.9",
             "js-yaml@3": "^3.15.2",
             "js-yaml@4": "^4.3.2",
@@ -156,7 +156,7 @@
             "picomatch@2": "^2.3.2",
             "picomatch@3": "^3.0.2",
             "picomatch@4": "^4.0.4",
-            "postcss@8": "^8.5.18",
+            "postcss@8": ">=8.5.23 <9",
             "prosemirror-view": "^1.42.3",
             "serialize-javascript": "^7.0.3",
             "sharp": "^0.35.5",
@@ -168,7 +168,10 @@
             "micromatch@4": ">=4.0.8 <5",
             "mdast-util-to-hast@13": ">=13.2.1 <14",
             "postcss-selector-parser@6": ">=6.1.5 <7",
-            "moment": ">=2.31.0 <3"
+            "moment": ">=2.31.0 <3",
+            "qs": ">=6.16.1 <7",
+            "ajv@8": ">=8.18.0 <9",
+            "express@4": ">=4.21.2 <5"
         }
     },
     "packageManager": "pnpm@10.34.5",
