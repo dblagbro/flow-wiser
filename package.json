@@ -175,7 +175,8 @@
             "zod@4": ">=4.6.6 <5",
             "sha.js": ">=2.4.12 <3",
             "@babel/helpers": ">=7.26.10 <8",
-            "@babel/runtime": ">=7.26.10 <8"
+            "@babel/runtime": ">=7.26.10 <8",
+            "@babel/plugin-transform-modules-systemjs": ">=7.29.4 <8"
         }
     },
     "engines": {

@@ -47,6 +47,10 @@ first.
     `docs/bug-log.md`.
 -   **`@babel/helpers` 7.29.14 and a bounded floor under `@babel/runtime` and `sha.js`**, restored
     after the levelling above and now identical on both lines.
+-   **Two manifests now state what is actually installed** — `nodemailer` `^10.0.6` and `langsmith`
+    `^0.6.0`, matching the 10.4.0 and 0.6.3 that overrides already install — and two old copies of
+    a Babel build plugin are removed. Copied from `main`; the drift report showed four differences
+    before and none after.
 -   **Dependency security updates, first sweep.** Eleven packages moved to patched releases within
     their current major version, by override: hono, @hono/node-server, fast-uri, colord,
     http-proxy-middleware, protobufjs, micromatch, mdast-util-to-hast, postcss-selector-parser,
