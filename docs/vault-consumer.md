@@ -66,6 +66,31 @@ The run found one defect on this side: the first attempt signed `http://127.0.0.
 refused on every request. **The hub verifies a bare `host[:port]`.** `bundleClient` now refuses any
 other shape before sending anything.
 
+## Second run, the boot path with the flag on — 2026-11-14
+
+`resolveVaultBootSecrets` itself, against the same test listener and fixture identity, pointed at the
+two synthetic entries as if they were the master key and pepper. Throwaway environment secrets
+generated per run; every result was discarded, nothing was installed and nothing was derived.
+
+| Case                                                            | Result                                     |
+| --------------------------------------------------------------- | ------------------------------------------ |
+| Synthetic values with an environment key configured             | PASS — fallback, alarm, `key_mismatch`     |
+| Default entry names, which this namespace does not hold         | PASS — fallback, alarm, `absent`           |
+| A namespace outside the grant                                   | PASS — fallback, alarm, `grant_denied`     |
+| The same in strict mode                                         | PASS — refuses to start                    |
+| An unknown identity, strict mode on                             | PASS — fallback, warning; not a revoke     |
+| An unreachable hub                                              | PASS — fallback, warning, `no_response`    |
+| A URL-shaped authority                                          | PASS — `vault_misconfigured`, nothing sent |
+| Flag off                                                        | PASS — disabled                            |
+| Synthetic values with **no** environment key to compare against | **Accepted** — see below                   |
+
+**Finding (I-39).** With no environment key configured, there is nothing to hold the vault's value
+against, and any value of 32 bytes or more that is not a published example is accepted as the master
+key. That is the documented end state working as written, but it means the mirror rule protects a
+deployment only while it keeps its environment key. Before any deployment removes that key it needs
+something else to pin to — the obvious candidate is a configured fingerprint of the expected key,
+which is not secret. Not built; recorded in `docs/ISSUE-REGISTER.md` and put to the Vault Architect.
+
 ## Turning it on
 
 Off unless `IDENTITY_KEY_SOURCE=vault`. With the flag off no vault setting is read and no request is
