@@ -144,9 +144,10 @@ environment key is still there.
 deployment** (ruling C50 §3). Set the fingerprint first, see a boot that used the vault, and only
 then remove the key.
 
-The session pepper has no equivalent pin: with no `FLOWISE_SESSION_PEPPER` set, any non-empty vault
-value is accepted. A wrong pepper signs every user out and loses nothing. Whether it should be
-pinned too has been asked and is not decided.
+The session pepper has no equivalent pin, by decision (ruling C53 §5, 2026-11-14): with no
+`FLOWISE_SESSION_PEPPER` set, any non-empty vault value is accepted. A wrong pepper signs every user
+out and loses no data, and a pin would add an operator step to every pepper rotation. This is known,
+accepted behaviour, not an oversight.
 
 ## The signing profile, as built to
 
