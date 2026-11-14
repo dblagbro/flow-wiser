@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                               |
-| Acted on             | **7** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416 (2026-11-13) |
-| Never reviewed       | **340**                                                                                      |
-| Archived open issues | 698                                                                                          |
+|                      |                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                      |
+| Acted on             | **8** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635 (2026-11-13) |
+| Never reviewed       | **339**                                                                                             |
+| Archived open issues | 698                                                                                                 |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -123,8 +123,8 @@ Age skews recent — 73 from 2026-06, 56 from 2026-07 — so most were written a
 the fork point and should still apply cleanly.
 
 **Progress.** The three security PRs first listed here — #6672, #5371, #5255 — were adopted in
-pull request #26. #6416 (mass assignment on the execution update endpoint, GHSA-v2cc-6h2j-w847) was
-adopted on 2026-11-13.
+pull request #26. #6416 (mass assignment on the execution update endpoint, GHSA-v2cc-6h2j-w847) and
+#6635 (telemetry opt-out ignored) were adopted on 2026-11-13.
 
 **Triage of what remains, 2026-11-13** — every archived patch checked with `git apply --check`
 against `apache2-only`:
@@ -140,7 +140,7 @@ Of the 192 that apply cleanly, 79 are titled as fixes, 93 as features, and 20 ar
 unlabelled. "Applies" means the diff fits, nothing more: each still needs reading, a test and a
 build. The clean-applying fixes that touch one or two files are the cheapest next batch; going by
 title alone, the server-side correctness and safety candidates are #6552 and #6560 (credential kept on
-document-store loader update), #6635 (honour telemetry opt-out), #6532 (condition node ignores
+document-store loader update), #6532 (condition node ignores
 only the first edge), #6301 (chat-message pagination), #6478 (do not deep-clone live node
 instances) and #6669 (direct variable names in `overrideConfig`).
 
