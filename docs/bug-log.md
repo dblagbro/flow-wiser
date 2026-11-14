@@ -64,3 +64,16 @@ against a protected branch, the IP allowlist tested from inside the allowlist, a
 tested only with a cooperative tag name.
 The rule adopted in response: **a guard ships with a test that feeds it the bad input and asserts
 refusal.** See `packages/server/test/security/negative-controls.test.ts`.
+
+## Addendum — 2026-11-13, found while writing the versioning test suite (I-03)
+
+The table above is the fw8 point-in-time record. These two were found on `apache2-only` at 4.0.1 and
+are tracked in full in `ISSUE-REGISTER.md`.
+
+| ID   | Finding                                                                                   | Severity | Status                                  |
+| ---- | ----------------------------------------------------------------------------------------- | -------- | --------------------------------------- |
+| I-34 | Flow history could include a commit belonging to a different flow when cut off by `limit` | MEDIUM   | FIXED on `apache2-only`; `main` pending |
+| I-35 | Prompt-focused diff returned hunks containing no changes                                  | LOW      | FIXED on `apache2-only`                 |
+
+Severity for I-34 is on demonstrated impact: commit subject and author identity of another flow's
+save, reproduced in a test; flow content was not reachable by this path.
