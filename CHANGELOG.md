@@ -50,6 +50,9 @@ first.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **A rejected condition branch could still run.** When one condition output was wired to several
+    nodes and that output was not taken, only the first of those nodes was skipped. Fix by
+    **gim-yongjun**, adopted from upstream pull request #6532 with authorship preserved; test added.
 -   **Flow history could include another flow's commit.** When a history request was cut off by its
     `limit`, the result could carry one extra entry that did not belong to the flow asked about
     (I-34). History now returns only commits that changed that flow.
