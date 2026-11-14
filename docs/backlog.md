@@ -181,6 +181,18 @@ initialization`), so it cannot be shown failing before and passing after without
 -   **#6441** (markdown tables in the rich text input) adds a dependency to the UI package, changes
     the lockfile and rewrites how the editor serialises tables. It needs a browser check, and a
     dependency change now has to go through both lines (SEC-DEP-02).
+-   **#6472** (ChatOpenAI: read `stop` from base options). In this node the base options are sent
+    as HTTP headers; reading a `stop` key out of them as model stop sequences is a new meaning for
+    the field, not a clear fix.
+-   **#6643** (custom Azure OpenAI model names) rewrites the two shared dropdown components, the
+    same ones #6594 touches. Needs a browser check; the two patches should be considered together.
+-   **#6669** (accept a variable override at the top level of `overrideConfig`) adds a second way
+    to pass variables and decides by name whether a key is a variable or a node input. A
+    convenience with a collision question, and it sits in the same override control as #6375.
+-   **#6525** (agentflow LLM node: keep token usage when structured output is on) describes a real
+    gap and looks sound, but it is five commits across the LLM node and a shared helper, re-attaches
+    metadata with `Object.defineProperty`, and ships no test. Worth adopting once a test harness
+    for that node exists; not adopted blind.
 -   **#6521** and **#6630** no longer apply after the fixes above.
 
 **How a patch is adopted** (the method used for everything above): read the diff for behaviour and
