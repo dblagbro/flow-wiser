@@ -47,6 +47,13 @@ first.
 
 ### Added — not enabled
 
+-   **Vault key source for the master key and session pepper** (ADR-0006, slice (a)). With
+    `IDENTITY_KEY_SOURCE=vault` the server reads both secrets from the Coordinator Hub vault at
+    boot. Off by default, and with the flag off nothing changes. Phase 1 never locks a deployment
+    out: if the vault is unreachable, revokes, serves a different key, or is misconfigured, the
+    server logs `VAULT NOT USED THIS RUN` and starts on its environment or key-file source as
+    before. `IDENTITY_VAULT_STRICT_REVOKE=true` opts in to refusing to start on an explicit revoke.
+    Settings are listed in `docs/vault-consumer.md`.
 -   **Request signer for the Coordinator Hub vault** (`identity/vault/requestSigner.ts`): RFC 9421,
     Ed25519, the hub's pinned profile, tested against known answers from the hub's reference signer.
     Preparation for fetching the master key and session pepper from the vault at boot. Nothing
