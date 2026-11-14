@@ -53,7 +53,8 @@ first.
     out: if the vault is unreachable, revokes, serves a different key, or is misconfigured, the
     server logs `VAULT NOT USED THIS RUN` and starts on its environment or key-file source as
     before. `IDENTITY_VAULT_STRICT_REVOKE=true` opts in to refusing to start on an explicit revoke.
-    Settings are listed in `docs/vault-consumer.md`.
+    Settings are listed in `docs/vault-consumer.md`. A deployment with no environment key must also
+    set `IDENTITY_VAULT_MASTER_KEY_FINGERPRINT`; the vault's key is refused unless it matches.
 -   **Request signer for the Coordinator Hub vault** (`identity/vault/requestSigner.ts`): RFC 9421,
     Ed25519, the hub's pinned profile, tested against known answers from the hub's reference signer.
     Used only by the vault key source above, which is off by default; see `docs/vault-consumer.md`.

@@ -105,10 +105,17 @@ path and version appear in logs or in `describe()`.
 2. **Revoke versus fallback — no-lockout in Phase 1.** An explicit revoke at boot falls back with an
    alarm. Refusing to start is a separate, default-off flag (`IDENTITY_VAULT_STRICT_REVOKE`).
 3. **Polling** — not in slice (a); see section 4.
+4. **What a deployment with no key of its own compares the vault's key with (C50 §3, 2026-11-14).**
+   A configured, non-secret fingerprint of the expected key
+   (`IDENTITY_VAULT_MASTER_KEY_FINGERPRINT`) is required before the environment or file key may be
+   removed, and the vault's value is accepted only if it matches. A mismatch falls back with an
+   alarm while there is a fallback; with none, the server refuses to start and says why — that is
+   the absence of a key, not strict mode. **Removing the environment key is itself a cut-over step
+   and takes the operator's line per deployment.** The hub may later carry the fingerprint as entry
+   metadata; the consumer-side setting is the control of record.
 
 Still open: the identity probe returned 404 on the hub's test listener, so wrong-service detection
-is untested end to end; and what a deployment with no environment key holds the vault's value
-against (I-39 in `docs/ISSUE-REGISTER.md`). The literal `revoked` response was exercised against the
+is untested end to end; and whether the session pepper should be pinned the way the key now is. The literal `revoked` response was exercised against the
 live test listener on 2026-11-14 (`docs/vault-consumer.md`).
 
 ## The questions as first asked
