@@ -27,6 +27,24 @@ first.
 
 ## [Unreleased]
 
+### Changed — action may be required
+
+-   **An unset `TRUST_PROXY` now trusts no proxy** (SEC-B-09). It used to trust every hop, which
+    let a client choose its own address with an `X-Forwarded-For` header and so bypass per-IP rate
+    limits, including on login. **If the server runs behind a reverse proxy and `TRUST_PROXY` is
+    not set, set it to the number of proxies in front of it** — `1` for a single nginx or load
+    balancer. Without it every client appears to share the proxy's address, and `req.protocol`
+    reports `http` behind a TLS-terminating proxy. The server logs a warning at boot naming the
+    setting. `TRUST_PROXY=true` still works and is also warned about.
+
+### Security
+
+-   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
+    whole request body to the execution row, so a user who could update an execution could also
+    set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.
+    Only `isPublic` — the one field the UI sends — is writable now. Fix and regression test by
+    **tonghuaroot**, adopted from upstream pull request #6416 with authorship preserved.
+
 ### Fixed
 
 -   **Flow history could include another flow's commit.** When a history request was cut off by its
@@ -37,6 +55,9 @@ first.
     disagrees with its workspace was described as being "served to the wrong tenant"; no query
     filters on organization alone, so it is not. The finding now says what is true (I-13).
 -   **Reset-password page hid network errors behind a TypeError** (I-10).
+-   **Password change had no rate limit.** `POST /account/reset-password` checks the current
+    password and could be retried without bound by anyone holding a session. It now has the same
+    per-IP and per-account style limits as sign-in (I-07).
 
 ### Tests
 
