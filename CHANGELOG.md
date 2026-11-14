@@ -86,6 +86,12 @@ first.
 
 ### Fixed
 
+-   **The Document Store (Vector) node could not be connected where a vector store retriever is
+    expected.** It was the only vector store node whose Retriever output did not offer the
+    `VectorStoreRetriever` type, so the canvas refused the connection. The node's version goes from
+    1.0 to 1.1, so flows that already use it will show it as having an update available. Fix by
+    **Josh Arnzen**, adopted from upstream pull request #6491 with authorship preserved; test added
+    here.
 -   **Chatflows using OpenAI embeddings failed with a 500.** Before a flow runs, each node's data is
     deep-copied, and that copy included the node's already-built client. A copied client has none of
     its private state, so the OpenAI SDK threw "Cannot read private member from an object whose
