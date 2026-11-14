@@ -7,21 +7,21 @@ when structure changes (`daily-refactor` and `master-refactor` are responsible f
 
 ## Surface inventory
 
-| Surface                                          | Count                |
-| ------------------------------------------------ | -------------------- |
-| Workspace packages                               | 6                    |
-| Server route groups                              | 62                   |
-| Identity route files                             | 6                    |
-| Controllers                                      | 49                   |
-| Services                                         | 43                   |
-| Database entities                                | 23 files             |
-| Migrations — sqlite / postgres / mysql / mariadb | 53 / 55 / 57 / 56 ⚠️ |
-| CLI command groups                               | 6                    |
-| UI view directories                              | 29                   |
-| UI route files                                   | 9                    |
-| Test files                                       | 156                  |
-| GitHub Actions workflows                         | 11                   |
-| Kubernetes / Helm / Terraform manifests          | **0**                |
+| Surface                                          | Count               |
+| ------------------------------------------------ | ------------------- |
+| Workspace packages                               | 6                   |
+| Server route groups                              | 62                  |
+| Identity route files                             | 6                   |
+| Controllers                                      | 49                  |
+| Services                                         | 43                  |
+| Database entities                                | 23 files            |
+| Migrations — sqlite / postgres / mysql / mariadb | 52 / 54 / 56 / 55 ✓ |
+| CLI command groups                               | 6                   |
+| UI view directories                              | 29                  |
+| UI route files                                   | 9                   |
+| Test files                                       | 156                 |
+| GitHub Actions workflows                         | 11                  |
+| Kubernetes / Helm / Terraform manifests          | **0**               |
 
 ⚠️ **Migration counts are not equal across engines.** `AGENTS.md §5` requires a migration to be
 added for all four. Some of this spread may be legitimately engine-specific and inherited from

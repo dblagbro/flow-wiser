@@ -19,10 +19,11 @@ packages/server/src/database/migrations/{sqlite,postgres,mysql,mariadb}/
 
 Verify each one runs **up and down** on its engine before considering the change done.
 
-> Current counts are **53 / 55 / 57 / 56** and are **not** equal. Some of that spread may be
-> legitimately engine-specific and inherited from upstream — it is unverified (RM-07 in
-> `docs/remediation-plan.md`). Do not "fix" it by generating stub migrations to make numbers
-> match, and do not treat the existing imbalance as licence to add a single-engine migration.
+> The directories hold **52 / 54 / 56 / 55** migrations and that is correct: 52 are shared by all
+> four engines, and six are engine-specific corrections, each declared with its reason in
+> `packages/server/test/database/migration-parity.test.ts` (RM-07, verified 2026-11-13). That test
+> fails on any other difference. A genuinely engine-specific migration is added by declaring it
+> there — never by generating stubs for the other engines, and never silently.
 
 ## Entities
 
