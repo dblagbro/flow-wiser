@@ -65,6 +65,12 @@ first.
 
 ### Fixed
 
+-   **AWS Bedrock stopped applying inference profiles after one failed lookup.** The list of
+    inference profiles for a region was cached even when the lookup failed or came back empty, so a
+    single failure — typically credentials not ready at startup — left models that need a
+    cross-region profile rejected until the server was restarted. Only real answers are cached now,
+    and a failed lookup is logged. Fix by **Ankit**, adopted from upstream pull request #6373 with
+    authorship preserved; regression test added here.
 -   **The Tavily tool ignored the API key saved in its credential.** It passed the key under a name
     the Tavily library does not read, so searches used the server's `TAVILY_API_KEY` environment
     variable if there was one and failed otherwise. Fix by **Asim**, adopted from upstream pull
