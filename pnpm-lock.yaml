@@ -11,7 +11,7 @@ overrides:
   '@langchain/core': 1.1.20
   '@qdrant/openapi-typescript-fetch': 1.2.6
   openai: 6.19.0
-  protobufjs: '>=7.5.5'
+  protobufjs: '>=8.6.6 <9'
   uuid: ^10.0.0
   prebuild-install: 7.1.3
   sanitize-html>htmlparser2: ^10.0.0
@@ -21,11 +21,11 @@ overrides:
   cross-spawn: 7.0.6
   form-data: 4.0.6
   glob-parent: 6.0.2
-  http-proxy-middleware: 3.0.3
+  http-proxy-middleware: '>=3.0.6 <4'
   json5: 2.2.3
   nth-check: 2.1.1
   express@4>path-to-regexp: 0.1.13
-  prismjs: 1.29.0
+  prismjs: '>=1.30.0 <2'
   rollup: ^4.59.0
   semver: 7.7.1
   set-value: 4.1.0
@@ -54,13 +54,13 @@ overrides:
   validator: '>=13.15.22'
   underscore: '>=1.13.8'
   immutable: '>=4.3.9 <5'
-  fast-uri: '>=3.1.6 <4'
+  fast-uri: '>=3.1.9 <4'
   undici@7: '>=7.30.1 <8'
   undici@6: '>=6.29.1 <7'
   nanoid@3: ^3.3.18
   tar: 7.5.21
   nodemailer: '>=10.0.6 <11'
-  hono: ^4.13.7
+  hono: '>=4.13.16 <5'
   brace-expansion@1: ^1.1.21
   brace-expansion@2: ^2.1.7
   proxy-addr: 2.0.8
@@ -102,6 +102,12 @@ overrides:
   source-map-js: ^1.2.2
   svgo@2: ^2.8.4
   undici@8: '>=8.12.2 <9'
+  '@hono/node-server': '>=1.19.18 <2'
+  colord: '>=2.9.4 <3'
+  micromatch@4: '>=4.0.8 <5'
+  mdast-util-to-hast@13: '>=13.2.1 <14'
+  postcss-selector-parser@6: '>=6.1.5 <7'
+  moment: '>=2.31.0 <3'
 
 importers:
 
@@ -238,7 +244,7 @@ importers:
         version: 4.21.24(@babel/runtime@7.26.10)(@codemirror/autocomplete@6.14.0(@codemirror/language@6.10.1)(@codemirror/state@6.7.1)(@codemirror/view@6.43.8)(@lezer/common@1.2.1))(@codemirror/language@6.10.1)(@codemirror/lint@6.5.0)(@codemirror/search@6.5.6)(@codemirror/state@6.7.1)(@codemirror/theme-one-dark@6.1.2)(@codemirror/view@6.43.8)(codemirror@6.0.1(@lezer/common@1.2.1))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       axios:
         specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
+        version: 1.20.0(debug@4.3.4)
       dompurify:
         specifier: ^3.4.17
         version: 3.4.17
@@ -615,7 +621,7 @@ importers:
         version: 4.3.2(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       axios:
         specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
+        version: 1.20.0(debug@4.3.4)
       cheerio:
         specifier: ^1.0.0-rc.12
         version: 1.0.0-rc.12
@@ -725,8 +731,8 @@ importers:
         specifier: ^0.41.0
         version: 0.41.0(encoding@0.1.13)
       moment:
-        specifier: ^2.29.3
-        version: 2.30.1
+        specifier: '>=2.31.0 <3'
+        version: 2.31.0
       mongodb:
         specifier: 6.3.0
         version: 6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1)
@@ -895,7 +901,7 @@ importers:
         version: 3.31.0(react@18.2.0)
       axios:
         specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
+        version: 1.20.0(debug@4.3.4)
       date-fns:
         specifier: ^3.6.0
         version: 3.6.0
@@ -1073,7 +1079,7 @@ importers:
         version: 0.4.1
       axios:
         specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
+        version: 1.20.0(debug@4.3.4)
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -1165,8 +1171,8 @@ importers:
         specifier: ^4.18.0
         version: 4.18.1
       moment:
-        specifier: ^2.29.3
-        version: 2.30.1
+        specifier: '>=2.31.0 <3'
+        version: 2.31.0
       moment-timezone:
         specifier: ^0.5.34
         version: 0.5.45
@@ -1458,7 +1464,7 @@ importers:
         version: 4.21.24(@babel/runtime@7.26.10)(@codemirror/autocomplete@6.14.0(@codemirror/language@6.10.1)(@codemirror/state@6.7.1)(@codemirror/view@6.26.3)(@lezer/common@1.2.1))(@codemirror/language@6.10.1)(@codemirror/lint@6.5.0)(@codemirror/search@6.5.6)(@codemirror/state@6.7.1)(@codemirror/theme-one-dark@6.1.2)(@codemirror/view@6.26.3)(codemirror@6.0.1(@lezer/common@1.2.1))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       axios:
         specifier: 1.20.0
-        version: 1.20.0(debug@4.4.3)
+        version: 1.20.0(debug@4.3.4)
       clsx:
         specifier: ^1.1.1
         version: 1.2.1
@@ -1496,8 +1502,8 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0
       moment:
-        specifier: ^2.29.3
-        version: 2.30.1
+        specifier: '>=2.31.0 <3'
+        version: 2.31.0
       notistack:
         specifier: ^2.0.4
         version: 2.0.8(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@emotion/styled@11.11.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react@18.2.0))(@mui/material@5.15.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@emotion/styled@11.11.0(@emotion/react@11.11.4(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react@18.2.0))(@types/react@18.2.65)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
@@ -3982,6 +3988,7 @@ packages:
 
   '@browserbasehq/stagehand@1.9.0':
     resolution: {integrity: sha512-0wIFnwOVnUEgVkPKW0RX7NoOt98qaRJ8+l1m9ppk1f5E03GtefDQTMiQwwT9WQn163bpZT5cOhyA1I3jZNfFeA==}
+    deprecated: This version is no longer maintained. Please upgrade to the latest version of @browserbasehq/stagehand.
     peerDependencies:
       '@playwright/test': ^1.42.1
       deepmerge: ^4.3.1
@@ -4285,7 +4292,7 @@ packages:
     resolution: {integrity: sha512-+OJ9konv95ClSTOJCmMZqpd5+YGsB2S+x6w3E1oaM8UuR5j8nTNHYSz8c9BEPGDOCMQYIEEGlVPj/VY64iTbGw==}
     engines: {node: ^14 || ^16 || >=18}
     peerDependencies:
-      postcss-selector-parser: ^6.0.10
+      postcss-selector-parser: '>=6.1.5 <7'
 
   '@cypress/request@3.0.1':
     resolution: {integrity: sha512-TWivJlJi8ZDx2wGOw1dbLuHJKUYX7bWySw377nlnGOW3hP9/MUKIsEdXT/YngWxVdgNCHRBmFlBipE+5/2ZZlQ==}
@@ -4873,11 +4880,11 @@ packages:
     peerDependencies:
       axios: 1.20.0
 
-  '@hono/node-server@1.19.14':
-    resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
+  '@hono/node-server@1.19.19':
+    resolution: {integrity: sha512-Fy9R7PACOzHU9LDpfnuzVyuVYevKQRcEG2mZhmfc+DRdmayEd3RVfa2XOt2IgGcPNgA77Yk63KBszepcMFK5Ng==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: ^4.13.7
+      hono: '>=4.13.16 <5'
 
   '@huggingface/inference@2.7.0':
     resolution: {integrity: sha512-u7Fn637Q3f7nUB1tajM4CgzhvoFQkOQr5W5Fm+2wT9ETgGoLBh25BLlYPTJRjAd2WY01s71v0lqAwNvHHCc3mg==}
@@ -11430,8 +11437,8 @@ packages:
   color@3.2.1:
     resolution: {integrity: sha512-aBl7dZI9ENN6fUGC7mWpMTPNHmWUSNan9tuWN6ahh5ZLNk9baLJOnSMlrQkHcrfFgz2/RigjUVAjdx36VcemKA==}
 
-  colord@2.9.3:
-    resolution: {integrity: sha512-jeC1axXpnb0/2nn/Y1LPuLdgXBLH7aDcHu4KEKfqw3CUhX7ZpfBSlPKyqXE6btIgEzfWtrX3/tyBCaCvXvMkOw==}
+  colord@2.12.0:
+    resolution: {integrity: sha512-SpiONmQPZDqe50ivOTgkVikYsnp6l1HTFYqPRLNBCJJdA2Qympw2yYUzX99XlSbbKZswjiG6r+xsUpPPOHqY+Q==}
 
   colorette@2.0.20:
     resolution: {integrity: sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==}
@@ -11861,11 +11868,6 @@ packages:
 
   cssdb@7.11.2:
     resolution: {integrity: sha512-lhQ32TFkc1X4eTefGfYPvgovRSzIMofHkigfH8nWtyRL4XJLsRhJFreRvEgKzept7x1rjBuy3J/MurXLaFxW/A==}
-
-  cssesc@3.0.0:
-    resolution: {integrity: sha512-/Tb/JcjK111nNScGob5MNtsntNM1aCNUDipB/TkwZFhyDrrE47SOx/18wF2bbjgc3ZzCSKW1T5nt5EbFoAz/Vg==}
-    engines: {node: '>=4'}
-    hasBin: true
 
   cssnano-preset-default@5.2.14:
     resolution: {integrity: sha512-t0SFesj/ZV2OTylqQVOrFgEh5uanxbO6ZAdeCrNsUQ6fVuXwYTxJPNAGvGTxHbD68ldIJNec7PyYZDBrfDQ+6A==}
@@ -13132,8 +13134,8 @@ packages:
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
-  fast-uri@3.1.7:
-    resolution: {integrity: sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==}
+  fast-uri@3.1.9:
+    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 
   fast-xml-builder@1.2.0:
     resolution: {integrity: sha512-00aAWieqff+ZJhsXA4g1g7M8k+7AYoMUUHF+/zFb5U6Uv/P0Vl4QZo84/IcufzYalLuEj9928bXN9PbbFzMF0Q==}
@@ -13993,8 +13995,8 @@ packages:
     resolution: {integrity: sha512-eSmmWE5bZTK2Nou4g0AI3zZ9rswp7GRKoKXS1BLUkvPviOqs4YTN1djQIqrXy9k5gEtdLPy86JjRwsNM9tnDcA==}
     engines: {node: '>=0.10.0'}
 
-  hono@4.13.13:
-    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
+  hono@4.13.18:
+    resolution: {integrity: sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==}
     engines: {node: '>=16.9.0'}
 
   hoopy@0.1.4:
@@ -14117,9 +14119,9 @@ packages:
     resolution: {integrity: sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==}
     engines: {node: '>= 14'}
 
-  http-proxy-middleware@3.0.3:
-    resolution: {integrity: sha512-usY0HG5nyDUwtqpiZdETNbmKtw3QQ1jwYFZ9wi5iHzX2BcILwQKtYDJPo7XHTsu5Z0B2Hj3W9NNnbd+AjFWjqg==}
-    engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+  http-proxy-middleware@3.0.10:
+    resolution: {integrity: sha512-Niw9P+62tB2DuWJ/Vjxn53gAmDrRBM7hku8YRoxMFQu7pAkhITq0Dq9Uw4X/8hnAZ9kHsnDuBXKMzuN2i/RnGw==}
+    engines: {node: ^14.18.0 || ^16.10.0 || >=18.0.0}
 
   http-proxy@1.18.1:
     resolution: {integrity: sha512-7mz/721AbnJwIVbnaSv1Cz3Am0ZLT/UBwkC92VlxhXv/k/BBQfM2fXElQNC27BVGr0uwUpplYPQM9LnaBMR5NQ==}
@@ -15903,8 +15905,8 @@ packages:
   mdast-util-to-hast@12.3.0:
     resolution: {integrity: sha512-pits93r8PhnIoU4Vy9bjW39M2jJ6/tdHyja9rrot9uujkN7UTU9SDnE6WNJz/IGyQk3XHX6yNNtrBH6cQzm8Hw==}
 
-  mdast-util-to-hast@13.1.0:
-    resolution: {integrity: sha512-/e2l/6+OdGp/FB+ctrJ9Avz71AN/GRH3oi/3KAx/kMnoUsD6q0woXlDT8lLEeViVKE7oZxE7RXzvO3T8kF2/sA==}
+  mdast-util-to-hast@13.2.2:
+    resolution: {integrity: sha512-l2pnmOuqs+SGLVpTVXnRLQu5v1AzvDe181404fbXzzqObVxrAnnVxapAP27pUwzLBL/ABIkgUhGlPVU7QSvIFg==}
 
   mdast-util-to-markdown@1.5.0:
     resolution: {integrity: sha512-bbv7TPv/WC49thZPg3jXuqzuvI45IL2EVAr/KxF0BSdHsU0ceFHOmwQn6evxAh1GaoK/6GQ1wp4R4oW2+LFL/A==}
@@ -16175,10 +16177,6 @@ packages:
     resolution: {integrity: sha512-MWikgl9n9M3w+bpsY3He8L+w9eF9338xRl8IAO5viDizwSzziFEyUzo2xrrloB64ADbTf8uA8vRqqttDTOmccg==}
     engines: {node: '>=0.10.0'}
 
-  micromatch@4.0.5:
-    resolution: {integrity: sha512-DMy+ERcEW2q8Z2Po+WNXuw3c5YaUSFjAO5GsJqfEl7UjvtIuFKO6ZrKvcItdy98dwFI2N1tg3zNIdKaQT+aNdA==}
-    engines: {node: '>=8.6'}
-
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
@@ -16331,8 +16329,8 @@ packages:
   moment-timezone@0.5.45:
     resolution: {integrity: sha512-HIWmqA86KcmCAhnMAN0wuDOARV/525R2+lOLotuGFzn4HO+FH+/645z2wx0Dt3iDv6/p61SIvKnDstISainhLQ==}
 
-  moment@2.30.1:
-    resolution: {integrity: sha512-uEmtNhbDOrWPFS+hdjFCBfy9f2YoyzRpwcl+DqpC6taX21FzsTLQVbMV/W7PzNSX6x/bhC1zA3c2UQ5NzH6how==}
+  moment@2.31.0:
+    resolution: {integrity: sha512-0acOTfMiWOheYS4eoWb80yYMb/JLvVv9SHbs2PehaDzfUG0Bw855SKyk0IKTnPGa5+U2bmi3W68l1+sGLX/pvw==}
 
   mongodb-connection-string-url@3.0.0:
     resolution: {integrity: sha512-t1Vf+m1I5hC2M5RJx/7AtxgABy1cZmIPQRMXw+gEIPn/cZNF3Oiy+l0UIypUwVB5trcWHq3crg2g3uAR9aAwsQ==}
@@ -17851,8 +17849,8 @@ packages:
     peerDependencies:
       postcss: ^8.5.18
 
-  postcss-selector-parser@6.0.15:
-    resolution: {integrity: sha512-rEYkQOMUCEMhsKbK66tbEU9QVIxbhN18YiniAwA7XQYTVBqrBy+P2p5JcdqsHgKM2zWylp8d7J6eszocfds5Sw==}
+  postcss-selector-parser@6.1.6:
+    resolution: {integrity: sha512-BK87/Qgti3DIcgS2PaCVoteFIkjIFvCJBizZDIVSjdlFNg4Jv+SRqbN2JONb/qQUH4ZFqfXYF+izg15W2HVRvA==}
     engines: {node: '>=4'}
 
   postcss-svgo@5.1.0:
@@ -17980,8 +17978,8 @@ packages:
     peerDependencies:
       react: '>=0.14.9'
 
-  prismjs@1.29.0:
-    resolution: {integrity: sha512-Kx/1w86q/epKcmte75LNrEoT+lX8pBpavuAbvJWRXar7Hz8jrtF+e3vY751p0R8H9HdArwaCTNDDzHg/ScJK1Q==}
+  prismjs@1.30.0:
+    resolution: {integrity: sha512-DEvV2ZF2r2/63V+tK8hQvrR2ZGn10srHbXviTlcv7Kpzw8jWiNTqbVgjO3IY8RxrrOUF8VPMQQFysYYYv0YZxw==}
     engines: {node: '>=6'}
 
   process-nextick-args@2.0.1:
@@ -18105,8 +18103,8 @@ packages:
     resolution: {integrity: sha512-SAzp/O4Yh02jGdRc+uIrGoe87dkN/XtwxfZ4ZyafJHymd79ozp5VG5nyZ7ygqPM5+cpLDjjGnYFUkngonyDPOQ==}
     engines: {node: '>=14.0.0'}
 
-  protobufjs@8.6.2:
-    resolution: {integrity: sha512-CCERJxzRvKMeEdJSLwdQf40TXWNPc8M4RkN7j/lxY6FQB+4do8rETWqj60AqxP9n0XIsxnSefZ8uhAaGKg2njw==}
+  protobufjs@8.8.1:
+    resolution: {integrity: sha512-d9e9179bjXSJdpJ3+R9fP8hzXsnKLyxTjHLG1dUzje8a27pPyXCe6PrcRtgx2rjoM3IZzHd2vAs+6J/BsO1k7Q==}
     engines: {node: '>=12.0.0'}
 
   protoc-gen-ts@0.8.7:
@@ -25996,9 +25994,9 @@ snapshots:
 
   '@csstools/postcss-cascade-layers@1.1.1(postcss@8.5.32)':
     dependencies:
-      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.0.15)
+      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.1.6)
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   '@csstools/postcss-color-function@1.1.1(postcss@8.5.32)':
     dependencies:
@@ -26024,9 +26022,9 @@ snapshots:
 
   '@csstools/postcss-is-pseudo-class@2.0.7(postcss@8.5.32)':
     dependencies:
-      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.0.15)
+      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.1.6)
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   '@csstools/postcss-nested-calc@1.0.0(postcss@8.5.32)':
     dependencies:
@@ -26068,9 +26066,9 @@ snapshots:
     dependencies:
       postcss: 8.5.32
 
-  '@csstools/selector-specificity@2.2.0(postcss-selector-parser@6.0.15)':
+  '@csstools/selector-specificity@2.2.0(postcss-selector-parser@6.1.6)':
     dependencies:
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   '@cypress/request@3.0.1':
     dependencies:
@@ -26653,7 +26651,7 @@ snapshots:
     dependencies:
       lodash.camelcase: 4.3.0
       long: 5.3.2
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       yargs: 17.7.2
 
   '@grpc/proto-loader@0.7.7':
@@ -26661,14 +26659,14 @@ snapshots:
       '@types/long': 4.0.2
       lodash.camelcase: 4.3.0
       long: 4.0.0
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       yargs: 17.7.2
 
   '@grpc/proto-loader@0.8.1':
     dependencies:
       lodash.camelcase: 4.3.0
       long: 5.3.2
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       yargs: 17.7.2
 
   '@hapi/hoek@9.3.0': {}
@@ -26679,11 +26677,11 @@ snapshots:
 
   '@hey-api/client-axios@0.2.12(axios@1.20.0)':
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
 
-  '@hono/node-server@1.19.14(hono@4.13.13)':
+  '@hono/node-server@1.19.19(hono@4.13.18)':
     dependencies:
-      hono: 4.13.13
+      hono: 4.13.18
 
   '@huggingface/inference@2.7.0':
     dependencies:
@@ -28296,7 +28294,7 @@ snapshots:
     dependencies:
       '@langchain/community': 0.3.49(f4bf78156a2c5b27e02a475aa140ef89)
       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       mem0ai: 2.1.16(@anthropic-ai/sdk@0.73.0(zod@4.6.6))(@google/genai@0.7.0(bufferutil@4.0.8)(encoding@0.1.13)(utf-8-validate@6.0.4))(@mistralai/mistralai@1.14.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@qdrant/js-client-rest@1.18.0(typescript@5.5.2))(@supabase/supabase-js@2.39.8(bufferutil@4.0.8)(utf-8-validate@6.0.4))(@types/jest@29.5.14)(@types/pg@8.11.2)(@types/sqlite3@3.1.11)(groq-sdk@1.1.2)(neo4j-driver@5.27.0)(ollama@0.5.11)(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))
       uuid: 10.0.0
       zod: 3.22.4
@@ -28460,7 +28458,7 @@ snapshots:
 
   '@mendable/firecrawl-js@1.25.1':
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       typescript-event-target: 1.1.1
       zod: 3.25.76
       zod-to-json-schema: 3.25.1(zod@3.25.76)
@@ -28550,7 +28548,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.13.13)
+      '@hono/node-server': 1.19.19(hono@4.13.18)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -28560,7 +28558,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.4.1(express@5.2.1)
-      hono: 4.13.13
+      hono: 4.13.18
       jose: 6.2.2
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.0
@@ -28572,7 +28570,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.3.6)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.13.13)
+      '@hono/node-server': 1.19.19(hono@4.13.18)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -28582,7 +28580,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.4.1(express@5.2.1)
-      hono: 4.13.13
+      hono: 4.13.18
       jose: 6.2.2
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.0
@@ -28594,7 +28592,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.6)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.13.13)
+      '@hono/node-server': 1.19.19(hono@4.13.18)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -28604,7 +28602,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.4.1(express@5.2.1)
-      hono: 4.13.13
+      hono: 4.13.18
       jose: 6.2.2
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.0
@@ -29679,7 +29677,7 @@ snapshots:
       '@opentelemetry/sdk-logs': 0.54.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-metrics': 1.27.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
 
   '@opentelemetry/otlp-transformer@0.54.2(@opentelemetry/api@1.9.0)':
     dependencies:
@@ -29690,7 +29688,7 @@ snapshots:
       '@opentelemetry/sdk-logs': 0.54.2(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-metrics': 1.27.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace-base': 1.27.0(@opentelemetry/api@1.9.0)
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
 
   '@opentelemetry/otlp-transformer@0.56.0(@opentelemetry/api@1.9.0)':
     dependencies:
@@ -29701,7 +29699,7 @@ snapshots:
       '@opentelemetry/sdk-logs': 0.56.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-metrics': 1.29.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace-base': 1.29.0(@opentelemetry/api@1.9.0)
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
 
   '@opentelemetry/propagation-utils@0.30.12(@opentelemetry/api@1.9.0)':
     dependencies:
@@ -31816,7 +31814,7 @@ snapshots:
 
   '@types/http-proxy@1.17.16':
     dependencies:
-      '@types/node': 22.16.3
+      '@types/node': 26.6.5
 
   '@types/istanbul-lib-coverage@2.0.6': {}
 
@@ -32851,7 +32849,7 @@ snapshots:
       '@grpc/proto-loader': 0.7.7
       dayjs: 1.11.10
       lru-cache: 9.1.2
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       winston: 3.12.0
 
   '@zilliz/milvus2-sdk-node@2.4.2':
@@ -32862,7 +32860,7 @@ snapshots:
       dayjs: 1.11.10
       generic-pool: 3.9.0
       lru-cache: 9.1.2
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       winston: 3.12.0
 
   abab@2.0.6: {}
@@ -33024,7 +33022,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.7
+      fast-uri: 3.1.9
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -33117,7 +33115,7 @@ snapshots:
       '@crawlee/types': 3.8.1
       agentkeepalive: 4.5.0
       async-retry: 1.3.3
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       content-type: 1.0.5
       ow: 0.28.2
       tslib: 2.6.2
@@ -34426,7 +34424,7 @@ snapshots:
       color-convert: 1.9.3
       color-string: 1.9.1
 
-  colord@2.9.3: {}
+  colord@2.12.0: {}
 
   colorette@2.0.20: {}
 
@@ -34502,7 +34500,7 @@ snapshots:
       '@langchain/core': 1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))
       '@langchain/openai': 1.2.5(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))
       ai: 4.3.19(react@18.2.0)(zod@4.6.6)
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       chalk: 4.1.2
       cli-progress: 3.12.0
       commander: 12.1.0
@@ -34801,7 +34799,7 @@ snapshots:
   css-blank-pseudo@3.0.3(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   css-color-keywords@1.0.0: {}
 
@@ -34812,7 +34810,7 @@ snapshots:
   css-has-pseudo@3.0.4(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   css-loader@6.10.0(webpack@5.90.3(@swc/core@1.4.6(@swc/helpers@0.5.23))):
     dependencies:
@@ -34889,8 +34887,6 @@ snapshots:
   css.escape@1.5.1: {}
 
   cssdb@7.11.2: {}
-
-  cssesc@3.0.0: {}
 
   cssnano-preset-default@5.2.14(postcss@8.5.32):
     dependencies:
@@ -35396,7 +35392,7 @@ snapshots:
       '@grpc/grpc-js': 1.14.7
       '@grpc/proto-loader': 0.7.13
       docker-modem: 5.0.6
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       tar-fs: 3.1.1
       uuid: 10.0.0
     transitivePeerDependencies:
@@ -36835,7 +36831,7 @@ snapshots:
 
   fast-safe-stringify@2.1.1: {}
 
-  fast-uri@3.1.7: {}
+  fast-uri@3.1.9: {}
 
   fast-xml-builder@1.2.0:
     dependencies:
@@ -36928,7 +36924,7 @@ snapshots:
 
   file-stream-rotator@0.6.1:
     dependencies:
-      moment: 2.30.1
+      moment: 2.31.0
 
   file-type@16.5.4:
     dependencies:
@@ -37085,7 +37081,7 @@ snapshots:
       '@microsoft/fetch-event-source': 2.0.1
       '@ts-stack/markdown': 1.5.0
       '@types/dompurify': 3.2.0
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       cors: 2.8.5
       cross-env: 7.0.3
       device-detector-js: 3.0.3
@@ -37697,7 +37693,7 @@ snapshots:
       node-fetch: 2.7.0(encoding@0.1.13)
       object-hash: 3.0.0
       proto3-json-serializer: 2.0.2
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
       retry-request: 7.0.2(encoding@0.1.13)
       uuid: 10.0.0
     transitivePeerDependencies:
@@ -37938,7 +37934,7 @@ snapshots:
       hast-util-from-parse5: 8.0.1
       hast-util-to-parse5: 8.0.0
       html-void-elements: 3.0.0
-      mdast-util-to-hast: 13.1.0
+      mdast-util-to-hast: 13.2.2
       parse5: 7.1.2
       unist-util-position: 5.0.0
       unist-util-visit: 5.0.0
@@ -38038,7 +38034,7 @@ snapshots:
     dependencies:
       parse-passwd: 1.0.0
 
-  hono@4.13.13: {}
+  hono@4.13.18: {}
 
   hoopy@0.1.4: {}
 
@@ -38202,13 +38198,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  http-proxy-middleware@3.0.3:
+  http-proxy-middleware@3.0.10:
     dependencies:
       '@types/http-proxy': 1.17.16
       debug: 4.4.3(supports-color@8.1.1)
       http-proxy: 1.18.1(debug@4.4.3)
       is-glob: 4.0.3
-      is-plain-object: 5.0.0
+      is-plain-object: 5.1.0
       micromatch: 4.0.8
     transitivePeerDependencies:
       - supports-color
@@ -40079,7 +40075,7 @@ snapshots:
       '@langchain/mistralai': 1.0.4(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@langchain/ollama': 1.2.2(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)))
       '@langchain/xai': 1.3.1(@langchain/core@1.1.20(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.54.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@1.27.0(@opentelemetry/api@1.9.0))(openai@6.19.0(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))(zod@4.6.6))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)))(ws@8.21.0(bufferutil@4.0.8)(utf-8-validate@6.0.4))
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       cheerio: 1.0.0-rc.12
       handlebars: 4.7.10
       typeorm: 0.3.30(babel-plugin-macros@3.1.0)(ioredis@5.3.2)(mongodb@6.3.0(@aws-sdk/credential-providers@3.1002.0)(socks@2.8.1))(mysql2@3.24.6(@types/node@26.6.5))(pg@8.11.3)(redis@4.6.13)(sqlite3@5.1.7)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@26.6.5)(typescript@5.5.2))
@@ -40244,7 +40240,7 @@ snapshots:
       execa: 7.2.0
       lilconfig: 2.1.0
       listr2: 6.6.1(enquirer@2.4.1)
-      micromatch: 4.0.5
+      micromatch: 4.0.8
       pidtree: 0.6.0
       string-argv: 0.3.2
       yaml: 2.3.1
@@ -40883,11 +40879,11 @@ snapshots:
       unist-util-position: 4.0.4
       unist-util-visit: 4.1.2
 
-  mdast-util-to-hast@13.1.0:
+  mdast-util-to-hast@13.2.2:
     dependencies:
       '@types/hast': 3.0.4
       '@types/mdast': 4.0.3
-      '@ungap/structured-clone': 1.2.0
+      '@ungap/structured-clone': 1.4.0
       devlop: 1.1.0
       micromark-util-sanitize-uri: 2.0.0
       trim-lines: 3.0.1
@@ -40954,7 +40950,7 @@ snapshots:
       '@types/jest': 29.5.14
       '@types/pg': 8.11.2
       '@types/sqlite3': 3.1.11
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       groq-sdk: 1.1.2
       neo4j-driver: 5.27.0
       ollama: 0.5.11
@@ -41427,11 +41423,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  micromatch@4.0.5:
-    dependencies:
-      braces: 3.0.3
-      picomatch: 2.3.2
-
   micromatch@4.0.8:
     dependencies:
       braces: 3.0.3
@@ -41566,9 +41557,9 @@ snapshots:
 
   moment-timezone@0.5.45:
     dependencies:
-      moment: 2.30.1
+      moment: 2.31.0
 
-  moment@2.30.1: {}
+  moment@2.31.0: {}
 
   mongodb-connection-string-url@3.0.0:
     dependencies:
@@ -42162,7 +42153,7 @@ snapshots:
 
   onnx-proto@4.0.4:
     dependencies:
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
 
   onnxruntime-common@1.14.0: {}
 
@@ -42426,7 +42417,7 @@ snapshots:
 
   passport-auth0@1.4.4:
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       passport-oauth: 1.0.0
       passport-oauth2: 1.8.0
     transitivePeerDependencies:
@@ -42727,7 +42718,7 @@ snapshots:
   postcss-attribute-case-insensitive@5.0.2(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-browser-comments@4.0.0(browserslist@4.28.8)(postcss@8.5.32):
     dependencies:
@@ -42737,7 +42728,7 @@ snapshots:
   postcss-calc@8.2.4(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
       postcss-value-parser: 4.2.0
 
   postcss-clamp@4.1.0(postcss@8.5.32):
@@ -42764,7 +42755,7 @@ snapshots:
     dependencies:
       browserslist: 4.28.8
       caniuse-api: 3.0.0
-      colord: 2.9.3
+      colord: 2.12.0
       postcss: 8.5.32
       postcss-value-parser: 4.2.0
 
@@ -42787,12 +42778,12 @@ snapshots:
   postcss-custom-selectors@6.0.3(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-dir-pseudo-class@6.0.5(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-discard-comments@5.1.2(postcss@8.5.32):
     dependencies:
@@ -42828,12 +42819,12 @@ snapshots:
   postcss-focus-visible@6.0.4(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-focus-within@5.0.4(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-font-variant@5.0.0(postcss@8.5.32):
     dependencies:
@@ -42906,7 +42897,7 @@ snapshots:
       caniuse-api: 3.0.0
       cssnano-utils: 3.1.0(postcss@8.5.32)
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-minify-font-values@5.1.0(postcss@8.5.32):
     dependencies:
@@ -42915,7 +42906,7 @@ snapshots:
 
   postcss-minify-gradients@5.1.1(postcss@8.5.32):
     dependencies:
-      colord: 2.9.3
+      colord: 2.12.0
       cssnano-utils: 3.1.0(postcss@8.5.32)
       postcss: 8.5.32
       postcss-value-parser: 4.2.0
@@ -42930,7 +42921,7 @@ snapshots:
   postcss-minify-selectors@5.2.1(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-modules-extract-imports@3.0.0(postcss@8.5.32):
     dependencies:
@@ -42940,13 +42931,13 @@ snapshots:
     dependencies:
       icss-utils: 5.1.0(postcss@8.5.32)
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
       postcss-value-parser: 4.2.0
 
   postcss-modules-scope@3.1.1(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-modules-values@4.0.0(postcss@8.5.32):
     dependencies:
@@ -42956,13 +42947,13 @@ snapshots:
   postcss-nested@6.0.1(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-nesting@10.2.0(postcss@8.5.32):
     dependencies:
-      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.0.15)
+      '@csstools/selector-specificity': 2.2.0(postcss-selector-parser@6.1.6)
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-normalize-charset@5.1.0(postcss@8.5.32):
     dependencies:
@@ -43098,7 +43089,7 @@ snapshots:
   postcss-pseudo-class-any-link@7.1.6(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-reduce-initial@5.1.2(postcss@8.5.32):
     dependencies:
@@ -43118,11 +43109,10 @@ snapshots:
   postcss-selector-not@6.0.1(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
-  postcss-selector-parser@6.0.15:
+  postcss-selector-parser@6.1.6:
     dependencies:
-      cssesc: 3.0.0
       util-deprecate: 1.0.2
 
   postcss-svgo@5.1.0(postcss@8.5.32):
@@ -43134,7 +43124,7 @@ snapshots:
   postcss-unique-selectors@5.1.1(postcss@8.5.32):
     dependencies:
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   postcss-value-parser@4.2.0: {}
 
@@ -43173,7 +43163,7 @@ snapshots:
 
   posthog-node@3.6.3:
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       rusha: 0.8.14
     transitivePeerDependencies:
       - debug
@@ -43262,7 +43252,7 @@ snapshots:
     dependencies:
       react: 18.2.0
 
-  prismjs@1.29.0: {}
+  prismjs@1.30.0: {}
 
   process-nextick-args@2.0.1: {}
 
@@ -43424,9 +43414,9 @@ snapshots:
 
   proto3-json-serializer@2.0.2:
     dependencies:
-      protobufjs: 8.6.2
+      protobufjs: 8.8.1
 
-  protobufjs@8.6.2:
+  protobufjs@8.8.1:
     dependencies:
       long: 5.3.2
 
@@ -43793,7 +43783,7 @@ snapshots:
       devlop: 1.1.0
       hast-util-to-jsx-runtime: 2.3.6
       html-url-attributes: 3.0.1
-      mdast-util-to-hast: 13.1.0
+      mdast-util-to-hast: 13.2.2
       react: 18.2.0
       remark-parse: 11.0.0
       remark-rehype: 11.1.2
@@ -43960,7 +43950,7 @@ snapshots:
       '@babel/runtime': 7.26.10
       highlight.js: 10.7.3
       lowlight: 1.20.0
-      prismjs: 1.29.0
+      prismjs: 1.30.0
       react: 18.2.0
       refractor: 3.6.0
 
@@ -44163,7 +44153,7 @@ snapshots:
     dependencies:
       hastscript: 6.0.0
       parse-entities: 2.0.0
-      prismjs: 1.29.0
+      prismjs: 1.30.0
 
   regenerate-unicode-properties@10.1.1:
     dependencies:
@@ -44319,7 +44309,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.4
       '@types/mdast': 4.0.3
-      mdast-util-to-hast: 13.1.0
+      mdast-util-to-hast: 13.2.2
       unified: 11.0.5
       vfile: 6.0.1
 
@@ -44494,7 +44484,7 @@ snapshots:
 
   retry-axios@2.6.0(axios@1.20.0):
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
 
   retry-request@7.0.2(encoding@0.1.13):
     dependencies:
@@ -45639,7 +45629,7 @@ snapshots:
     dependencies:
       browserslist: 4.28.8
       postcss: 8.5.32
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
 
   stylis@4.2.0: {}
 
@@ -45802,7 +45792,7 @@ snapshots:
       postcss-js: 4.0.1(postcss@8.5.32)
       postcss-load-config: 4.0.2(postcss@8.5.32)(ts-node@10.9.2(@swc/core@1.4.6(@swc/helpers@0.5.23))(@types/node@26.6.5)(typescript@5.5.2))
       postcss-nested: 6.0.1(postcss@8.5.32)
-      postcss-selector-parser: 6.0.15
+      postcss-selector-parser: 6.1.6
       resolve: 1.22.8
       sucrase: 3.35.0
     transitivePeerDependencies:
@@ -47113,7 +47103,7 @@ snapshots:
       express: 4.21.2
       graceful-fs: 4.2.11
       html-entities: 2.5.2
-      http-proxy-middleware: 3.0.3
+      http-proxy-middleware: 3.0.10
       ipaddr.js: 2.2.0
       launch-editor: 2.14.2
       open: 8.4.2
@@ -47315,7 +47305,7 @@ snapshots:
 
   wikipedia@2.1.2:
     dependencies:
-      axios: 1.20.0(debug@4.4.3)
+      axios: 1.20.0(debug@4.3.4)
       infobox-parser: 3.6.4
     transitivePeerDependencies:
       - debug
@@ -47328,7 +47318,7 @@ snapshots:
       '@azure/storage-blob': 12.31.0
       async: 3.2.5
       debug: 4.4.3(supports-color@8.1.1)
-      moment: 2.30.1
+      moment: 2.31.0
       triple-beam: 1.4.1
       winston: 3.12.0
       winston-transport: 4.7.0

@@ -39,6 +39,11 @@ first.
 
 ### Security
 
+-   **Dependency security updates, first sweep.** Eleven packages moved to patched releases within
+    their current major version, by override: hono 4.13.18, @hono/node-server 1.19.19, fast-uri
+    3.1.9, colord 2.12.0, http-proxy-middleware 3.0.10, protobufjs 8.8.1, micromatch 4.0.8,
+    mdast-util-to-hast 13.2.2, postcss-selector-parser 6.1.6, prismjs 1.30.0 and moment 2.31.0.
+    Still open: expr-eval, extract-zip, xlsx and request have no patched version.
 -   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
     whole request body to the execution row, so a user who could update an execution could also
     set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.
