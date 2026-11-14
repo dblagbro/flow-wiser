@@ -51,6 +51,10 @@ first.
     Ed25519, the hub's pinned profile, tested against known answers from the hub's reference signer.
     Preparation for fetching the master key and session pepper from the vault at boot. Nothing
     calls it yet; see `docs/vault-consumer.md`.
+-   **Vault wire-state classifier, strict bundle parser and bundle client**
+    (`identity/vault/wire.ts`, `bundleClient.ts`). Only an explicit `revoked` or `grant_denied` from
+    the hub clears anything held locally. First run against the hub's test listener passed on
+    2026-11-14. Still not wired into the server.
 
 ### Fixed
 

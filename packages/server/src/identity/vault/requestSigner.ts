@@ -14,8 +14,11 @@
  *     (in particular not "@target-uri");
  *   - parameters, in this order: created, keyid, alg, nonce, then expires when given;
  *   - `keyid` is the IDENTITY NAME the hub enrolled, not a key fingerprint;
- *   - `authority` is the value the HUB has configured as its canonical authority, not whatever Host
- *     header the HTTP client sends, and is lower-cased;
+ *   - `authority` is the value the HUB has configured as its canonical authority — a bare
+ *     `host[:port]` with no scheme — not whatever Host header the HTTP client sends, and is
+ *     lower-cased. (This function signs whatever string it is given; `bundleClient` is what refuses
+ *     a scheme. The known-answer vectors include scheme-bearing authorities only because the
+ *     reference signer treats the value as opaque too.)
  *   - `path` is the full request path as sent, including any prefix.
  *
  * Pure: no network, no clock unless `created` is omitted, no key storage. The caller passes the
@@ -28,7 +31,7 @@ const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'he
 
 export interface SignRequestInput {
     method: string
-    /** The hub's configured canonical authority, e.g. `http://127.0.0.1:8232`. */
+    /** The hub's configured canonical authority: a bare `host[:port]`, e.g. `127.0.0.1:8232`. */
     authority: string
     /** Full path as sent, prefix included. No query string. */
     path: string
