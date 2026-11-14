@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                 |
-| Acted on             | **14** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725 (2026-11-13) |
-| Never reviewed       | **333**                                                                                                                                        |
-| Archived open issues | 698                                                                                                                                            |
+|                      |                                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                             |
+| Acted on             | **18** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689 (2026-11-13) |
+| Never reviewed       | **329**                                                                                                                                                                    |
+| Archived open issues | 698                                                                                                                                                                        |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -128,7 +128,8 @@ pull request #26. #6416 (mass assignment on the execution update endpoint, GHSA-
 on 2026-11-13. #6644 (prompt-list fetch timeout), #6143 (`SHOW_COMMUNITY_NODES`
 whitespace) and #6301 (chat-message pagination) followed the same day. #6479 was looked at and
 skipped: its series is a change followed by its own revert. #6561 (S3 folder markers loaded as files) and #6725
-(MCP missing-URL message) were adopted too.
+(MCP missing-URL message) were adopted too. So were #6543 (Voyage rerank parsing), #6517 (model-list fetch
+timeout), #6601 (Redis metadata escaping) and #6689 (Google Drive loader paging and subfolders).
 
 **Examined and not adopted as they stand** — each applies cleanly, but:
 
@@ -140,7 +141,16 @@ skipped: its series is a change followed by its own revert. #6561 (S3 folder mar
     is a security decision, not a bug fix; it needs review against `sanitizeDataSourceOptions`.
 -   **#6552 / #6560** (credential kept on a document-store loader update) change credential
     handling and ship no test.
+-   **#6136** (GCS uniform-bucket-access env parsing): the fix reads correctly, but its shipped test
+    fails to load under this project's Jest setup (`Cannot access 'storageCtorMock' before
+initialization`), so it cannot be shown failing before and passing after without rewriting the
+    author's test.
 -   **#6521** and **#6630** no longer apply after the fixes above.
+
+**How a patch is adopted** (the method used for everything above): read the diff for behaviour and
+security implications; `git am --keep-non-patch`; run `prettier --check` and `eslint` on the files it
+touched, because `git am` bypasses the pre-commit hook; run its test against the patched source and
+again with the source reverted, and record both results; credit the author in `CHANGELOG.md`.
 
 **Triage of what remains, 2026-11-13** — every archived patch checked with `git apply --check`
 against `apache2-only`:
