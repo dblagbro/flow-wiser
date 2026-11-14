@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                  |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                   |
-| Acted on             | **12** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301 (2026-11-13) |
-| Never reviewed       | **335**                                                                                                                          |
-| Archived open issues | 698                                                                                                                              |
+|                      |                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                 |
+| Acted on             | **14** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725 (2026-11-13) |
+| Never reviewed       | **333**                                                                                                                                        |
+| Archived open issues | 698                                                                                                                                            |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -127,7 +127,20 @@ pull request #26. #6416 (mass assignment on the execution update endpoint, GHSA-
 #6635 (telemetry opt-out ignored) and #6532 (a rejected condition branch still ran) were adopted
 on 2026-11-13. #6644 (prompt-list fetch timeout), #6143 (`SHOW_COMMUNITY_NODES`
 whitespace) and #6301 (chat-message pagination) followed the same day. #6479 was looked at and
-skipped: its series is a change followed by its own revert.
+skipped: its series is a change followed by its own revert. #6561 (S3 folder markers loaded as files) and #6725
+(MCP missing-URL message) were adopted too.
+
+**Examined and not adopted as they stand** — each applies cleanly, but:
+
+-   **#6584** (fail fast on an unsupported Node version) hardcodes a fallback of Node 24 and would be
+    a twelfth place declaring the Node version, outside the parity check. It contradicts ADR-0004
+    (Node 22) and needs adapting, not applying.
+-   **#6596** (Postgres vector store: `ssl` from Additional Configuration overrides the SSL toggle)
+    changes what a flow author can do to TLS verification on a connection the server opens. That
+    is a security decision, not a bug fix; it needs review against `sanitizeDataSourceOptions`.
+-   **#6552 / #6560** (credential kept on a document-store loader update) change credential
+    handling and ship no test.
+-   **#6521** and **#6630** no longer apply after the fixes above.
 
 **Triage of what remains, 2026-11-13** — every archived patch checked with `git apply --check`
 against `apache2-only`:
