@@ -45,11 +45,25 @@ first.
     Only `isPublic` — the one field the UI sends — is writable now. Fix and regression test by
     **tonghuaroot**, adopted from upstream pull request #6416 with authorship preserved.
 
+### Added — not enabled
+
+-   **Request signer for the Coordinator Hub vault** (`identity/vault/requestSigner.ts`): RFC 9421,
+    Ed25519, the hub's pinned profile, tested against known answers from the hub's reference signer.
+    Preparation for fetching the master key and session pepper from the vault at boot. Nothing
+    calls it yet; see `docs/vault-consumer.md`.
+-   **Vault wire-state classifier, strict bundle parser and bundle client**
+    (`identity/vault/wire.ts`, `bundleClient.ts`). Only an explicit `revoked` or `grant_denied` from
+    the hub clears anything held locally. First run against the hub's test listener passed on
+    2026-11-14. Still not wired into the server.
+
 ### Fixed
 
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **A malformed encryption key version was silently read as a different version.**
+    `IDENTITY_ENCRYPTION_KEY_VERSION=1.5x` was accepted as version 1. The server now refuses to start
+    on a version that is not a whole number (I-37).
 -   **Tool dialog errors were hidden behind a TypeError when the server could not be reached.** A
     shared helper now reads Axios errors safely, including nested and array messages. Fix and tests
     by **Alexander Kireev**, upstream pull request #6482.
@@ -90,6 +104,9 @@ first.
 
 ### Tests
 
+-   First tests for the encryption keyring (`identity/crypto/keyring.ts`): every start-up refusal,
+    environment and key-file sources, rotation, and that no key text reaches an error message or the
+    keyring's description. 69 tests.
 -   First automated tests for the versioning subsystem — normalisation, diff, capture, restore
     round-trip, deletion and checkpoint labels, including negative tests for the path-traversal
     label payloads (I-03). 70 tests.

@@ -256,13 +256,23 @@ const keysFromFile = (path: string): { keys: KeyMaterial[]; activeVersion: numbe
 
 const RETIRED_KEY_VARIABLE = /^IDENTITY_ENCRYPTION_KEY_V(\d+)$/
 
+/**
+ * Read a key version from configuration, strictly.
+ *
+ * `Number.parseInt` stops at the first character it does not like, so `1.5x` read as 1 and `2abc`
+ * as 2: a typo was accepted as some other version, and that number is then recorded on every row
+ * written. A version is digits and nothing else; anything different is returned as NaN, which
+ * {@link buildKey} and the active-version check below refuse by name.
+ */
+const parseVersion = (text: string): number => (/^\d+$/.test(text.trim()) ? Number.parseInt(text.trim(), 10) : Number.NaN)
+
 const keysFromEnv = (env: NodeJS.ProcessEnv): { keys: KeyMaterial[]; activeVersion: number | null } => {
     const keys: KeyMaterial[] = []
     let activeVersion: number | null = null
 
     const primary = env.IDENTITY_ENCRYPTION_KEY
     if (primary !== undefined && primary.trim() !== '') {
-        const version = env.IDENTITY_ENCRYPTION_KEY_VERSION ? Number.parseInt(env.IDENTITY_ENCRYPTION_KEY_VERSION, 10) : 1
+        const version = env.IDENTITY_ENCRYPTION_KEY_VERSION ? parseVersion(env.IDENTITY_ENCRYPTION_KEY_VERSION) : 1
         keys.push(buildKey(primary, env.IDENTITY_ENCRYPTION_KEY_ID ?? 'env', version, KeySource.ENV, 'IDENTITY_ENCRYPTION_KEY'))
         activeVersion = version
     }
@@ -277,7 +287,12 @@ const keysFromEnv = (env: NodeJS.ProcessEnv): { keys: KeyMaterial[]; activeVersi
     }
 
     if (activeVersion === null && env.IDENTITY_ENCRYPTION_KEY_ACTIVE_VERSION) {
-        activeVersion = Number.parseInt(env.IDENTITY_ENCRYPTION_KEY_ACTIVE_VERSION, 10)
+        activeVersion = parseVersion(env.IDENTITY_ENCRYPTION_KEY_ACTIVE_VERSION)
+        if (!Number.isInteger(activeVersion) || activeVersion < 1) {
+            throw new KeyringError(
+                `IDENTITY_ENCRYPTION_KEY_ACTIVE_VERSION declares key version '${env.IDENTITY_ENCRYPTION_KEY_ACTIVE_VERSION}'; versions are integers ≥ 1`
+            )
+        }
     }
     // Only retired-style variables are set and none was nominated: the newest writes.
     if (activeVersion === null && keys.length > 0) activeVersion = Math.max(...keys.map((key) => key.version))
