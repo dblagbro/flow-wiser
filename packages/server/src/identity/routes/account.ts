@@ -1,4 +1,6 @@
-import { CookieOptions, NextFunction, Request, Response, Router } from 'express'
+import { createHash } from 'crypto'
+import { CookieOptions, NextFunction, Request, RequestHandler, Response, Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import { StatusCodes } from 'http-status-codes'
 import logger from '../../utils/logger'
 import { AuthService, PasswordChangeFailure } from '../services/AuthService'
@@ -90,6 +92,59 @@ const PASSWORD_CHANGE_STATUS: Record<PasswordChangeFailure, number> = {
     [PasswordChangeFailure.INTERNAL_ERROR]: StatusCodes.INTERNAL_SERVER_ERROR
 }
 
+/**
+ * Rate limits for `POST /account/reset-password` (I-07).
+ *
+ * The session-authenticated branch checks the CURRENT password, which makes it a password oracle for
+ * whoever holds a session — a borrowed browser, a stolen cookie. `/auth/login` has had per-IP and
+ * per-account limiters from the start; this path verified the same secret with neither.
+ *
+ * Two limiters, sharing the login limiter's window and budgets so there is one policy to reason about:
+ *
+ *  - per IP, counting every request. The route is whitelisted and reachable anonymously, so this also
+ *    bounds the unauthenticated 401/501 answers.
+ *  - per session, counting only refusals. Keyed on a hash of the session cookie rather than the user
+ *    id because the limiter runs before the session is resolved, and hashed so the limiter's store
+ *    never holds a usable cookie. A correct change never spends this budget.
+ *
+ * The 429 carries `Retry-After` and the same `authentication_rate_limit` type the login limiter
+ * uses, so the shipped client shows its banner instead of navigating away.
+ */
+const buildResetPasswordLimiters = (env: NodeJS.ProcessEnv): RequestHandler[] => {
+    const windowMs = Number.parseInt(env.IDENTITY_LOGIN_RATE_WINDOW_MS ?? '', 10) || 15 * 60 * 1000
+    const perIpMax = Number.parseInt(env.IDENTITY_LOGIN_RATE_MAX_PER_IP ?? '', 10) || 30
+    const perSessionMax = Number.parseInt(env.IDENTITY_LOGIN_RATE_MAX_PER_ACCOUNT ?? '', 10) || 10
+
+    const handler =
+        (scope: 'ip' | 'session') =>
+        (req: Request, res: Response): void => {
+            const retryAfterSeconds = Math.ceil(windowMs / 1000)
+            res.setHeader('Retry-After', String(retryAfterSeconds))
+            logger.warn(`[identity] rate limit (${scope}) tripped on POST /account/reset-password for ${req.ip ?? 'unknown ip'}`)
+            res.status(StatusCodes.TOO_MANY_REQUESTS).json({
+                type: 'authentication_rate_limit',
+                message: 'Too many password change attempts. Please wait and try again.',
+                retryAfter: retryAfterSeconds
+            })
+        }
+
+    return [
+        rateLimit({ windowMs, max: perIpMax, standardHeaders: true, legacyHeaders: false, handler: handler('ip') }),
+        rateLimit({
+            windowMs,
+            max: perSessionMax,
+            standardHeaders: false,
+            legacyHeaders: false,
+            skipSuccessfulRequests: true,
+            keyGenerator: (req: Request): string => {
+                const session = readCookie(req, SESSION_COOKIE)
+                return session ? `session:${createHash('sha256').update(session).digest('hex')}` : `ip:${req.ip ?? 'unknown'}`
+            },
+            handler: handler('session')
+        })
+    ]
+}
+
 export interface AccountRouterOptions {
     authService?: AuthService
     env?: NodeJS.ProcessEnv
@@ -128,7 +183,7 @@ export const createAccountRouter = (options: AccountRouterOptions = {}): Router 
      *
      * See the module header for why one path carries two flows and why only this one is built.
      */
-    router.post('/reset-password', (req: Request, res: Response, next: NextFunction) => {
+    router.post('/reset-password', ...buildResetPasswordLimiters(env), (req: Request, res: Response, next: NextFunction) => {
         void (async () => {
             // The shipped client nests everything under `user` (`resetPassword.jsx:101-107`). A flat
             // body is accepted too, so `curl` and any future client need not know that.

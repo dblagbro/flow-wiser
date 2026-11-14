@@ -635,13 +635,34 @@ asserts Apache-2.0 in its entirety, backed by `CLEANROOM-ATTESTATION.md`. See
 
 ### RM-07 · Migration counts differ across engines
 
-**Status:** OPEN · **Opened:** 2026-08-11 · **Unverified**
+**Status:** ✅ **CLOSED 2026-11-13 — every difference read and found legitimate; now enforced** ·
+**Opened:** 2026-08-11
 
-sqlite 53 · postgres 55 · mysql 57 · mariadb 56. `AGENTS.md §5` requires all four. Some of the
-spread may be legitimately engine-specific and inherited from upstream.
+sqlite 52 · postgres 54 · mysql 56 · mariadb 55 migration files (the 53 / 55 / 57 / 56 quoted
+elsewhere counted each directory's `index.ts`). 52 migrations are shared by all four engines and run
+in the same order on each. Six exist for only some engines, and each is a correction that only makes
+sense where it is:
 
-**Action:** determine per migration whether each gap is intentional. If not, add the missing
-migrations and a test asserting parity. Do not "fix" counts by generating stubs.
+| Migration                           | Engines        | Why the others do not need it                                                                |
+| ----------------------------------- | -------------- | -------------------------------------------------------------------------------------------- |
+| `FieldTypes`                        | postgres       | Casts id columns to `uuid`/`varchar`. Only Postgres has a `uuid` type to have got wrong.     |
+| `ModifyExecutionSessionIdFieldType` | postgres       | Casts `execution.sessionId` from `uuid` to `varchar`.                                        |
+| `LongTextColumn`                    | mysql, mariadb | `TEXT` → `LONGTEXT`. The 64 KB `TEXT` cap exists only on these two.                          |
+| `ModifyExecutionDataColumnType`     | mysql, mariadb | Same cap, `execution.executionData`.                                                         |
+| `FixDocumentStoreFileChunkLongText` | mysql, mariadb | Same cap, `document_store_file_chunk`.                                                       |
+| `FixErrorsColumnInEvaluationRun`    | mysql          | Re-runs `AddErrorToEvaluationRun`, whose first MySQL attempt used a `DEFAULT` MySQL rejects. |
+
+Every engine's `index.ts` registers exactly the files in its directory — none unregistered, none
+phantom. No migration was added and no stub was generated.
+
+**The control:** `packages/server/test/database/migration-parity.test.ts`. A migration that exists
+for some engines and not others fails unless it is declared in that file with a reason; so does a
+file missing from an `index.ts`, a shared migration running in a different order on one engine, and
+a fork-era migration (`1780000000000` onward) whose timestamp differs between engines. Both halves
+observed on 2026-11-13: an undeclared `postgres`-only file → fails; an import removed from
+`mysql/index.ts` → fails; restored → 9/9 pass.
+
+**Found while reading them, not fixed (I-36):** the `down()` of two MySQL migrations cannot run.
 
 ### RM-08 · QA documents are pinned to `3.1.4-fw8` while the tree is `fw10`
 

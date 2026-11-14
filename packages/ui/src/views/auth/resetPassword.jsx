@@ -162,7 +162,11 @@ const ResetPasswordPage = () => {
             }
         } catch (error) {
             setLoading(false)
-            setAuthErrors([typeof error.response.data === 'object' ? error.response.data.message : error.response.data])
+            // A network failure has no `response` at all; reading `.data` off it threw a TypeError
+            // from inside this handler and hid the real error (I-10).
+            const data = error?.response?.data
+            const detail = data !== null && typeof data === 'object' ? data.message : data
+            setAuthErrors([detail || error?.message || 'The server could not be reached.'])
             enqueueSnackbar({
                 message: `Failed to reset password!`,
                 options: {
