@@ -160,6 +160,12 @@ initialization`), so it cannot be shown failing before and passing after without
     browser check before it is adopted, and the UI is meant to stay close to upstream.
 -   **#6414** (newer Azure OpenAI model names) adds entries to the model list. Whether those models
     are offered on Azure could not be verified from here, so it was left for someone who can check.
+-   **#6534** (ChatOpenAI: no retries once a timeout is set) turns off all retries for anyone who
+    sets a timeout, including retries after a rate limit or a server error. That is a behaviour
+    choice with a cost, not a plain fix; it needs a decision.
+-   **#6529** (keep starter prompts on export) widens what a flow export carries to include
+    `isPublic`, `apiConfig` and `analytic`. Importing a flow that arrives already marked public is
+    a security question, and the patch ships no test.
 -   **#6521** and **#6630** no longer apply after the fixes above.
 
 **How a patch is adopted** (the method used for everything above): read the diff for behaviour and
