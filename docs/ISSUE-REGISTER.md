@@ -162,6 +162,36 @@ test would catch if reintroduced. Capture, diff, restore and tag are all unprote
 **Acceptance:** tests for slug sanitisation (including traversal payloads), the no-op-change check,
 word-segment diffs, and a restore round-trip asserting byte identity.
 
+**RESOLVED 2026-11-13.** `packages/server/src/versioning/{normalise,diff,VersionStore}.test.ts` — 70
+tests, run against a real throwaway repository (real filesystem, real isomorphic-git; only the logger
+is mocked). The traversal block is a negative test: ten payloads, each asserting on the filesystem
+that exactly one ref appears, directly under `refs/tags`, and nothing is written elsewhere. Writing
+the suite found two defects the feature had been shipping with — I-34 and I-35 below — both fixed in
+the same change, each with a test observed failing before the fix and passing after.
+
+### I-34 · `VersionStore.history()` could return a commit from a different flow — FIXED 2026-11-13
+
+**Evidence:** found by the I-03 suite. `git.log({ filepath, depth })` returns `depth + 1` entries when
+the walk is cut off by `depth`: isomorphic-git 1.41.0 appends the commit it stopped on without
+checking that it changed the file. The version repository is shared by every flow, so that trailing
+entry was usually a save of some other flow.
+**Impact:** a caller entitled to see one flow's history could be shown the commit subject (flow name
+and changed field names) and author name and address of an unrelated flow's save, including one in
+another workspace. No flow content was exposed — reads are by the caller's own flow path. Triggered
+whenever a flow had at least `limit` versions, and `limit` is caller-supplied.
+**Fix:** `history()` returns only the first `limit` entries, and nothing for a non-positive limit.
+**Verification:** negative test interleaving two flows' saves and asserting, for six limits, that the
+result is exactly the caller's own commits; failed before the fix, passes after.
+**Still open:** I-08 (the walk is O(all commits)) is unchanged.
+
+### I-35 · Prompt-focused diff returned hunks with no changes in them — FIXED 2026-11-13
+
+**Evidence:** found by the I-03 suite. `filterToPromptChanges` kept a hunk whenever a prompt field
+appeared in it, including as an unchanged context line beside some other change — so the result could
+carry hunks while reporting `added: 0, removed: 0, identical: true`.
+**Impact:** cosmetic; the prompt view could show an unchanged prompt as though it were part of a change.
+**Fix:** a hunk is kept only if it contains an added or removed line. Test added, failing before.
+
 ---
 
 ## S2 — Must fix before wider use

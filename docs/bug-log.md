@@ -96,3 +96,15 @@ helper; all nineteen pass with the guard. No live graph or provider is exercised
 This is a parameter-authorization defect; no public RCE was demonstrated. Source
 validation and deployment are tracked separately. See
 [the security note](security/2026-11-12-object-override-authorization.md).
+
+## Addendum — 2026-11-13, found while writing the versioning test suite (I-03)
+
+The table above is the fw8 point-in-time record. These two were found at 4.0.1 and are tracked in full in `ISSUE-REGISTER.md`.
+
+| ID   | Finding                                                                                   | Severity | Status |
+| ---- | ----------------------------------------------------------------------------------------- | -------- | ------ |
+| I-34 | Flow history could include a commit belonging to a different flow when cut off by `limit` | MEDIUM   | FIXED  |
+| I-35 | Prompt-focused diff returned hunks containing no changes                                  | LOW      | FIXED  |
+
+Severity for I-34 is on demonstrated impact: commit subject and author identity of another flow's
+save, reproduced in a test; flow content was not reachable by this path.
