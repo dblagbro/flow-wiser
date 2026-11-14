@@ -18,6 +18,9 @@ only:
 The per-credential store (slice (b)) is Phase 2 and is not started. Production, real keys and host
 changes each need the operator's explicit instruction; none is implied by this work.
 
+The proposed boot behaviour, and the questions that must be answered before it is written, are in
+[ADR-0006](decisions/ADR-0006-vault-key-source.md).
+
 ## Why it is a small change
 
 `identity/crypto/keyring.ts` already separates where key material comes from from how records are
