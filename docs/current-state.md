@@ -1,10 +1,61 @@
 # Current state
 
-**Last updated: 2026-08-11** · **Observed at:** `apache2-only` @ `ffae9952`
+**Last updated: 2026-11-14** (the section directly below) · **Observed at:** `apache2-only` @ `d6748264`, `main` @ `8ed82d2f`
+
+**Everything from "Branches" onward is the 2026-08-11 observation at `ffae9952` and has not been
+re-verified.** Where it disagrees with the section below, the section below is the later
+observation.
 
 What is verifiably true in the tree right now. Every line here was observed, not inferred from
 another document. For the public-facing narrative see [`STATUS.md`](STATUS.md) — **which is
 currently stale and contradicts this document** (see Drift below).
+
+## Observed 2026-11-14
+
+Each line was checked on that date, at `apache2-only` @ `d6748264` and `main` @ `8ed82d2f`.
+
+**Version and toolchain.** `package.json` says `4.0.1`; `.nvmrc` says `v22.23.2`;
+`scripts/assert-version-parity.js` passes (pinned Node versions agree; the four secret-ignore lists
+carry all six markers).
+
+**Licensed paths.** `packages/server/src/enterprise` and `packages/server/src/IdentityManager.ts` do
+not exist in the working tree (checked by name only).
+
+**Hooks.** `core.hooksPath` is `.husky`; the pre-commit hook ran on every commit made today and
+rejected one (an invalid lint directive), so it is executing, not merely present.
+
+**CI.** On `main`'s head commit the `Node CI` job (install, lint, build, the test-discovery
+assertion, `test:coverage`, Cypress), the Docker build, the clean-room guard and the secret scan all
+ran and succeeded; the inherited `Check for Proprietary Paths` job was skipped, as it is on every
+run. On `apache2-only`'s head commit **only the clean-room guard and the secret scan ran**: the full
+gate runs on each pull request's head commit before it is merged — and passed on every one merged
+today — but not on the merge commit that lands on the branch. So the branch tip itself has never
+been built by CI.
+
+**Tests.** `scripts/assert-test-discovery.js` passes: 189 test files on disk, 189 discovered.
+
+**Dependencies.** The two lines' dependency sections, `pnpm.overrides` and `pnpm-lock.yaml` are
+identical (`scripts/report-dependency-drift.js` passes). Nothing runs that script automatically
+(PROCESS-GAPS G14). GitHub reported 168 open Dependabot alerts on `main` — 1 critical, 37 high —
+described under SEC-DEP-01.
+
+**Merged to both lines on 2026-11-13 and 2026-11-14 (merging deploys nothing):**
+
+-   an optional vault source for the master key and session pepper, off by default
+    (`IDENTITY_KEY_SOURCE=vault`, ADR-0006), with an expected-key fingerprint pin;
+-   flow version history served from a rebuildable index (I-08);
+-   six fixes adopted from the archived upstream pull requests (#6615, #6353, #6373, #6478, #6491,
+    #6530), in addition to those adopted earlier — see `backlog.md` BL-03;
+-   three sweeps of same-major dependency security updates, and the levelling of the two lines'
+    dependencies (SEC-DEP-02).
+
+**Open and waiting on a maintainer decision:** where the dependency drift report should run; what to
+do about four alerted packages with no patched release (`expr-eval`, `extract-zip`, `xlsx`,
+`request`) and the two stale `examples/` lockfiles; I-09; I-38. Removing a deployment's environment
+key in favour of the vault needs an explicit decision per deployment (ADR-0006).
+
+**Not observed today:** a built image, a running instance, or any deployment. Nothing here says what
+is deployed.
 
 ## Branches
 
