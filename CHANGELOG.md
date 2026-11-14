@@ -50,6 +50,11 @@ first.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **The S3 directory loader tried to load folder markers as files.** Keys ending in `/` are now
+    skipped. Fix and test by **ZeroIce**, upstream pull request #6561.
+-   **A missing MCP server URL produced an error that named the wrong transport.** The message now
+    says how to configure a remote or a stdio server. Fix and test by **Ruiming Zhao**, upstream
+    pull request #6725.
 -   **Chat-message pagination was ignored for standard queries**, so `page` and `pageSize` returned
     every message. Fix and test by **AnwarRezk**, upstream pull request #6301.
 -   **The prompt-list fetch had no timeout** and could hold a request open indefinitely; it is now
