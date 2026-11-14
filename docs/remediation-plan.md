@@ -456,6 +456,12 @@ proposed, not just an install.
 
 **Status:** OPEN · **Opened:** 2026-08-12 · **Demonstrated, not suspected**
 
+**Observation, 2026-11-14 — no recurrence seen, item not closed.** Of the roughly 90 `Node CI` runs
+between 2026-11-12 and 2026-11-14, twelve failed and none of them at install: seven at the Cypress
+step (before the action pin was ported), one at lint, one at `test:coverage`, and
+three with no failed step recorded (runner shutdowns, since traced to memory). That is evidence the
+flake is rare, not that it is gone; the item stays open until the cause is known.
+
 `pnpm install` failed in CI while compiling `faiss-node`:
 
 ```text
