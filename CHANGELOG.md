@@ -65,6 +65,11 @@ first.
 
 ### Fixed
 
+-   **Answering one human-approval prompt cleared a different one.** In an agent flow with more
+    than one Proceed/Reject step waiting at once, resolving one removed the buttons from whichever
+    message was newest. The server and the chat window now match the prompt by the step it belongs
+    to. Fix and tests by **sanahkapoor**, adopted from upstream pull request #6615 with authorship
+    preserved.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
