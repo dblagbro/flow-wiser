@@ -50,6 +50,9 @@ first.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **A malformed encryption key version was silently read as a different version.**
+    `IDENTITY_ENCRYPTION_KEY_VERSION=1.5x` was accepted as version 1. The server now refuses to start
+    on a version that is not a whole number (I-37).
 -   **Tool dialog errors were hidden behind a TypeError when the server could not be reached.** A
     shared helper now reads Axios errors safely, including nested and array messages. Fix and tests
     by **Alexander Kireev**, upstream pull request #6482.
@@ -90,6 +93,9 @@ first.
 
 ### Tests
 
+-   First tests for the encryption keyring (`identity/crypto/keyring.ts`): every start-up refusal,
+    environment and key-file sources, rotation, and that no key text reaches an error message or the
+    keyring's description. 69 tests.
 -   First automated tests for the versioning subsystem — normalisation, diff, capture, restore
     round-trip, deletion and checkpoint labels, including negative tests for the path-traversal
     label payloads (I-03). 70 tests.
