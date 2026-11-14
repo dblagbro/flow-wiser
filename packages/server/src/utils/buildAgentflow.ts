@@ -795,8 +795,10 @@ function hasReceivedRequiredInputs(waitingNode: IWaitingNode): boolean {
  * @param edges - All edges in the workflow
  * @param nodeId - Current node ID
  * @returns Array of node IDs that should be ignored
+ *
+ * Exported only so `buildAgentflow.conditions.test.ts` can exercise it directly.
  */
-async function determineNodesToIgnore(
+export async function determineNodesToIgnore(
     currentNode: IReactFlowNode,
     result: any,
     edges: IReactFlowEdge[],
