@@ -1,7 +1,8 @@
 import fs from 'fs'
 import path from 'path'
-import git from 'isomorphic-git'
+import git, { ReadCommitResult } from 'isomorphic-git'
 import logger from '../utils/logger'
+import { FlowHistoryIndex } from './historyIndex'
 import { normaliseFlowData, normaliseJson } from './normalise'
 
 /**
@@ -75,10 +76,13 @@ const metaPath = (chatflowId: string): string => `meta/${chatflowId}.json`
 
 export class VersionStore {
     private readonly dir: string
+    private readonly index: FlowHistoryIndex
     private initialised = false
+    private indexFailureLogged = false
 
     constructor(options: { dir?: string } = {}) {
         this.dir = options.dir ?? VersionStore.defaultDir()
+        this.index = new FlowHistoryIndex(this.dir)
     }
 
     /**
@@ -196,15 +200,7 @@ export class VersionStore {
 
         if (!Number.isInteger(limit) || limit < 1) return []
 
-        // `git.log` with a `filepath` can return `depth + 1` entries. When the walk stops because
-        // it has collected `depth` commits, isomorphic-git also appends the commit it was looking
-        // at when it stopped — without having established that THAT commit changed the file. The
-        // repository is shared by every flow, so that trailing entry is routinely a save of some
-        // other flow: its name, the fields that changed, and its author's name and address, shown
-        // in the history of a flow it has nothing to do with. Only the first `limit` entries are
-        // known to have changed this file, so only those are returned.
-        const walked = await git.log({ fs, dir: this.dir, filepath: flowPath(chatflowId), depth: limit, force: true })
-        const commits = walked.slice(0, limit)
+        const commits = (await this.indexedHistory(chatflowId, limit)) ?? (await this.walkedHistory(chatflowId, limit))
         const tagsByOid = await this.tagsByOid()
 
         return commits.map((entry) => ({
@@ -215,6 +211,43 @@ export class VersionStore {
             timestamp: new Date(entry.commit.author.timestamp * 1000).toISOString(),
             tags: tagsByOid.get(entry.oid) ?? []
         }))
+    }
+
+    /**
+     * History read from the index (I-08): only the commits that will be returned are opened.
+     * `null` means "no usable index for this request" — the caller walks the log instead, which is
+     * slower and always correct. A failure here is logged once and never surfaced: the index is a
+     * cache, and a broken cache must not turn a readable history into an error.
+     */
+    private async indexedHistory(chatflowId: string, limit: number): Promise<ReadCommitResult[] | null> {
+        try {
+            const oids = await this.index.commitsFor(chatflowId)
+            if (oids === null) return null
+            return await Promise.all(oids.slice(0, limit).map((oid) => git.readCommit({ fs, dir: this.dir, oid })))
+        } catch (error) {
+            if (!this.indexFailureLogged) {
+                this.indexFailureLogged = true
+                logger.warn(
+                    `⚠️ [versioning]: the flow history index could not be used and will be rebuilt; reading history the slow way. ` +
+                        `${error instanceof Error ? error.message : String(error)}`
+                )
+            }
+            await this.index.discard().catch(() => undefined)
+            return null
+        }
+    }
+
+    /** History by walking the whole log. Cost grows with every commit in the repository. */
+    private async walkedHistory(chatflowId: string, limit: number): Promise<ReadCommitResult[]> {
+        // `git.log` with a `filepath` can return `depth + 1` entries. When the walk stops because
+        // it has collected `depth` commits, isomorphic-git also appends the commit it was looking
+        // at when it stopped — without having established that THAT commit changed the file. The
+        // repository is shared by every flow, so that trailing entry is routinely a save of some
+        // other flow: its name, the fields that changed, and its author's name and address, shown
+        // in the history of a flow it has nothing to do with. Only the first `limit` entries are
+        // known to have changed this file, so only those are returned.
+        const walked = await git.log({ fs, dir: this.dir, filepath: flowPath(chatflowId), depth: limit, force: true })
+        return walked.slice(0, limit)
     }
 
     /** One flow as it stood at a given commit (§3). Null when the file did not exist there. */
