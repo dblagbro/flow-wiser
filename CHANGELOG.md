@@ -46,6 +46,9 @@ first.
 -   **Dependency security updates, second sweep.** express, qs, postcss, ip-address and ajv moved to
     patched releases within their current major version. As a side effect the tree now carries one
     4.x version of express and one 6.x version of qs instead of several.
+-   **Dependency security updates, third sweep.** svgo 2.8.4, vite 5.4.21 and zod 4.6.7, each
+    within its current major version. The vite update also moves the bundler it uses, esbuild, from
+    0.19 to 0.21.
 -   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
     whole request body to the execution row, so a user who could update an execution could also
     set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.
