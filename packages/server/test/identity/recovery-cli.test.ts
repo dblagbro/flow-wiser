@@ -602,6 +602,14 @@ describe('doctor', () => {
         ]) {
             expect(tenancyDetails).toContain(table)
         }
+
+        // I-13. The finding used to assert that these rows are "served to the wrong tenant by any
+        // query that filters on organization alone". No such query exists — every content query
+        // scopes by workspace — so that told an operator a breach was in progress when none was.
+        // It must state what is true: not served across tenants today, safety net not holding.
+        expect(tenancyDetails).not.toMatch(/is served to the wrong tenant|are served to the wrong tenant/i)
+        expect(tenancyDetails).toContain('not being served to another tenant today')
+        expect(tenancyDetails).toContain('Re-stamp them, transactionally.')
     })
 
     it('detects the deliberately broken credential reference, and counts every shape of it', async () => {

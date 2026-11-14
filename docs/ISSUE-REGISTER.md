@@ -226,15 +226,15 @@ emits the relative `href="favicon.ico"` that caused the site-wide leak.
 
 ## S3 — Should fix
 
-| id   | Issue                                                           | Evidence / note                                                                                                                                               |
-| ---- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| I-07 | `POST /account/reset-password` has no rate limit                | `/auth/login` has per-IP and per-account limiters. Narrower surface (needs a valid session _and_ the current password) but still a guessing oracle.           |
-| I-08 | `VersionStore.history()` is O(all commits) per request          | One shared repo for every flow; an old flow's history slows as unrelated flows commit.                                                                        |
-| I-09 | `expect` absent from the image                                  | `admin:create` requires a TTY; the recovery path the boot log prints cannot run unattended.                                                                   |
-| I-10 | `resetPassword.jsx` reads `error.response.data` unguarded       | A network failure throws a TypeError over the real error.                                                                                                     |
-| I-11 | `Docker Image CI - Docker Hub` would publish the wrong artifact | Builds `docker/Dockerfile` (npm path → commercial output), pushes to `flowiseai/flowise`, defaults to Node 24. Warning comment added; workflow not rewritten. |
-| I-12 | Checkpoint labels are slugified, not rejected                   | `../../../PWNED` → 200 as `usr-src-flowise-pwned-by-tag`. Safe, but silently renames. **Open decision.**                                                      |
-| I-13 | `doctor` tenancy message describes a query that does not exist  | See I-02 severity note. Misleads an operator into believing data is being cross-served.                                                                       |
+| id   | Issue                                                           | Evidence / note                                                                                                                                                                      |
+| ---- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| I-07 | `POST /account/reset-password` has no rate limit                | `/auth/login` has per-IP and per-account limiters. Narrower surface (needs a valid session _and_ the current password) but still a guessing oracle.                                  |
+| I-08 | `VersionStore.history()` is O(all commits) per request          | One shared repo for every flow; an old flow's history slows as unrelated flows commit.                                                                                               |
+| I-09 | `expect` absent from the image                                  | `admin:create` requires a TTY; the recovery path the boot log prints cannot run unattended.                                                                                          |
+| I-10 | `resetPassword.jsx` reads `error.response.data` unguarded       | **FIXED 2026-11-13** — optional chaining; falls back to the error message. A network failure throws a TypeError over the real error.                                                 |
+| I-11 | `Docker Image CI - Docker Hub` would publish the wrong artifact | Builds `docker/Dockerfile` (npm path → commercial output), pushes to `flowiseai/flowise`, defaults to Node 24. Warning comment added; workflow not rewritten.                        |
+| I-12 | Checkpoint labels are slugified, not rejected                   | `../../../PWNED` → 200 as `usr-src-flowise-pwned-by-tag`. Safe, but silently renames. **Open decision.**                                                                             |
+| I-13 | `doctor` tenancy message describes a query that does not exist  | **FIXED 2026-11-13** — finding reworded to what is true; asserted in `recovery-cli.test.ts`. See I-02 severity note. Misleads an operator into believing data is being cross-served. |
 
 ## S4 — Track only
 
