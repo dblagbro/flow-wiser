@@ -32,6 +32,8 @@ in that file. `aead.ts` and every stored row are untouched, because each row rec
 | `identity/crypto/keyring.test.ts`                          | 69 tests pinning the keyring's behaviour before a source is added to it             |
 | `identity/vault/requestSigner.ts`                          | RFC 9421 signer for the hub's pinned profile. Pure; reads no key, makes no request  |
 | `identity/vault/requestSigner.test.ts`                     | 20 tests, including four known answers produced by the hub's own reference signer   |
+| `identity/vault/wire.ts`                                   | Wire-state classifier, identity check, strict bundle parser. Pure; makes no request |
+| `identity/vault/wire.test.ts`                              | 90 tests; the cache-clearing rule is tested from both sides                         |
 | A client that fetches the bundle                           | **Not written**                                                                     |
 | A `vault` key source in `keyring.ts`, and the flag         | **Not written**                                                                     |
 | A fixture identity, its key pair, a test run against a hub | **Not done** — the hub side provisions the identity and asks for a public key first |
@@ -51,6 +53,14 @@ The hub refuses anything else with a 401, so these are constraints, not preferen
 "Matches the hub" is tested rather than asserted: the known-answer vectors in
 `requestSigner.test.ts` are headers produced by the hub's reference signer, and the TypeScript port
 must reproduce them byte for byte.
+
+## The one rule about revocation
+
+`wire.ts` decides, in one place, what an HTTP outcome means. **Only an explicit `revoked` or
+`grant_denied` in the hub's own JSON error body, on a 401 or 403, clears anything held locally.** A
+sealed vault, a timeout, a proxy's error page, a bare 401 or 403, a clock or nonce rejection, a rate
+limit and a 501 all leave it alone. Wrong in one direction, a withdrawn credential keeps being used;
+wrong in the other, a hub restart makes every consumer discard keys it still needs.
 
 ## Rules for whoever continues this
 
