@@ -1,6 +1,7 @@
 import logger from '../../utils/logger'
-import { KeyringError, loadKeyring, resetKeyring } from '../crypto/keyring'
-import { EnvSessionPepperProvider } from '../services/SessionService'
+import { installKeyring, Keyring, KeyringError, loadKeyring, resetKeyring } from '../crypto/keyring'
+import { defaultSessionPepperProvider, installSessionPepperProvider } from '../services/SessionService'
+import * as bootSecrets from '../vault/bootSecrets'
 
 /**
  * Boot-time validation of the identity layer's key material.
@@ -62,9 +63,35 @@ export const initAuthSecrets = async (): Promise<void> => {
     // Fail fast and loudly on key material: an unreadable keyring means every stored secret is
     // unreadable, which is not a state to discover mid-request.
     resetKeyring()
+    installSessionPepperProvider(null)
+
+    // Optional, and off unless IDENTITY_KEY_SOURCE=vault (ADR-0006). Phase 1 is no-lockout: whatever
+    // the vault says or fails to say, the environment/file source below still decides whether this
+    // server can start. Only IDENTITY_VAULT_STRICT_REVOKE=true lets an explicit revoke stop it.
+    let vault
+    try {
+        vault = await bootSecrets.resolveVaultBootSecrets()
+    } catch (error) {
+        logger.error(`❌ [identity]: ${error instanceof Error ? error.message : String(error)}`)
+        throw error
+    }
+    let vaultKeyring: Keyring | undefined
+    if (vault.status === 'vault') {
+        vaultKeyring = vault.keyring
+        installSessionPepperProvider(vault.pepperProvider)
+        logger.info(`🔐 [identity]: master key and session pepper fetched from the vault (namespace ${vault.namespace})`)
+    } else if (vault.status === 'fallback') {
+        const line =
+            `[identity]: VAULT NOT USED THIS RUN — ${vault.code}: ${vault.detail}. ` +
+            'Continuing on the environment/file key source (Phase 1 no-lockout, ADR-0006).'
+        if (vault.severity === 'alarm') logger.error(`🚨 ${line}`)
+        else logger.warn(`⚠️ ${line}`)
+    }
+
     let description
     try {
-        description = loadKeyring().describe()
+        if (vaultKeyring) installKeyring(vaultKeyring)
+        description = (vaultKeyring ?? loadKeyring()).describe()
     } catch (error) {
         if (error instanceof KeyringError) {
             logger.error(`❌ [identity]: encryption keyring rejected — ${error.message}`)
@@ -81,7 +108,7 @@ export const initAuthSecrets = async (): Promise<void> => {
     // The pepper is checked, not consumed: `current()` throws when it is absent, and that throw is
     // the whole point of asking. Nothing is retained — the provider is re-read per session issue.
     try {
-        const pepper = new EnvSessionPepperProvider().current()
+        const pepper = defaultSessionPepperProvider().current()
         logger.info(`🔑 [identity]: session pepper active=v${pepper.version} keyId=${pepper.keyId}`)
     } catch (error) {
         logger.error(

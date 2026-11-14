@@ -1,7 +1,8 @@
 # ADR-0006 — Fetching the master key and session pepper from the Coordinator Hub vault
 
-**Status:** **Proposed** — nothing here is implemented or enabled. Open questions at the end need an
-answer from the operator or the Vault Architect before the boot path is written.
+**Status:** **Accepted for slice (a), Phase 1** — implemented behind `IDENTITY_KEY_SOURCE=vault`,
+default off, enabled on no deployment. Sections 2 and 4 and the open questions were amended by the
+Vault Architect's ruling C45 (2026-11-14); the amendments are marked where they apply.
 **Date:** 2026-11-14
 **Drafted for:** Operator; Vault Architect (ruling C42 admitted Flow-Wiser as a Phase 1 consumer,
 slice (a))
@@ -46,13 +47,24 @@ Before the keyring is first used, once:
 1. Read the namespace bundle with a signed request (`identity/vault/requestSigner.ts`).
 2. Classify the outcome with `identity/vault/wire.ts`. Then:
 
-| Outcome                                                                 | Behaviour                                                                                                                                    |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OK`, bundle parses, both entries resolve to non-empty strings          | Build the keyring from the vault's values. Start.                                                                                            |
-| `UNREACHABLE` (timeout, 502/503/504, sealed, degraded)                  | Use the environment/file source **if one is configured**; log loudly that the vault was unreachable. If none is configured, refuse to start. |
-| `REVOKED` or `DENIED` (the hub's explicit word)                         | **Refuse to start, even if an environment/file source is configured.** A fallback that survives a revoke is not a revoke.                    |
-| Bundle malformed, wrong namespace, entry withheld, tombstoned or absent | Refuse to start. Never a partial keyring.                                                                                                    |
-| `REQUEST_REJECTED` (signature, clock, nonce, rate limit), `UNEXPECTED`  | Treated as `UNREACHABLE`: a misconfigured client is not a withdrawn credential.                                                              |
+**Amended by ruling C45 — Phase 1 is no-lockout.** The first draft of this table refused to start
+on a revoke and on a malformed bundle. The ruling reversed that for Phase 1: nothing the vault says
+or fails to say may stop a deployment that still has its own key. The vault is used only when it
+serves **both** secrets and they are the secrets this deployment already has; every other outcome is
+"not this run", logged, and the environment/file source carries on.
+
+| Outcome                                                                                    | Behaviour                                                                                     |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `OK`, both entries resolve, and they match the configured key and pepper where those exist | Keyring and pepper come from the vault. Start.                                                |
+| `UNREACHABLE`, `REQUEST_REJECTED` (timeout, sealed, clock, signature, rate limit)          | Fall back, logged as a **warning**.                                                           |
+| `REVOKED` or `DENIED` (the hub's explicit word), or an entry tombstoned as revoked         | Fall back, logged as an **alarm**. With `IDENTITY_VAULT_STRICT_REVOKE=true`: refuse to start. |
+| Bundle untrusted, entry withheld, tombstoned or absent, unexpected status                  | Fall back, **alarm**. Never one secret from each source.                                      |
+| The vault's key or pepper is not the configured one, or the keyring gate refuses it        | Fall back, **alarm** (`key_mismatch`, `pepper_mismatch`, `vault_key_rejected`).               |
+| The flag is on but the vault settings or the identity key file are missing or unusable     | Fall back, **alarm** (`vault_misconfigured`, `identity_key_unusable`). No request is sent.    |
+
+"Fall back" means the existing boot check runs unchanged on the environment/file source. If that
+source is absent too, the server refuses to start exactly as it does today — no-lockout is not
+no-key.
 
 3. No key is ever generated, and none is written to disk by this path.
 
@@ -67,7 +79,8 @@ is retired.
 
 The keyring is loaded once per process today, and rotation is a restart plus a re-encryption pass.
 Slice (a) keeps that: the vault is read at boot and not again. A revoke therefore takes effect at
-the next start, not within a poll interval. This is a stated limit, not an oversight.
+the next start, not within a poll interval. This is a stated limit, not an oversight. (C45 accepted
+it: for a boot-only consumer, "re-check on the next poll" means the next start.)
 
 ### 5. Values are never logged
 
@@ -82,7 +95,22 @@ path and version appear in logs or in `describe()`.
 -   A deployment that has removed its environment key depends on the vault to boot. That is the
     intended end state, and it should not be reached before the vault is trusted.
 
-## Open questions — answers needed before the boot path is written
+## Rulings on the open questions (C45, 2026-11-14)
+
+1. **Key identity and version — the vault mirrors.** The key id and version recorded on rows come
+   from configuration (`IDENTITY_ENCRYPTION_KEY_ID`, `IDENTITY_ENCRYPTION_KEY_VERSION`), never from
+   the vault's storage version counter. The first boot from the vault is not a rotation. The code
+   enforces the mirror: where an environment key is still configured, a vault key with a different
+   fingerprint is refused.
+2. **Revoke versus fallback — no-lockout in Phase 1.** An explicit revoke at boot falls back with an
+   alarm. Refusing to start is a separate, default-off flag (`IDENTITY_VAULT_STRICT_REVOKE`).
+3. **Polling** — not in slice (a); see section 4.
+
+Still open: the identity probe returned 404 on the hub's test listener, so wrong-service detection
+is untested end to end; and the literal-`revoked` response has not yet been exercised against a live
+listener, only against the classifier's tests.
+
+## The questions as first asked
 
 1. **Key identity and version.** Every stored row records `keyId` and `keyVersion`, and the keyring
    refuses two different keys under one version. Existing rows are version 1 under the environment

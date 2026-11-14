@@ -10,9 +10,16 @@
  */
 import { randomBytes } from 'node:crypto'
 import logger from '../../utils/logger'
-import { KeyringError, getKeyring, resetKeyring } from '../crypto/keyring'
+import { buildVaultKeyring, KeyringError, getKeyring, resetKeyring } from '../crypto/keyring'
 import { PUBLISHED_EXAMPLE_SECRETS } from '../crypto/passwords'
-import { EnvSessionPepperProvider } from '../services/SessionService'
+import {
+    defaultSessionPepperProvider,
+    EnvSessionPepperProvider,
+    installSessionPepperProvider,
+    SessionService,
+    VaultSessionPepperProvider
+} from '../services/SessionService'
+import * as bootSecrets from '../vault/bootSecrets'
 import { initAuthSecrets } from './authSecrets'
 
 jest.mock('../../utils/logger', () => ({
@@ -24,7 +31,7 @@ const log = logger as unknown as { info: jest.Mock; warn: jest.Mock; error: jest
 const logged = (): string =>
     [...log.info.mock.calls, ...log.warn.mock.calls, ...log.error.mock.calls].map((call) => call.join(' ')).join('\n')
 
-const SECRET_VARIABLES = /^(IDENTITY_ENCRYPTION_KEY|FLOWISE_SESSION_PEPPER)/
+const SECRET_VARIABLES = /^(IDENTITY_ENCRYPTION_KEY|FLOWISE_SESSION_PEPPER|IDENTITY_KEY_SOURCE|IDENTITY_VAULT_)/
 
 describe('boot-time secrets', () => {
     const saved = { ...process.env }
@@ -106,6 +113,112 @@ describe('boot-time secrets', () => {
             await expect(initAuthSecrets()).rejects.toBeDefined()
             expect(process.env.IDENTITY_ENCRYPTION_KEY).toBeUndefined()
             expect(process.env.FLOWISE_SESSION_PEPPER).toBeUndefined()
+        })
+    })
+
+    // ADR-0006. The vault path is optional and off by default; when on, Phase 1 is no-lockout: the
+    // environment source still decides whether the server can start.
+    describe('initAuthSecrets — vault key source', () => {
+        const fromVault = (vaultKey: string, vaultPepper: string): bootSecrets.VaultBootResult => ({
+            status: 'vault',
+            keyring: buildVaultKeyring(vaultKey, process.env),
+            pepperProvider: new VaultSessionPepperProvider(Buffer.from(vaultPepper, 'utf-8'), 1, 'session-pepper'),
+            namespace: 'coordinator-hub/services/flow-wiser'
+        })
+        let resolve: jest.SpyInstance
+
+        beforeEach(() => {
+            resolve = jest.spyOn(bootSecrets, 'resolveVaultBootSecrets')
+        })
+        afterEach(() => {
+            resolve.mockRestore()
+            installSessionPepperProvider(null)
+        })
+
+        it('is off by default: no request, no vault line in the log, environment sources in effect', async () => {
+            const fetchSpy = jest.spyOn(globalThis, 'fetch')
+            await initAuthSecrets()
+            expect(await resolve.mock.results[0].value).toEqual({ status: 'disabled' })
+            expect(fetchSpy).not.toHaveBeenCalled()
+            expect(logged()).not.toMatch(/vault/i)
+            expect(getKeyring().getActive().source).toBe('env')
+            expect(defaultSessionPepperProvider()).toBeInstanceOf(EnvSessionPepperProvider)
+            fetchSpy.mockRestore()
+        })
+
+        it('installs the vault keyring and pepper for the whole process, and logs no value', async () => {
+            resolve.mockResolvedValue(fromVault(key, pepper))
+            await initAuthSecrets()
+            expect(getKeyring().getActive().source).toBe('vault')
+            expect(getKeyring().getActive().material.equals(Buffer.from(key, 'base64'))).toBe(true)
+            expect(defaultSessionPepperProvider().current().secret.equals(Buffer.from(pepper, 'utf-8'))).toBe(true)
+            const output = logged()
+            expect(output).toMatch(/fetched from the vault \(namespace coordinator-hub\/services\/flow-wiser\)/)
+            expect(output).toMatch(/encryption keyring active=v1 keys=\[v1:vault:[0-9a-f]{16}\]/)
+            expect(output).not.toContain(key)
+            expect(output).not.toContain(pepper)
+            expect(log.error).not.toHaveBeenCalled()
+        })
+
+        it('a SessionService built afterwards uses the vault pepper without being told to', async () => {
+            resolve.mockResolvedValue(fromVault(key, pepper))
+            await initAuthSecrets()
+            const service = new SessionService({} as never)
+            expect((service as unknown as { peppers: unknown }).peppers).toBeInstanceOf(VaultSessionPepperProvider)
+        })
+
+        it('starts from the vault alone when the environment holds neither secret', async () => {
+            resolve.mockResolvedValue(fromVault(key, pepper))
+            delete process.env.IDENTITY_ENCRYPTION_KEY
+            delete process.env.FLOWISE_SESSION_PEPPER
+            await expect(initAuthSecrets()).resolves.toBeUndefined()
+            expect(getKeyring().getActive().source).toBe('vault')
+        })
+
+        it.each([
+            ['alarm', 'error', 'revoked'],
+            ['warning', 'warn', 'no_response']
+        ] as const)('a fallback (%s) is logged at %s and the server starts on the environment source', async (severity, level, code) => {
+            resolve.mockResolvedValue({ status: 'fallback', severity, code, detail: 'entry x/master-key' })
+            await expect(initAuthSecrets()).resolves.toBeUndefined()
+            expect(log[level]).toHaveBeenCalledTimes(1)
+            expect(log[level].mock.calls[0][0]).toMatch(new RegExp(`VAULT NOT USED THIS RUN — ${code}: entry x/master-key`))
+            expect(getKeyring().getActive().source).toBe('env')
+            expect(defaultSessionPepperProvider()).toBeInstanceOf(EnvSessionPepperProvider)
+        })
+
+        it('a fallback with no environment key still refuses to start — no-lockout is not no-key', async () => {
+            resolve.mockResolvedValue({ status: 'fallback', severity: 'alarm', code: 'revoked', detail: 'namespace x' })
+            delete process.env.IDENTITY_ENCRYPTION_KEY
+            await expect(initAuthSecrets()).rejects.toBeInstanceOf(KeyringError)
+        })
+
+        it('strict mode: an explicit revoke is logged and refuses to start even with environment secrets', async () => {
+            resolve.mockRejectedValue(new bootSecrets.VaultRevokedError('the vault answered revoked — refusing to start', 'revoked'))
+            await expect(initAuthSecrets()).rejects.toBeInstanceOf(bootSecrets.VaultRevokedError)
+            expect(log.error.mock.calls[0][0]).toMatch(/the vault answered revoked — refusing to start/)
+            expect(() => getKeyring().getActive().source).not.toThrow()
+            expect(getKeyring().getActive().source).toBe('env')
+        })
+
+        it('a later boot with the vault off drops the vault keyring and pepper', async () => {
+            resolve.mockResolvedValueOnce(fromVault(key, pepper))
+            await initAuthSecrets()
+            expect(getKeyring().getActive().source).toBe('vault')
+            resolve.mockResolvedValueOnce({ status: 'disabled' })
+            await initAuthSecrets()
+            expect(getKeyring().getActive().source).toBe('env')
+            expect(defaultSessionPepperProvider()).toBeInstanceOf(EnvSessionPepperProvider)
+        })
+
+        // Nothing mocked: the flag on with nothing else configured must alarm and start, not hang or fail.
+        it('end to end: the flag on but unconfigured alarms as misconfigured and starts on the environment', async () => {
+            resolve.mockRestore()
+            process.env.IDENTITY_KEY_SOURCE = 'vault'
+            await expect(initAuthSecrets()).resolves.toBeUndefined()
+            expect(log.error).toHaveBeenCalledTimes(1)
+            expect(log.error.mock.calls[0][0]).toMatch(/VAULT NOT USED THIS RUN — vault_misconfigured: .*IDENTITY_VAULT_URL/)
+            expect(getKeyring().getActive().source).toBe('env')
         })
     })
 

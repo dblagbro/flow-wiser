@@ -30,17 +30,18 @@ in that file. `aead.ts` and every stored row are untouched, because each row rec
 
 ## What exists
 
-| Piece                                                              | State                                                                                    |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `identity/crypto/keyring.test.ts`                                  | 69 tests pinning the keyring's behaviour before a source is added to it                  |
-| `identity/vault/requestSigner.ts`                                  | RFC 9421 signer for the hub's pinned profile. Pure; reads no key, makes no request       |
-| `identity/vault/requestSigner.test.ts`                             | 20 tests, including four known answers produced by the hub's own reference signer        |
-| `identity/vault/wire.ts`                                           | Wire-state classifier, identity check, strict bundle parser. Pure; makes no request      |
-| `identity/vault/wire.test.ts`                                      | 90 tests; the cache-clearing rule is tested from both sides                              |
-| `identity/vault/bundleClient.ts`                                   | One signed read of a namespace bundle. No cache, no retry, no redirect, bounded body     |
-| `identity/vault/bundleClient.test.ts`                              | 44 tests against a real loopback HTTP server that verifies the signature as the hub does |
-| A `vault` key source in `keyring.ts`, and the flag                 | **Not written**                                                                          |
-| A fixture identity and a first run against the hub's test listener | **Done 2026-11-14** — see below                                                          |
+| Piece                                                                | State                                                                                    |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `identity/crypto/keyring.test.ts`                                    | 69 tests pinning the keyring's behaviour before a source is added to it                  |
+| `identity/vault/requestSigner.ts`                                    | RFC 9421 signer for the hub's pinned profile. Pure; reads no key, makes no request       |
+| `identity/vault/requestSigner.test.ts`                               | 20 tests, including four known answers produced by the hub's own reference signer        |
+| `identity/vault/wire.ts`                                             | Wire-state classifier, identity check, strict bundle parser. Pure; makes no request      |
+| `identity/vault/wire.test.ts`                                        | 90 tests; the cache-clearing rule is tested from both sides                              |
+| `identity/vault/bundleClient.ts`                                     | One signed read of a namespace bundle. No cache, no retry, no redirect, bounded body     |
+| `identity/vault/bundleClient.test.ts`                                | 44 tests against a real loopback HTTP server that verifies the signature as the hub does |
+| `identity/vault/bootSecrets.ts` and a `vault` source in `keyring.ts` | The boot path, behind `IDENTITY_KEY_SOURCE=vault`. **Default off; enabled nowhere**      |
+| `identity/vault/bootSecrets.test.ts`                                 | 59 tests: every outcome, strict mode, the mirror check, no partial result                |
+| A fixture identity and a first run against the hub's test listener   | **Done 2026-11-14** — see below                                                          |
 
 ## First run against the hub's test listener — 2026-11-14
 
@@ -64,6 +65,34 @@ end. That is recorded as open, not waved through.
 The run found one defect on this side: the first attempt signed `http://127.0.0.1:8232` and was
 refused on every request. **The hub verifies a bare `host[:port]`.** `bundleClient` now refuses any
 other shape before sending anything.
+
+## Turning it on
+
+Off unless `IDENTITY_KEY_SOURCE=vault`. With the flag off no vault setting is read and no request is
+made.
+
+| Variable                              | Meaning                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `IDENTITY_KEY_SOURCE`                 | `vault` turns the path on. Anything else, or unset, is today's behaviour |
+| `IDENTITY_VAULT_URL`                  | Where to send the request, for example an SSH-forwarded loopback port    |
+| `IDENTITY_VAULT_AUTHORITY`            | The hub's canonical authority, a bare `host[:port]` — what gets signed   |
+| `IDENTITY_VAULT_NAMESPACE`            | The namespace holding the two entries                                    |
+| `IDENTITY_VAULT_IDENTITY`             | The enrolled identity name (the signature `keyid`)                       |
+| `IDENTITY_VAULT_IDENTITY_KEY_FILE`    | Ed25519 private key, PEM, mode `0400` or `0600` — refused otherwise      |
+| `IDENTITY_VAULT_MASTER_KEY_ENTRY`     | Entry name, default `master-key`                                         |
+| `IDENTITY_VAULT_SESSION_PEPPER_ENTRY` | Entry name, default `session-pepper`                                     |
+| `IDENTITY_VAULT_PREFIX`               | API prefix, default `/claudeCoordinator/api/v1/vault`                    |
+| `IDENTITY_VAULT_TIMEOUT_MS`           | Request timeout                                                          |
+| `IDENTITY_VAULT_STRICT_REVOKE`        | `true`: an explicit revoke refuses to start. Default off                 |
+
+Keep `IDENTITY_ENCRYPTION_KEY` and `FLOWISE_SESSION_PEPPER` set while the vault is on trial. They
+are the fallback, and they are also what the vault's values are checked against: the vault is used
+only when it serves the same key and the same pepper. A boot that did not use the vault says so in
+one line beginning `VAULT NOT USED THIS RUN`, with a code and no secret value.
+
+One thing to know: the mirror check compares against the environment key only when that key loads.
+If the environment key is absent or itself unusable, there is nothing to compare, and a vault key
+that passes the keyring's own gate is accepted.
 
 ## The signing profile, as built to
 
@@ -94,7 +123,8 @@ wrong in the other, a hub restart makes every consumer discard keys it still nee
 
 -   No private key in the repository, in a fixture, or in a log — test vectors derive their keys at
     run time from a label. A real identity key lives outside the tree with owner-only permissions.
--   A missing or unreadable vault must fail closed exactly as a missing key does today: the server
-    refuses to start. It must never fall through to generating a key.
+-   Phase 1 is no-lockout (ruling C45): a missing, unreadable or revoking vault means "not this
+    run" and the environment/file source carries on. If that source is absent too, the server
+    refuses to start as it always has. Nothing on this path ever generates a key.
 -   Withheld, tombstoned or unreadable entries are refusals, not empty values.
 -   Do not enable the flag on any deployment as a side effect of other work.
