@@ -99,8 +99,23 @@ jobs:
             # cancelled run keeps no logs, so there was nothing to diagnose from. A step that times
             # out FAILS and keeps its log, which names the suite that was running. This does not
             # relax the gate: a hang now fails the build instead of occupying a runner for six hours.
-            - run: pnpm test:coverage
+            # Memory is sampled every 20 s while the tests run. On 2026-11-13 one run of this step
+            # ended with "The runner has received a shutdown signal" while every suite was passing,
+            # and three others hung — both are what a hosted runner does when it runs out of memory,
+            # but nothing recorded how much was in use. The sampler only prints; it changes nothing
+            # about how the tests run, and its lines are what the next failure will be read against.
+            - name: Run pnpm test:coverage
               timeout-minutes: 15
+              run: |
+                  ( while true; do
+                        free -m | awk -v t="$(date -u +%T)" 'NR==2 {printf "[mem %s] used=%sMB available=%sMB\n", t, $3, $7}'
+                        sleep 20
+                    done ) &
+                  sampler=$!
+                  status=0
+                  pnpm test:coverage || status=$?
+                  kill "$sampler" 2>/dev/null || true
+                  exit "$status"
             - name: Cypress install
               run: pnpm cypress install
             - name: Install dependencies (Cypress Action)
