@@ -27,6 +27,16 @@ first.
 
 ## [Unreleased]
 
+### Changed — action may be required
+
+-   **An unset `TRUST_PROXY` now trusts no proxy** (SEC-B-09). It used to trust every hop, which
+    let a client choose its own address with an `X-Forwarded-For` header and so bypass per-IP rate
+    limits, including on login. **If the server runs behind a reverse proxy and `TRUST_PROXY` is
+    not set, set it to the number of proxies in front of it** — `1` for a single nginx or load
+    balancer. Without it every client appears to share the proxy's address, and `req.protocol`
+    reports `http` behind a TLS-terminating proxy. The server logs a warning at boot naming the
+    setting. `TRUST_PROXY=true` still works and is also warned about.
+
 ### Security
 
 -   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
