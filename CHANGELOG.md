@@ -33,6 +33,10 @@ first.
     `limit`, the result could carry one extra entry that did not belong to the flow asked about
     (I-34). History now returns only commits that changed that flow.
 -   **Prompt-focused diff showed hunks with nothing changed in them** (I-35).
+-   **`doctor` no longer reports a tenant breach that is not happening.** A row whose tenant key
+    disagrees with its workspace was described as being "served to the wrong tenant"; no query
+    filters on organization alone, so it is not. The finding now says what is true (I-13).
+-   **Reset-password page hid network errors behind a TypeError** (I-10).
 
 ### Tests
 
