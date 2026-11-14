@@ -113,9 +113,11 @@ path and version appear in logs or in `describe()`.
    the absence of a key, not strict mode. **Removing the environment key is itself a cut-over step
    and takes the operator's line per deployment.** The hub may later carry the fingerprint as entry
    metadata; the consumer-side setting is the control of record.
+5. **The session pepper is not pinned (C53 §5, 2026-11-14).** A wrong pepper costs re-logins, not
+   data, and a pin would add an operator step to every pepper rotation. Accepted as it stands.
 
 Still open: the identity probe returned 404 on the hub's test listener, so wrong-service detection
-is untested end to end; and whether the session pepper should be pinned the way the key now is. The literal `revoked` response was exercised against the
+is untested end to end. The literal `revoked` response was exercised against the
 live test listener on 2026-11-14 (`docs/vault-consumer.md`).
 
 ## The questions as first asked
