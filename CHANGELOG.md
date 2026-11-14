@@ -50,6 +50,9 @@ first.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **Tool dialog errors were hidden behind a TypeError when the server could not be reached.** A
+    shared helper now reads Axios errors safely, including nested and array messages. Fix and tests
+    by **Alexander Kireev**, upstream pull request #6482.
 -   **Redis vector store metadata containing `:`, `"` or other RediSearch special characters broke
     filtering.** All of them are escaped and unescaped now, not only `-`. Fix and tests by
     **Kazi Eajaj Hossain**, upstream pull request #6601.
