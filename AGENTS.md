@@ -71,8 +71,10 @@ Inside `packages/server/src`:
     `tenancy/`, `crypto/`, `middleware/`, `routes/`, `services/`, `PlatformManager.ts`.
     This is the licence-critical module: changes here need the clean-room rules applied.
 -   `routes/` — 63 route groups mounted in `routes/index.ts`.
--   `database/` — 24 entity files, 53 migrations each for `sqlite`, `postgres`, `mysql`, `mariadb`.
-    **A migration added for one engine must be added for all four.**
+-   `database/` — 24 entity files; 52 migrations shared by `sqlite`, `postgres`, `mysql` and
+    `mariadb`, plus six declared engine-specific ones.
+    **A migration added for one engine must be added for all four** — enforced by
+    `test/database/migration-parity.test.ts`.
 -   `versioning/` — `VersionStore.ts`, `capture.ts`, `diff.ts`, `normalise.ts` (git-backed history).
 -   `queue/` — BullMQ/Redis prediction, upsert and schedule queues.
 -   `commands/` — oclif CLI: `admin`, `audit`, `credential`, `mfa`, `session`, `sso`, `doctor`.
