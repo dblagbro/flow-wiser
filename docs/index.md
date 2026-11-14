@@ -62,6 +62,7 @@ If that changes, add `design.md` and list it here.
 | Refactor history                                           | [`refactor-log.md`](refactor-log.md)               | append-only   |
 | Open remediation work — defects, drift, risk               | [`remediation-plan.md`](remediation-plan.md)       | standing      |
 | Wanted features and operational tasks (not defects)        | [`backlog.md`](backlog.md)                         | standing      |
+| Vault consumer: what was decided, what exists, what is not | [`vault-consumer.md`](vault-consumer.md)           | standing      |
 | Process failures and their controls                        | [`PROCESS-GAPS.md`](PROCESS-GAPS.md)               | append-only   |
 | Recovery assessment                                        | [`RECOVERY-ASSESSMENT.md`](RECOVERY-ASSESSMENT.md) | point-in-time |
 
