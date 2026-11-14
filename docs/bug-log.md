@@ -78,3 +78,25 @@ are tracked in full in `ISSUE-REGISTER.md`.
 
 Severity for I-34 is on demonstrated impact: commit subject and author identity of another flow's
 save, reproduced in a test; flow content was not reachable by this path.
+
+## Addendum — 2026-11-13, CI: the unit-test step exhausted the runner's memory (CI-03)
+
+**Symptom.** Three Node CI runs hung 25–35 minutes in `pnpm test:coverage` and were cancelled by
+hand; a fourth and fifth ended with `The runner has received a shutdown signal` while every suite in
+the log was passing. None in the previous 140 runs.
+
+**Cause, measured.** `turbo run test:coverage` starts the `jest --coverage` runs of four packages at
+once, each with its own worker pool. With memory sampled every 20 seconds, a run that **passed**
+showed available memory falling from 14,561 MB to 396 MB in 2 min 20 s. The step had no headroom;
+the test suites added on 2026-11-13 were enough to tip some runs over.
+
+**What it was not.** A flake, and not the new tests misbehaving: each passes alone under coverage,
+and the runs that died were passing when they died. It was first suspected to be the versioning
+tests, on the strength of their being new; the memory samples are what settled it.
+
+**Fix.** The CI step runs the packages one at a time (`--concurrency=1`); each package's Jest keeps
+its own workers. The step is also bounded at 15 minutes and keeps the memory sampler, so a
+recurrence fails quickly with the numbers in the log.
+
+**Verification.** Recorded on the pull request that made the change: minimum available memory
+before and after, from the sampler.
