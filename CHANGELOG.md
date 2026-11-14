@@ -50,6 +50,15 @@ first.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
+-   **Redis vector store metadata containing `:`, `"` or other RediSearch special characters broke
+    filtering.** All of them are escaped and unescaped now, not only `-`. Fix and tests by
+    **Kazi Eajaj Hossain**, upstream pull request #6601.
+-   **The Google Drive loader could request a page size of zero and skipped subfolders** when a
+    file-type filter was set. Fix and tests by **Arslan**, upstream pull request #6689.
+-   **Voyage AI rerank failed on the current API response shape.** Fix and tests by **ZeroIce**,
+    upstream pull request #6543.
+-   **Loading the remote model list had no timeout.** It is bounded at 3 seconds by default
+    (`MODEL_LIST_REQUEST_TIMEOUT_MS`). Fix and test by **Sahil Kamble**, upstream pull request #6517.
 -   **The S3 directory loader tried to load folder markers as files.** Keys ending in `/` are now
     skipped. Fix and test by **ZeroIce**, upstream pull request #6561.
 -   **A missing MCP server URL produced an error that named the wrong transport.** The message now
