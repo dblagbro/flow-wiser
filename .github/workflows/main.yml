@@ -105,6 +105,13 @@ jobs:
             # and three others hung — both are what a hosted runner does when it runs out of memory,
             # but nothing recorded how much was in use. The sampler only prints; it changes nothing
             # about how the tests run, and its lines are what the next failure will be read against.
+            #
+            # `--concurrency=1` runs the four packages' suites one after another. Turbo's default
+            # starts all four `jest --coverage` runs at once, each with its own pool of workers, and
+            # the sampler showed what that costs: on a run that PASSED, available memory fell from
+            # 14.5 GB to 396 MB in under three minutes. Whether a run survived was luck — the
+            # hangs and the runner shutdown on 2026-11-13 are the runs that did not. Each package's
+            # Jest still uses its own workers; only the packages are serialised.
             - name: Run pnpm test:coverage
               timeout-minutes: 15
               run: |
@@ -114,7 +121,7 @@ jobs:
                     done ) &
                   sampler=$!
                   status=0
-                  pnpm test:coverage || status=$?
+                  pnpm test:coverage --concurrency=1 || status=$?
                   kill "$sampler" 2>/dev/null || true
                   exit "$status"
             - name: Cypress install
