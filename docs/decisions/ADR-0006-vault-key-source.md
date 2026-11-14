@@ -107,8 +107,9 @@ path and version appear in logs or in `describe()`.
 3. **Polling** — not in slice (a); see section 4.
 
 Still open: the identity probe returned 404 on the hub's test listener, so wrong-service detection
-is untested end to end; and the literal-`revoked` response has not yet been exercised against a live
-listener, only against the classifier's tests.
+is untested end to end; and what a deployment with no environment key holds the vault's value
+against (I-39 in `docs/ISSUE-REGISTER.md`). The literal `revoked` response was exercised against the
+live test listener on 2026-11-14 (`docs/vault-consumer.md`).
 
 ## The questions as first asked
 

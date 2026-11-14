@@ -91,6 +91,19 @@ deployment only while it keeps its environment key. Before any deployment remove
 something else to pin to — the obvious candidate is a configured fingerprint of the expected key,
 which is not secret. Not built; recorded in `docs/ISSUE-REGISTER.md` and put to the Vault Architect.
 
+## Third run, the literal revoke — 2026-11-14
+
+The hub side placed one entry in state `revoked` in the fixture namespace. 8 of 8:
+
+-   a direct read of the revoked entry answers 403 with the hub's own `revoked`, classified
+    `REVOKED`, cache-clearing;
+-   the namespace bundle is still served, with the two live entries and one tombstone whose reason
+    is `revoked`; the parser refuses to resolve the revoked entry and still resolves the others;
+-   the boot path with its master-key slot pointed at the revoked entry falls back with an alarm
+    naming the entry, and refuses to start in strict mode;
+-   in strict mode with the slots on the two live entries, the sibling's tombstone does **not**
+    refuse the start. A revoke counts only for an entry this consumer asked for.
+
 ## Turning it on
 
 Off unless `IDENTITY_KEY_SOURCE=vault`. With the flag off no vault setting is read and no request is
