@@ -188,7 +188,9 @@ class S3_DocumentLoaders implements INode {
                 })
             )
 
-            const keys: string[] = (listObjectsOutput?.Contents ?? []).filter((item) => isS3FileKey(item.Key) && item.ETag).map((item) => item.Key!)
+            const keys: string[] = (listObjectsOutput?.Contents ?? [])
+                .filter((item) => isS3FileKey(item.Key) && item.ETag)
+                .map((item) => item.Key!)
 
             await Promise.all(
                 keys.map(async (key) => {
