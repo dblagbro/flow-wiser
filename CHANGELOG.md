@@ -47,6 +47,9 @@ first.
 -   **Dependency security updates, second sweep.** express 4.21.2, qs 6.17.1, postcss 8.5.32,
     ip-address 10.7.6 and ajv 8.20.0, each within its current major version. The tree now carries
     one 4.x version of express and one 6.x version of qs instead of several.
+-   **Dependency security updates, third sweep.** zod 4.3.6 → 4.6.6. The other two packages in
+    this sweep on the Apache line, svgo and vite 5, needed nothing here: this line already carries
+    svgo 2.8.4 and has no vite 5 in its tree.
 -   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
     whole request body to the execution row, so a user who could update an execution could also
     set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.
