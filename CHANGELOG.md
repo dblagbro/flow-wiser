@@ -45,6 +45,13 @@ first.
     Only `isPublic` — the one field the UI sends — is writable now. Fix and regression test by
     **tonghuaroot**, adopted from upstream pull request #6416 with authorship preserved.
 
+### Added — not enabled
+
+-   **Request signer for the Coordinator Hub vault** (`identity/vault/requestSigner.ts`): RFC 9421,
+    Ed25519, the hub's pinned profile, tested against known answers from the hub's reference signer.
+    Preparation for fetching the master key and session pepper from the vault at boot. Nothing
+    calls it yet; see `docs/vault-consumer.md`.
+
 ### Fixed
 
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
