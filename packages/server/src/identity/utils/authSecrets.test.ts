@@ -193,6 +193,22 @@ describe('boot-time secrets', () => {
             await expect(initAuthSecrets()).rejects.toBeInstanceOf(KeyringError)
         })
 
+        // Ruling C50 §3: with no key of its own and no fingerprint to hold the vault's key against,
+        // there is nothing to start on — and the log has to say that, not just "no key configured".
+        it('refuses to start, and says why, when the vault key cannot be pinned and there is no environment key', async () => {
+            resolve.mockResolvedValue({
+                status: 'fallback',
+                severity: 'alarm',
+                code: 'fingerprint_required',
+                detail: 'IDENTITY_VAULT_MASTER_KEY_FINGERPRINT must be set'
+            })
+            delete process.env.IDENTITY_ENCRYPTION_KEY
+            await expect(initAuthSecrets()).rejects.toBeInstanceOf(KeyringError)
+            const errors = log.error.mock.calls.map((call) => call[0] as string)
+            expect(errors[0]).toMatch(/VAULT NOT USED THIS RUN — fingerprint_required: IDENTITY_VAULT_MASTER_KEY_FINGERPRINT must be set/)
+            expect(errors[1]).toMatch(/encryption keyring rejected — no encryption key configured/)
+        })
+
         it('strict mode: an explicit revoke is logged and refuses to start even with environment secrets', async () => {
             resolve.mockRejectedValue(new bootSecrets.VaultRevokedError('the vault answered revoked — refusing to start', 'revoked'))
             await expect(initAuthSecrets()).rejects.toBeInstanceOf(bootSecrets.VaultRevokedError)
