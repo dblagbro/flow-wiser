@@ -87,6 +87,10 @@ first.
 
 ### Fixed
 
+-   **OpenAI embeddings set to the base64 encoding format broke the vector store.** With that
+    option chosen, the embedding arrived as a base64 string instead of numbers, and stores such as
+    Chroma failed on it. Both OpenAI embedding nodes now decode it. Fix by **SyncWithRaj**, adopted
+    from upstream pull request #6530 with authorship preserved; test added here.
 -   **The Document Store (Vector) node could not be connected where a vector store retriever is
     expected.** It was the only vector store node whose Retriever output did not offer the
     `VectorStoreRetriever` type, so the canvas refused the connection. The node's version goes from
