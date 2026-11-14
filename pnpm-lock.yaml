@@ -115,6 +115,7 @@ overrides:
   sha.js: '>=2.4.12 <3'
   '@babel/helpers': '>=7.26.10 <8'
   '@babel/runtime': '>=7.26.10 <8'
+  '@babel/plugin-transform-modules-systemjs': '>=7.29.4 <8'
 
 importers:
 
@@ -2516,10 +2517,6 @@ packages:
     resolution: {integrity: sha512-3nQVUAtvkKH9zahfWgw96Jc/uFOmjACE1kQz82E2lqWmHBgjzbNlsC22nuQTfahmWeQtTq5nQ/4Nnd2A1wj4zA==}
     engines: {node: '>=6.9.0'}
 
-  '@babel/helper-hoist-variables@7.22.5':
-    resolution: {integrity: sha512-wGjk9QZVzvknA6yKIUURb8zY3grXCcOZt+/7Wcy8O2uctxhplmUPkOdlgoNhmdVee2c92JXbf1xpMtVNbfoxRw==}
-    engines: {node: '>=6.9.0'}
-
   '@babel/helper-member-expression-to-functions@7.23.0':
     resolution: {integrity: sha512-6gfrPwh7OuT6gZyJZvd6WbTfrqAo7vm4xCzAXOusKqq/vWdKXphTpj5klHKNmRUU6/QRGlBsyU9mAIPaWHlqJA==}
     engines: {node: '>=6.9.0'}
@@ -3387,18 +3384,6 @@ packages:
 
   '@babel/plugin-transform-modules-commonjs@7.29.14':
     resolution: {integrity: sha512-mbv2yy5dqP6e3DbusCx+5AypXkFbyJD/JhG4/XhA+BIADOw5o7W+X0ewSp/h3w7gRL3oR5yny2/K8ljiydj4uA==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-transform-modules-systemjs@7.23.9':
-    resolution: {integrity: sha512-KDlPRM6sLo4o1FkiSlXoAa8edLXFsKKIda779fbLrvmeuc3itnjCtaO6RrtoaANsIJANj+Vk1zqbZIMhkCAHVw==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-transform-modules-systemjs@7.24.1':
-    resolution: {integrity: sha512-mqQ3Zh9vFO1Tpmlt8QPnbwGHzNz3lpNEMxQb1kAemn/erstyqw1r9KeOlOfo3y6xAnFEcOv2tSyrXfmMk+/YZA==}
     engines: {node: '>=6.9.0'}
     peerDependencies:
       '@babel/core': ^7.0.0-0
@@ -23705,10 +23690,6 @@ snapshots:
 
   '@babel/helper-globals@7.29.7': {}
 
-  '@babel/helper-hoist-variables@7.22.5':
-    dependencies:
-      '@babel/types': 7.29.14
-
   '@babel/helper-member-expression-to-functions@7.23.0':
     dependencies:
       '@babel/types': 7.26.0
@@ -24622,26 +24603,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/plugin-transform-modules-systemjs@7.23.9(@babel/core@7.24.0)':
-    dependencies:
-      '@babel/core': 7.24.0
-      '@babel/helper-hoist-variables': 7.22.5
-      '@babel/helper-module-transforms': 7.24.5(@babel/core@7.24.0)
-      '@babel/helper-plugin-utils': 7.25.9
-      '@babel/helper-validator-identifier': 7.25.9
-    transitivePeerDependencies:
-      - supports-color
-
-  '@babel/plugin-transform-modules-systemjs@7.24.1(@babel/core@7.24.0)':
-    dependencies:
-      '@babel/core': 7.24.0
-      '@babel/helper-hoist-variables': 7.22.5
-      '@babel/helper-module-transforms': 7.24.5(@babel/core@7.24.0)
-      '@babel/helper-plugin-utils': 7.25.9
-      '@babel/helper-validator-identifier': 7.29.7
-    transitivePeerDependencies:
-      - supports-color
-
   '@babel/plugin-transform-modules-systemjs@7.29.8(@babel/core@7.24.0)':
     dependencies:
       '@babel/core': 7.24.0
@@ -25218,7 +25179,7 @@ snapshots:
       '@babel/plugin-transform-member-expression-literals': 7.23.3(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-amd': 7.23.3(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-commonjs': 7.23.3(@babel/core@7.24.0)
-      '@babel/plugin-transform-modules-systemjs': 7.23.9(@babel/core@7.24.0)
+      '@babel/plugin-transform-modules-systemjs': 7.29.8(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-umd': 7.23.3(@babel/core@7.24.0)
       '@babel/plugin-transform-named-capturing-groups-regex': 7.22.5(@babel/core@7.24.0)
       '@babel/plugin-transform-new-target': 7.23.3(@babel/core@7.24.0)
@@ -25305,7 +25266,7 @@ snapshots:
       '@babel/plugin-transform-member-expression-literals': 7.24.1(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-amd': 7.24.1(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-commonjs': 7.24.1(@babel/core@7.24.0)
-      '@babel/plugin-transform-modules-systemjs': 7.24.1(@babel/core@7.24.0)
+      '@babel/plugin-transform-modules-systemjs': 7.29.8(@babel/core@7.24.0)
       '@babel/plugin-transform-modules-umd': 7.24.1(@babel/core@7.24.0)
       '@babel/plugin-transform-named-capturing-groups-regex': 7.22.5(@babel/core@7.24.0)
       '@babel/plugin-transform-new-target': 7.24.1(@babel/core@7.24.0)
