@@ -104,6 +104,9 @@ first.
 
 ### Tests
 
+-   First tests of its own for the boot-time secret check (`initAuthSecrets`) and the environment
+    session-pepper provider: both secrets fatal at boot, nothing generated, no value in a log line.
+    22 tests. They also record that the pepper is validated more weakly than the key (I-38, open).
 -   First tests for the encryption keyring (`identity/crypto/keyring.ts`): every start-up refusal,
     environment and key-file sources, rotation, and that no key text reaches an error message or the
     keyring's description. 69 tests.
