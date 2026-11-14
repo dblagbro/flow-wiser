@@ -43,9 +43,11 @@ Each with the reason it was not chosen.
 
 ## Index
 
-| ADR                                        | Title                                            | Status                       |
-| ------------------------------------------ | ------------------------------------------------ | ---------------------------- |
-| [0001](ADR-0001-clean-room-replacement.md) | Clean-room replacement of the licensed subsystem | Accepted                     |
-| [0002](ADR-0002-no-reverse-engineering.md) | No reverse engineering, including via an LLM     | Accepted                     |
-| [0003](ADR-0003-agentic-methodology.md)    | Adopt the agentic development methodology        | Accepted                     |
-| [0004](ADR-0004-node-version-conflict.md)  | Node version conflict                            | **Proposed — needs a human** |
+| ADR                                        | Title                                                                     | Status                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [0001](ADR-0001-clean-room-replacement.md) | Clean-room replacement of the licensed subsystem                          | Accepted                                                           |
+| [0002](ADR-0002-no-reverse-engineering.md) | No reverse engineering, including via an LLM                              | Accepted                                                           |
+| [0003](ADR-0003-agentic-methodology.md)    | Adopt the agentic development methodology                                 | Accepted                                                           |
+| [0004](ADR-0004-node-version-conflict.md)  | Node version conflict                                                     | **Proposed — needs a human**                                       |
+| [0005](ADR-0005-versioning-scheme.md)      | Versioning: plain SemVer on an independent Flow-Wiser line                | Accepted                                                           |
+| [0006](ADR-0006-vault-key-source.md)       | Fetching the master key and session pepper from the Coordinator Hub vault | **Proposed — open questions for the operator and Vault Architect** |
