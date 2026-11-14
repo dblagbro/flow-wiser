@@ -84,12 +84,12 @@ generated per run; every result was discarded, nothing was installed and nothing
 | Flag off                                                        | PASS — disabled                            |
 | Synthetic values with **no** environment key to compare against | **Accepted** — see below                   |
 
-**Finding (I-39).** With no environment key configured, there is nothing to hold the vault's value
-against, and any value of 32 bytes or more that is not a published example is accepted as the master
-key. That is the documented end state working as written, but it means the mirror rule protects a
-deployment only while it keeps its environment key. Before any deployment removes that key it needs
-something else to pin to — the obvious candidate is a configured fingerprint of the expected key,
-which is not secret. Not built; recorded in `docs/ISSUE-REGISTER.md` and put to the Vault Architect.
+**Finding (I-39), since fixed.** With no environment key configured there was nothing to hold the
+vault's value against, and any value of 32 bytes or more that was not a published example was
+accepted as the master key. Ruled the same day (C50 §3) and closed by the expected-key fingerprint
+described under "Turning it on". Re-run after the fix: the same case is refused with
+`fingerprint_required`, and a fingerprint that is not the served value's is refused with
+`key_mismatch` (10 of 10).
 
 ## Third run, the literal revoke — 2026-11-14
 
@@ -109,28 +109,44 @@ The hub side placed one entry in state `revoked` in the fixture namespace. 8 of 
 Off unless `IDENTITY_KEY_SOURCE=vault`. With the flag off no vault setting is read and no request is
 made.
 
-| Variable                              | Meaning                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------ |
-| `IDENTITY_KEY_SOURCE`                 | `vault` turns the path on. Anything else, or unset, is today's behaviour |
-| `IDENTITY_VAULT_URL`                  | Where to send the request, for example an SSH-forwarded loopback port    |
-| `IDENTITY_VAULT_AUTHORITY`            | The hub's canonical authority, a bare `host[:port]` — what gets signed   |
-| `IDENTITY_VAULT_NAMESPACE`            | The namespace holding the two entries                                    |
-| `IDENTITY_VAULT_IDENTITY`             | The enrolled identity name (the signature `keyid`)                       |
-| `IDENTITY_VAULT_IDENTITY_KEY_FILE`    | Ed25519 private key, PEM, mode `0400` or `0600` — refused otherwise      |
-| `IDENTITY_VAULT_MASTER_KEY_ENTRY`     | Entry name, default `master-key`                                         |
-| `IDENTITY_VAULT_SESSION_PEPPER_ENTRY` | Entry name, default `session-pepper`                                     |
-| `IDENTITY_VAULT_PREFIX`               | API prefix, default `/claudeCoordinator/api/v1/vault`                    |
-| `IDENTITY_VAULT_TIMEOUT_MS`           | Request timeout                                                          |
-| `IDENTITY_VAULT_STRICT_REVOKE`        | `true`: an explicit revoke refuses to start. Default off                 |
+| Variable                                | Meaning                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `IDENTITY_KEY_SOURCE`                   | `vault` turns the path on. Anything else, or unset, is today's behaviour                   |
+| `IDENTITY_VAULT_URL`                    | Where to send the request, for example an SSH-forwarded loopback port                      |
+| `IDENTITY_VAULT_AUTHORITY`              | The hub's canonical authority, a bare `host[:port]` — what gets signed                     |
+| `IDENTITY_VAULT_NAMESPACE`              | The namespace holding the two entries                                                      |
+| `IDENTITY_VAULT_IDENTITY`               | The enrolled identity name (the signature `keyid`)                                         |
+| `IDENTITY_VAULT_IDENTITY_KEY_FILE`      | Ed25519 private key, PEM, mode `0400` or `0600` — refused otherwise                        |
+| `IDENTITY_VAULT_MASTER_KEY_ENTRY`       | Entry name, default `master-key`                                                           |
+| `IDENTITY_VAULT_SESSION_PEPPER_ENTRY`   | Entry name, default `session-pepper`                                                       |
+| `IDENTITY_VAULT_PREFIX`                 | API prefix, default `/claudeCoordinator/api/v1/vault`                                      |
+| `IDENTITY_VAULT_TIMEOUT_MS`             | Request timeout                                                                            |
+| `IDENTITY_VAULT_MASTER_KEY_FINGERPRINT` | The expected key's fingerprint, 16 hex characters. Required when no environment key is set |
+| `IDENTITY_VAULT_STRICT_REVOKE`          | `true`: an explicit revoke refuses to start. Default off                                   |
 
 Keep `IDENTITY_ENCRYPTION_KEY` and `FLOWISE_SESSION_PEPPER` set while the vault is on trial. They
 are the fallback, and they are also what the vault's values are checked against: the vault is used
 only when it serves the same key and the same pepper. A boot that did not use the vault says so in
 one line beginning `VAULT NOT USED THIS RUN`, with a code and no secret value.
 
-One thing to know: the mirror check compares against the environment key only when that key loads.
-If the environment key is absent or itself unusable, there is nothing to compare, and a vault key
-that passes the keyring's own gate is accepted.
+### The expected-key fingerprint, and removing the environment key
+
+The vault's key is only ever accepted when it can be shown to be the key this deployment expects.
+While `IDENTITY_ENCRYPTION_KEY` is set, that is a direct comparison. Once it is not, the only thing
+left to compare with is `IDENTITY_VAULT_MASTER_KEY_FINGERPRINT`: the first 16 hex characters of
+SHA-256 over the key, which is not secret and is printed in the boot log on the `encryption keyring`
+line. Without it, the vault's value is refused (`fingerprint_required`); with it, a value that does
+not match is refused (`key_mismatch`). Either way there is then no key to start on, and the server
+refuses to start with both reasons in the log. A fingerprint that is set is checked even while the
+environment key is still there.
+
+**Removing the environment key is a cut-over step and needs the operator's explicit line for that
+deployment** (ruling C50 §3). Set the fingerprint first, see a boot that used the vault, and only
+then remove the key.
+
+The session pepper has no equivalent pin: with no `FLOWISE_SESSION_PEPPER` set, any non-empty vault
+value is accepted. A wrong pepper signs every user out and loses nothing. Whether it should be
+pinned too has been asked and is not decided.
 
 ## The signing profile, as built to
 

@@ -68,6 +68,8 @@ export interface VaultBootDeps {
 }
 
 const DEFAULT_PREFIX = '/claudeCoordinator/api/v1/vault'
+/** The keyring's own fingerprint form: the first 16 hex characters of SHA-256 over the key. */
+const KEY_FINGERPRINT = /^[0-9a-f]{16}$/
 const FORBIDDEN_FILE_MODE_BITS = 0o177
 
 /** The identity key gets the same treatment as a key file: owner-only, or it is not read. */
@@ -180,17 +182,40 @@ export const resolveVaultBootSecrets = async (env: NodeJS.ProcessEnv = process.e
     try {
         envKeyring = loadKeyring(env)
     } catch {
-        envKeyring = undefined // no environment/file key configured: nothing to compare against
+        envKeyring = undefined // no usable environment/file key: nothing of the deployment's own to compare against
     }
+    const theirs = keyring.getActive()
     if (envKeyring) {
         const mine = envKeyring.getActive()
-        const theirs = keyring.getActive()
         if (mine.version !== theirs.version || mine.fingerprint !== theirs.fingerprint) {
             return alarm(
                 'key_mismatch',
                 `the vault master key is not the configured key (v${mine.version}:${mine.fingerprint} here, v${theirs.version}:${theirs.fingerprint} from the vault)`
             )
         }
+    }
+
+    // Ruling C50 §3. A fingerprint is not secret (it is already in the boot log), and it is the only
+    // thing a deployment WITHOUT its own key can hold the vault's value against. So it is required
+    // there, and checked wherever it is configured. Without it the vault's value is not accepted:
+    // any 32 bytes would otherwise become the master key and fail only when a credential is read.
+    const pinned = env.IDENTITY_VAULT_MASTER_KEY_FINGERPRINT
+    if (pinned !== undefined && pinned.trim() !== '') {
+        const expected = pinned.trim().toLowerCase()
+        if (!KEY_FINGERPRINT.test(expected)) {
+            return alarm('vault_misconfigured', 'IDENTITY_VAULT_MASTER_KEY_FINGERPRINT must be 16 hexadecimal characters')
+        }
+        if (expected !== theirs.fingerprint) {
+            return alarm(
+                'key_mismatch',
+                `the vault master key (${theirs.fingerprint}) does not match IDENTITY_VAULT_MASTER_KEY_FINGERPRINT (${expected})`
+            )
+        }
+    } else if (!envKeyring) {
+        return alarm(
+            'fingerprint_required',
+            'no environment or file key is configured to compare the vault master key with, so IDENTITY_VAULT_MASTER_KEY_FINGERPRINT must be set to the expected key fingerprint'
+        )
     }
 
     const parsedPepperVersion = Number.parseInt(env.FLOWISE_SESSION_PEPPER_VERSION ?? '1', 10)

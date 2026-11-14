@@ -10,7 +10,7 @@
  * suites and a live run. Every secret here is generated at run time.
  */
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { FetchBundleInput, FetchBundleResult } from './bundleClient'
@@ -147,9 +147,16 @@ describe('resolveVaultBootSecrets', () => {
             expect(result.keyring.getActive().version).toBe(2)
         })
 
-        it('works with no environment key at all — the intended end state', async () => {
+        it('works with no environment key at all, given the expected fingerprint — the intended end state', async () => {
             const result = await resolveVaultBootSecrets(
-                baseEnv({ IDENTITY_ENCRYPTION_KEY: undefined, FLOWISE_SESSION_PEPPER: undefined }),
+                baseEnv({
+                    IDENTITY_ENCRYPTION_KEY: undefined,
+                    FLOWISE_SESSION_PEPPER: undefined,
+                    IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: createHash('sha256')
+                        .update(Buffer.from(masterKey, 'base64'))
+                        .digest('hex')
+                        .slice(0, 16)
+                }),
                 serving(ok())
             )
             expect(result.status).toBe('vault')
@@ -205,6 +212,79 @@ describe('resolveVaultBootSecrets', () => {
             const result = await resolveVaultBootSecrets(baseEnv(), serving(ok(b)))
             expect(result).toMatchObject({ status: 'fallback', severity: 'alarm', code: 'vault_key_rejected' })
             expect(JSON.stringify(result)).not.toContain('short-canary')
+        })
+    })
+
+    // Ruling C50 §3 (I-39). The mirror check needs something to compare against. Once a deployment
+    // has no key of its own, that something is a configured fingerprint — and without one the
+    // vault's value is not accepted at all.
+    describe('expected-key fingerprint', () => {
+        const fingerprintOf = (key: string) => createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex').slice(0, 16)
+        const noEnvKey = (extra: Record<string, string | undefined> = {}) => baseEnv({ IDENTITY_ENCRYPTION_KEY: undefined, ...extra })
+
+        it('is the fingerprint the keyring already reports for that key', async () => {
+            const result = await resolveVaultBootSecrets(baseEnv(), serving(ok()))
+            if (result.status !== 'vault') throw new Error('expected vault')
+            expect(result.keyring.getActive().fingerprint).toBe(fingerprintOf(masterKey))
+        })
+
+        it('with no environment key, accepts the vault key when the configured fingerprint matches', async () => {
+            const env = noEnvKey({ IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: fingerprintOf(masterKey) })
+            expect((await resolveVaultBootSecrets(env, serving(ok()))).status).toBe('vault')
+        })
+
+        it.each([
+            ['upper case', (f: string) => f.toUpperCase()],
+            ['surrounding whitespace', (f: string) => `  ${f}\n`]
+        ])('accepts the fingerprint written with %s', async (_name, write) => {
+            const env = noEnvKey({ IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: write(fingerprintOf(masterKey)) })
+            expect((await resolveVaultBootSecrets(env, serving(ok()))).status).toBe('vault')
+        })
+
+        // NEGATIVE test: this is the condition found live on 2026-11-14 — no environment key, and
+        // whatever the vault served became the master key.
+        it('with no environment key and no fingerprint, refuses the vault key', async () => {
+            const result = await resolveVaultBootSecrets(noEnvKey(), serving(ok()))
+            expect(result).toMatchObject({ status: 'fallback', severity: 'alarm', code: 'fingerprint_required' })
+            expect((result as { detail: string }).detail).toContain('IDENTITY_VAULT_MASTER_KEY_FINGERPRINT')
+            expect(result).not.toHaveProperty('keyring')
+        })
+
+        it('with no environment key, refuses a vault key whose fingerprint is not the configured one', async () => {
+            const env = noEnvKey({ IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: fingerprintOf(randomBytes(32).toString('base64')) })
+            const result = await resolveVaultBootSecrets(env, serving(ok()))
+            expect(result).toMatchObject({ status: 'fallback', severity: 'alarm', code: 'key_mismatch' })
+            expect(JSON.stringify(result)).not.toContain(masterKey)
+        })
+
+        it('still checks the fingerprint when an environment key is configured and agrees with the vault', async () => {
+            const wrong = fingerprintOf(randomBytes(32).toString('base64'))
+            const result = await resolveVaultBootSecrets(baseEnv({ IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: wrong }), serving(ok()))
+            expect(result).toMatchObject({ status: 'fallback', severity: 'alarm', code: 'key_mismatch' })
+        })
+
+        it('does not require a fingerprint while an environment key is configured', async () => {
+            expect((await resolveVaultBootSecrets(baseEnv(), serving(ok()))).status).toBe('vault')
+        })
+
+        it.each(['', '   ', 'abc', 'zzzzzzzzzzzzzzzz', '0123456789abcdef0', '0123456789abcde'])(
+            'treats the malformed fingerprint %j as a misconfiguration, not as absent',
+            async (value) => {
+                const result = await resolveVaultBootSecrets(noEnvKey({ IDENTITY_VAULT_MASTER_KEY_FINGERPRINT: value }), serving(ok()))
+                expect(result).toMatchObject({ status: 'fallback', severity: 'alarm' })
+                expect(['fingerprint_required', 'vault_misconfigured']).toContain((result as { code: string }).code)
+                if (value.trim() !== '') expect((result as { code: string }).code).toBe('vault_misconfigured')
+            }
+        )
+
+        it('an environment key that is present but unusable does not waive the fingerprint', async () => {
+            const result = await resolveVaultBootSecrets(baseEnv({ IDENTITY_ENCRYPTION_KEY: 'too-short' }), serving(ok()))
+            expect(result).toMatchObject({ status: 'fallback', severity: 'alarm', code: 'fingerprint_required' })
+        })
+
+        it('is not strict mode: a missing fingerprint never throws, even with strict revoke on', async () => {
+            const result = await resolveVaultBootSecrets(noEnvKey({ IDENTITY_VAULT_STRICT_REVOKE: 'true' }), serving(ok()))
+            expect(result).toMatchObject({ status: 'fallback', code: 'fingerprint_required' })
         })
     })
 
