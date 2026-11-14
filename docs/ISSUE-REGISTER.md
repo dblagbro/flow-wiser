@@ -182,7 +182,7 @@ whenever a flow had at least `limit` versions, and `limit` is caller-supplied.
 **Fix:** `history()` returns only the first `limit` entries, and nothing for a non-positive limit.
 **Verification:** negative test interleaving two flows' saves and asserting, for six limits, that the
 result is exactly the caller's own commits; failed before the fix, passes after.
-**Still open:** I-08 (the walk is O(all commits)) is unchanged.
+I-08 (the walk is O(all commits)) was fixed separately on 2026-11-14.
 
 ### I-35 · Prompt-focused diff returned hunks with no changes in them — FIXED 2026-11-13
 
