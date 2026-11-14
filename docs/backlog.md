@@ -171,6 +171,13 @@ initialization`), so it cannot be shown failing before and passing after without
 -   **#6529** (keep starter prompts on export) widens what a flow export carries to include
     `isPublic`, `apiConfig` and `analytic`. Importing a flow that arrives already marked public is
     a security question, and the patch ships no test.
+-   **#6375** (file loaders: detect an overridden file from the upsert API) changes the override
+    permission check, treating any `…File` input as covered by the existing `files` permission.
+    That list is the control an operator uses to say what an API caller may override, and the patch
+    widens it. It needs a security review, and it ships no test.
+-   **#6441** (markdown tables in the rich text input) adds a dependency to the UI package, changes
+    the lockfile and rewrites how the editor serialises tables. It needs a browser check, and a
+    dependency change now has to go through both lines (SEC-DEP-02).
 -   **#6521** and **#6630** no longer apply after the fixes above.
 
 **How a patch is adopted** (the method used for everything above): read the diff for behaviour and
