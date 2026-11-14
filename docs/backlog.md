@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                                      |
-| Acted on             | **22** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353, #6373 (2026-11-14) |
-| Never reviewed       | **325**                                                                                                                                                                                                             |
-| Archived open issues | 698                                                                                                                                                                                                                 |
+|                      |                                                                                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                                             |
+| Acted on             | **23** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353, #6373, #6478 (2026-11-14) |
+| Never reviewed       | **324**                                                                                                                                                                                                                    |
+| Archived open issues | 698                                                                                                                                                                                                                        |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -139,7 +139,10 @@ retypes the tool's configuration object and does not compile against the install
 shown failing against the unpatched source. #6373 (Bedrock cached a failed inference-profile lookup
 for the life of the process) followed, again with a test written here because the patch had none.
 Its cost is stated: a region whose lookup keeps failing, or that genuinely has no profiles, is now
-asked on every model initialisation instead of once.
+asked on every model initialisation instead of once. #6478 (a node's live client was deep-copied before a flow ran,
+which broke the OpenAI SDK's private state) was adopted next, all five commits of its series. It
+shipped no test; the one written here fails on the unpatched source with the exact error the patch
+describes.
 
 **Examined and not adopted as they stand** — each applies cleanly, but:
 
