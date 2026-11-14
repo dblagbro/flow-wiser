@@ -37,6 +37,14 @@ first.
     reports `http` behind a TLS-terminating proxy. The server logs a warning at boot naming the
     setting. `TRUST_PROXY=true` still works and is also warned about.
 
+### Security
+
+-   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
+    whole request body to the execution row, so a user who could update an execution could also
+    set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.
+    Only `isPublic` — the one field the UI sends — is writable now. Fix and regression test by
+    **tonghuaroot**, adopted from upstream pull request #6416 with authorship preserved.
+
 ### Fixed
 
 -   **Flow history could include another flow's commit.** When a history request was cut off by its

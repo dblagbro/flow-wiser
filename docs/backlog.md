@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                      |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                       |
-| Acted on             | **3** — #6682, #6683 (CVEs, author `anupamme` preserved as commit author), #6706 (`connect-sqlite3`) |
-| Never reviewed       | **344**                                                                                              |
-| Archived open issues | 698                                                                                                  |
+|                      |                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                               |
+| Acted on             | **7** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416 (2026-11-13) |
+| Never reviewed       | **340**                                                                                      |
+| Archived open issues | 698                                                                                          |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -122,14 +122,27 @@ and tested them.
 Age skews recent — 73 from 2026-06, 56 from 2026-07 — so most were written against a tree close to
 the fork point and should still apply cleanly.
 
-**Start here — the 3 unadopted security PRs:**
+**Progress.** The three security PRs first listed here — #6672, #5371, #5255 — were adopted in
+pull request #26. #6416 (mass assignment on the execution update endpoint, GHSA-v2cc-6h2j-w847) was
+adopted on 2026-11-13.
 
--   **#6672** — apply min/max modifiers to `ZodNumber` in `secureZodParser`
--   **#5371** — improvements to `SecureZodSchemaParser`
--   **#5255** — override vulnerable dependencies (`sha.js`, Babel helpers/runtime)
+**Triage of what remains, 2026-11-13** — every archived patch checked with `git apply --check`
+against `apache2-only`:
 
-`docs/ADVISORY-SWEEP.md` covered the 116 published advisories; these are contributor-authored
-hardening that the sweep would not have caught.
+| Result                                                            | Patches |
+| ----------------------------------------------------------------- | ------- |
+| Applies cleanly                                                   | 192     |
+| Conflicts (needs a manual port)                                   | 140     |
+| Touches a licensed path — permanently incomplete, see Constraints | 15      |
+| Already in the tree                                               | 3       |
+
+Of the 192 that apply cleanly, 79 are titled as fixes, 93 as features, and 20 are docs, chores or
+unlabelled. "Applies" means the diff fits, nothing more: each still needs reading, a test and a
+build. The clean-applying fixes that touch one or two files are the cheapest next batch; going by
+title alone, the server-side correctness and safety candidates are #6552 and #6560 (credential kept on
+document-store loader update), #6635 (honour telemetry opt-out), #6532 (condition node ignores
+only the first edge), #6301 (chat-message pagination), #6478 (do not deep-clone live node
+instances) and #6669 (direct variable names in `overrideConfig`).
 
 **Constraints:**
 

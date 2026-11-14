@@ -70,10 +70,11 @@ refusal.** See `packages/server/test/security/negative-controls.test.ts`.
 The table above is the fw8 point-in-time record. These two were found on `apache2-only` at 4.0.1 and
 are tracked in full in `ISSUE-REGISTER.md`.
 
-| ID   | Finding                                                                                   | Severity | Status                                  |
-| ---- | ----------------------------------------------------------------------------------------- | -------- | --------------------------------------- |
-| I-34 | Flow history could include a commit belonging to a different flow when cut off by `limit` | MEDIUM   | FIXED on `apache2-only`; `main` pending |
-| I-35 | Prompt-focused diff returned hunks containing no changes                                  | LOW      | FIXED on `apache2-only`                 |
+| ID                  | Finding                                                                                   | Severity | Status                                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| I-34                | Flow history could include a commit belonging to a different flow when cut off by `limit` | MEDIUM   | FIXED on `apache2-only`; `main` pending                                                                                |
+| I-35                | Prompt-focused diff returned hunks containing no changes                                  | LOW      | FIXED on `apache2-only`                                                                                                |
+| GHSA-v2cc-6h2j-w847 | `PUT /executions/:id` applied the whole request body to the row (mass assignment)         | HIGH     | FIXED 2026-11-13 — upstream #6416 by tonghuaroot, adopted with its regression test (5 of 9 tests fail without the fix) |
 
 Severity for I-34 is on demonstrated impact: commit subject and author identity of another flow's
 save, reproduced in a test; flow content was not reachable by this path.
