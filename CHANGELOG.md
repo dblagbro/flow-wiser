@@ -45,6 +45,8 @@ first.
     brings in, among others, axios 1.20.0, multer 2.5.0, vm2 3.12.2, sanitize-html 2.18, dompurify
     3.4.17, the MCP SDK 1.32.0, vite 6 and 39 security overrides. See SEC-DEP-02 in
     `docs/bug-log.md`.
+-   **`@babel/helpers` 7.29.14 and a bounded floor under `@babel/runtime` and `sha.js`**, restored
+    after the levelling above and now identical on both lines.
 -   **Dependency security updates, first sweep.** Eleven packages moved to patched releases within
     their current major version, by override: hono, @hono/node-server, fast-uri, colord,
     http-proxy-middleware, protobufjs, micromatch, mdast-util-to-hast, postcss-selector-parser,

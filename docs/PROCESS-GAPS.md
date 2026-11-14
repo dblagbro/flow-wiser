@@ -49,7 +49,7 @@ project history — and **failed**, emitting no `::error::` at all.
 **Root cause.** CI runs steps under `bash -e`, and the script sets `-o pipefail`.
 `find packages/server/src/enterprise ... | wc -l` returns non-zero when the directory is **absent**,
 which fails the command substitution, which aborts the step before any check executes. The guard
-therefore failed *precisely because the commercially licensed directory no longer exists*.
+therefore failed _precisely because the commercially licensed directory no longer exists_.
 
 My local regression test passed because I ran the logic in a plain interactive shell, without
 `-e` and without `pipefail`. **The logic was right; the environment was not reproduced.**
@@ -89,7 +89,7 @@ for everything**. BusyBox `grep` had silently no-op'd on `-I` and `apk add grep`
 **Root cause.** Absence of evidence read as evidence of absence.
 
 **Prevention.** Every "we searched and found nothing" result must carry a positive control that
-*did* fire. Adopted as standing practice.
+_did_ fire. Adopted as standing practice.
 
 ---
 
@@ -97,13 +97,13 @@ for everything**. BusyBox `grep` had silently no-op'd on `-I` and `apk add grep`
 
 Three instances, all found only by running the system:
 
-| Defect | Why review missed it |
-|---|---|
-| `mustChangePassword` never cleared by any code path — fresh install **bricked** | Every component was individually correct; only the end-to-end first login exposed the missing exit |
-| `BootstrapService` had **zero callers** — six-role hierarchy never seeded, `FLOWISE_BOOTSTRAP_*` inert | The class was complete, documented, and tested-looking. Nothing imported it. |
-| `type: 'timestamp'` invalid on SQLite — after "fixing" `datetime`, which is invalid on Postgres | Migrations emit correct per-engine SQL, so migration testing passed; only entity metadata at real boot exercised it |
+| Defect                                                                                                 | Why review missed it                                                                                                |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `mustChangePassword` never cleared by any code path — fresh install **bricked**                        | Every component was individually correct; only the end-to-end first login exposed the missing exit                  |
+| `BootstrapService` had **zero callers** — six-role hierarchy never seeded, `FLOWISE_BOOTSTRAP_*` inert | The class was complete, documented, and tested-looking. Nothing imported it.                                        |
+| `type: 'timestamp'` invalid on SQLite — after "fixing" `datetime`, which is invalid on Postgres        | Migrations emit correct per-engine SQL, so migration testing passed; only entity metadata at real boot exercised it |
 
-**Root cause.** Reading verifies *shape*. Only execution verifies *reachability*.
+**Root cause.** Reading verifies _shape_. Only execution verifies _reachability_.
 
 **Prevention.** For any new subsystem, one acceptance criterion must be an executed path from the
 real entry point — not a unit test with injected dependencies. Note that `BootstrapService`'s unit
@@ -131,7 +131,7 @@ write — has **zero** tests. The recovery CLI's tests exist but are inert.
 into 30 loud failures without making them pass. Recorded as a first-milestone task.
 
 **Prevention.** CI must fail on **suite-load failures**, not only on assertion failures. Track
-*suite count* as a metric, not just test count.
+_suite count_ as a metric, not just test count.
 
 ---
 
@@ -142,8 +142,8 @@ once by a delegated agent that had cloned minutes before my push, so its report 
 branch") was accurate at clone time and stale on delivery. Same for the `getRunningExpressApp`
 DataSource fix. Two merge conflicts and a duplicate `AUTH_PASSWORD_CHANGE` enum entry followed.
 
-**Root cause.** Delegation briefs described work to be *done* without a commit SHA establishing what
-already *existed*.
+**Root cause.** Delegation briefs described work to be _done_ without a commit SHA establishing what
+already _existed_.
 
 **Prevention.** Every delegation brief states the base SHA and the agent re-fetches before starting.
 Do not delegate work adjacent to something being actively edited.
@@ -178,13 +178,13 @@ existing image's test suite over a rebuild when only test config changed.
 
 ## What worked, and should be kept
 
-- **Adversarial verification by a second agent** found the security bug, the bricked install, and
-  the licensing leak. Every one was invisible to inspection.
-- **Agents reporting what they did NOT fix** — each delegation returned an explicit "broken but out
-  of scope" list, which is where several of these findings originated.
-- **Fatal-by-design startup.** Making `initDatabase` rethrow turned a confusing half-started server
-  into an immediate, named failure, and caught the DataSource bug instantly.
-- **Positive controls** (G3), now standing practice.
+-   **Adversarial verification by a second agent** found the security bug, the bricked install, and
+    the licensing leak. Every one was invisible to inspection.
+-   **Agents reporting what they did NOT fix** — each delegation returned an explicit "broken but out
+    of scope" list, which is where several of these findings originated.
+-   **Fatal-by-design startup.** Making `initDatabase` rethrow turned a confusing half-started server
+    into an immediate, named failure, and caught the DataSource bug instantly.
+-   **Positive controls** (G3), now standing practice.
 
 ---
 
@@ -197,7 +197,7 @@ work added `isomorphic-git@^1.27.1` to `packages/server/package.json` and never 
 across that window, including two that were handed to an external assessment team.
 
 **Why it went unnoticed.** The signal existed and was ignored. Node CI reported failure on all ten
-intervening runs. I was reading the clean-room guard, which was green, and treating that as *the*
+intervening runs. I was reading the clean-room guard, which was green, and treating that as _the_
 gate because it was the one I had written and cared about. A workflow I did not author became
 background noise.
 
@@ -208,8 +208,8 @@ day-to-day and most when someone else tries to build the project.
 
 **Why this is the same shape as G1b.** In G1b the clean-room guard passed for a reason unrelated to
 the thing it was supposed to check. Here a red gate was disregarded for a reason unrelated to what it
-was reporting. Both are the same error: treating a check's *status* as information about the
-*project* rather than about the check. A gate is only worth having if a red one stops something.
+was reporting. Both are the same error: treating a check's _status_ as information about the
+_project_ rather than about the check. A gate is only worth having if a red one stops something.
 
 **What it cost.** Nothing in production, by luck rather than design. But "the published source does
 not install from its own lockfile" is a bad property for a fork whose entire pitch is that it is a
@@ -240,7 +240,7 @@ them changed nothing observable:
 
 1. `pnpm install --frozen-lockfile` failed (G9), so jest never started.
 2. A pnpm override forced an ESM-only `@tootallnate/once` into a CJS require chain, so the suite
-   failed to *parse* — reported as "Test suite failed to run", which reads like an environment
+   failed to _parse_ — reported as "Test suite failed to run", which reads like an environment
    grumble rather than 30 missing tests.
 3. `jest.config.js` mapped `typeorm` to a decorator mock for every file, so the suite's real
    `DataSource` was a stub without `initialize()`. Every test would have died on its first fixture
@@ -255,13 +255,13 @@ asking a human to remember something, which is not a control. Written-down knowl
 disabled reads, at a glance, exactly like a check that is enabled.
 
 **What it hid.** Once the suite ran, five assertions failed — all of them encoding schema defects
-that `1780000000012-AddTenancyColumnsToCoreTables` had since *repaired* (the dangling
+that `1780000000012-AddTenancyColumnsToCoreTables` had since _repaired_ (the dangling
 `chat_flow → workspace` foreign key, and nine tables missing `workspaceId`). So the tests were not
 merely absent; they had silently drifted into asserting a broken state as correct. Had they run at
 the time, they would have failed the moment that migration landed and forced the question then.
 
 **Also wrong, and worth naming separately:** the `@tootallnate/once` override was incorrect on its own
-terms. The advisory it exists for (GHSA-vpq2-c234-7xj6) patches *two* release lines, 2.0.1 and 3.0.1;
+terms. The advisory it exists for (GHSA-vpq2-c234-7xj6) patches _two_ release lines, 2.0.1 and 3.0.1;
 the override jumped to `>=3.0.1`, an ESM-only major that neither consumer
 (`http-proxy-agent@4`, `@5`, which declare `1` and `2`) was written against. `>=2.0.1 <3` satisfies
 the advisory and stays CJS. A security pin that breaks the build is a security pin that gets worked
@@ -297,10 +297,10 @@ that has been red for a while is not one bug, and "I fixed the failure" is not t
 
 Both gaps ended with "fix still needed", which is a note to nobody. These are the mechanisms.
 
-| Gap | Was | Now |
-|---|---|---|
+| Gap                          | Was            | Now                                                                                                                                                    |
+| ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | G9 · released on a red build | nothing looked | branch protection on `main` (required: `guard`, `build (ubuntu-latest, …)`, `enforce_admins` ON, force-push and deletion blocked) + `release-gate.yml` |
-| G10 · a suite that never ran | nothing looked | `scripts/assert-test-discovery.js`, run inside Node CI |
+| G10 · a suite that never ran | nothing looked | `scripts/assert-test-discovery.js`, run inside Node CI                                                                                                 |
 
 **`release-gate.yml` — honest about its limits.** It cannot stop a tag being created: Actions runs
 after the ref is written and a hosted repository has no pre-receive hook. What it does is attach a
@@ -333,15 +333,15 @@ which is a receipt, not a gate.
 
 Written down because a control nobody has watched fail is a control nobody has tested.
 
-- **`release-gate.yml`, both directions.** Dispatched against a commit whose CI was green
-  (`3fea7f17`) and one whose CI was red (`67f4ab89`). Run 31339550626 passed; run 31339559213
-  failed with `Commit 67f4ab89… did not pass CI`. Failing for the right reason, not merely failing.
-- **`assert-test-discovery.js`.** Reproducing the G10 condition makes it exit 1 and name
-  `packages/server/test/identity/recovery-cli.test.ts`. Confirmed running inside Node CI on
-  `c5bfae0b`: 155 discovered / 155 on disk across five packages.
-- **`enforce_admins`.** `git push --dry-run` is NOT a test of this — it reported success against a
-  protected branch. Dry-run does not evaluate protection rules, so anyone using it to confirm a
-  branch is protected will get a false all-clear.
+-   **`release-gate.yml`, both directions.** Dispatched against a commit whose CI was green
+    (`3fea7f17`) and one whose CI was red (`67f4ab89`). Run 31339550626 passed; run 31339559213
+    failed with `Commit 67f4ab89… did not pass CI`. Failing for the right reason, not merely failing.
+-   **`assert-test-discovery.js`.** Reproducing the G10 condition makes it exit 1 and name
+    `packages/server/test/identity/recovery-cli.test.ts`. Confirmed running inside Node CI on
+    `c5bfae0b`: 155 discovered / 155 on disk across five packages.
+-   **`enforce_admins`.** `git push --dry-run` is NOT a test of this — it reported success against a
+    protected branch. Dry-run does not evaluate protection rules, so anyone using it to confirm a
+    branch is protected will get a false all-clear.
 
 ---
 
@@ -370,11 +370,12 @@ verification that cannot distinguish the two outcomes is not a verification, and
 either way. Testing an IP-based control from an allowed IP is the clearest possible instance.
 
 **Fixes.**
-- `docker restart nginx` after editing a file bind mount. A reload is not enough, because reload
-  re-reads a path the kernel has already bound to the wrong inode.
-- Verify with `nginx -T | grep`, never with `nginx -t`. The first reports what is running; the
-  second only reports that a file parses.
-- Verify a network-scoped control from outside that network, or do not claim it is verified.
+
+-   `docker restart nginx` after editing a file bind mount. A reload is not enough, because reload
+    re-reads a path the kernel has already bound to the wrong inode.
+-   Verify with `nginx -T | grep`, never with `nginx -t`. The first reports what is running; the
+    second only reports that a file parses.
+-   Verify a network-scoped control from outside that network, or do not claim it is verified.
 
 **Still open.** Nothing detects edge drift. The container can be stale for days with every local
 signal green. A periodic diff of `nginx -T` against the file on disk would close it; it does not
@@ -390,14 +391,14 @@ but not `.github/workflows/**`, so a PR adding `if: false` to the guard job woul
 — and `skipped` satisfied both branch protection and the release gate.
 
 **What I did, and why it was wrong.** I added `.github/workflows/` to that regex. It blocked the
-next workflow edit — which was my own — with the message *"Clean-room violation: commercially
-licensed files were modified."*
+next workflow edit — which was my own — with the message _"Clean-room violation: commercially
+licensed files were modified."_
 
 Two different concerns got the same mechanism:
 
-  1. **Licensing.** Do not MODIFY commercially licensed files. Deletion is fine; deletion is the
-     goal. This is what that regex and that error message are for.
-  2. **Guard integrity.** Do not let a change disable the check that polices changes.
+1. **Licensing.** Do not MODIFY commercially licensed files. Deletion is fine; deletion is the
+   goal. This is what that regex and that error message are for.
+2. **Guard integrity.** Do not let a change disable the check that polices changes.
 
 `.github/workflows/**` is not commercially licensed, so the message was false. And the rule is
 absolute where the real requirement is "may change, with review" — workflow maintenance is normal
@@ -470,3 +471,34 @@ tag cut before the fix — the old, broken gate kept running and kept re-draftin
 had to carry its own fix. Anyone debugging a release-event workflow and wondering why their change
 has no effect should start there.
 
+## G14 · One line got three months of dependency fixes and the other got none
+
+**What happened.** The project keeps two long-lived lines: `main`, the deployable one, and
+`apache2-only`, the Apache-2.0 continuation. Between 2026-08 and 2026-11 about twenty dependency
+commits landed on `main` — Dependabot's pull requests and several hand-made override sweeps. None
+was carried to `apache2-only`. By 2026-11-14 `main` had 39 security overrides the other line lacked,
+stricter versions for 21 more, and newer direct dependencies including axios, multer, vm2,
+sanitize-html, dompurify and vite.
+
+**Why nothing noticed.** Dependabot watches the default branch and nothing else, and GitHub's
+alert count describes the default branch and nothing else. So the number everyone looked at was
+`main`'s, it went down as `main` was fixed, and it said nothing at all about the line the project
+intends to continue on. Every other change in this period was ported between the lines by hand, as
+a habit; dependency changes arrived by a different route and the habit never covered them.
+
+**It ran both ways.** `apache2-only` had three overrides of its own that `main` never received, so
+`main` was running `@babel/helpers` and `@babel/runtime` 7.24.0 with patched releases available.
+
+**How it was found.** By accident: while porting a small override change, one package resolved to a
+different version on each line, and comparing the two override lists explained why.
+
+**Fixed 2026-11-14** by making the lines identical — same dependency sections, same overrides, the
+same lockfile byte for byte — rather than by re-resolving, which pulled in versions neither line had
+vetted. See SEC-DEP-02 in `bug-log.md`.
+
+**What does not exist yet.** A control. `scripts/report-dependency-drift.js` reports every place
+the two lines differ, and has been seen passing on identical trees, failing on the pre-fix tree and
+refusing an unreadable ref. But it is not run by anything. Wiring it into CI as a per-pull-request
+gate would be wrong — a change always reaches one line first — so where it runs (on a schedule, or
+as a release gate) is a decision still to be made. Until then this gap is closed by a habit, which
+is what failed.
