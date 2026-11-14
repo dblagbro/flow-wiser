@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                        |
-| Acted on             | **20** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615 (2026-11-14) |
-| Never reviewed       | **327**                                                                                                                                                                                               |
-| Archived open issues | 698                                                                                                                                                                                                   |
+|                      |                                                                                                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                               |
+| Acted on             | **21** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353 (2026-11-14) |
+| Never reviewed       | **326**                                                                                                                                                                                                      |
+| Archived open issues | 698                                                                                                                                                                                                          |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -132,7 +132,11 @@ skipped: its series is a change followed by its own revert. #6561 (S3 folder mar
 timeout), #6601 (Redis metadata escaping) and #6689 (Google Drive loader paging and subfolders). #6482 (UI: guard a missing Axios `error.response`) was adopted in preference to
 #6467, which fixes the same thing. #6615 (resolving one human-approval prompt cleared another) was adopted on 2026-11-14, after
 confirming that both kinds of pending action carry the node id it matches on and that the resume
-request always has one by the time the match runs.
+request always has one by the time the match runs. #6353 (the Tavily tool passed its API key under a name
+the library ignores) was adopted the same day, **first commit only**: the series' second commit
+retypes the tool's configuration object and does not compile against the installed
+`@langchain/tavily` 1.2.0 (four type errors). The patch shipped no test; one was written here and
+shown failing against the unpatched source.
 
 **Examined and not adopted as they stand** — each applies cleanly, but:
 
@@ -148,6 +152,9 @@ request always has one by the time the match runs.
     fails to load under this project's Jest setup (`Cannot access 'storageCtorMock' before
 initialization`), so it cannot be shown failing before and passing after without rewriting the
     author's test.
+-   **#6594** (free-solo dropdown values) changes the two shared dropdown components used across
+    the canvas. It ships tests for its helper functions only; the component behaviour needs a
+    browser check before it is adopted, and the UI is meant to stay close to upstream.
 -   **#6521** and **#6630** no longer apply after the fixes above.
 
 **How a patch is adopted** (the method used for everything above): read the diff for behaviour and

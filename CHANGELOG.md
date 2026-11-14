@@ -65,6 +65,10 @@ first.
 
 ### Fixed
 
+-   **The Tavily tool ignored the API key saved in its credential.** It passed the key under a name
+    the Tavily library does not read, so searches used the server's `TAVILY_API_KEY` environment
+    variable if there was one and failed otherwise. Fix by **Asim**, adopted from upstream pull
+    request #6353 with authorship preserved; regression test added here.
 -   **Answering one human-approval prompt cleared a different one.** In an agent flow with more
     than one Proceed/Reject step waiting at once, resolving one removed the buttons from whichever
     message was newest. The server and the chat window now match the prompt by the step it belongs
