@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Assert that every declaration of the Node version agrees, and that the three
+ * Assert that every declaration of the Node version agrees, and that the four
  * secret-ignore lists stay in step.
  *
  * Why this exists
@@ -18,7 +18,8 @@
  * The second half, the ignore lists, comes from RM-16: `pnpm lint` globbed `**\/*.json`,
  * matched a production credential export, and ESLint opened it — stopped only by a
  * root-owned 0600 file mode. `.gitignore` protects git and nothing else. Every tool that
- * walks the tree needs its own exclusion, and three separate lists now have to agree.
+ * walks the tree needs its own exclusion, and four separate lists now have to agree
+ * (`.dockerignore` joined them when `COPY . .` turned out to be one more reader).
  * Nothing enforced that either.
  *
  * Usage:  node scripts/assert-version-parity.js
@@ -108,23 +109,52 @@ if (pinnedVersions.length > 1) {
 
 // Patterns that must be excluded from git AND from every tool that walks the tree.
 // Spelling differs per tool, so match on a distinctive substring rather than a literal.
-const SECRET_MARKERS = ['credentials-backup', 'sqlite', 'pem', 'key']
+//
+// Each marker is matched against the list's PATTERNS only — comments stripped, and for
+// `.eslintrc.js` only the strings inside `ignorePatterns`. Matching the whole file let prose
+// stand in for a pattern: `key` was satisfied by any comment or rule containing those three
+// letters, so deleting `**/*.key` from a list went unnoticed. And `secrets-sealed` and `.env`
+// were not markers at all, so dropping either from one list passed (found 2026-11-13).
+const SECRET_MARKERS = ['credentials-backup', 'secrets-sealed', '.sqlite', '.pem', '.key', '.env']
 
-const lists = {
-    '.gitignore': exists('.gitignore') ? read('.gitignore') : null,
-    '.prettierignore': exists('.prettierignore') ? read('.prettierignore') : null,
-    '.eslintrc.js (ignorePatterns)': exists('.eslintrc.js') ? read('.eslintrc.js') : null
+/** Non-comment, non-negated lines of a gitignore-syntax file. */
+const ignoreFilePatterns = (p) =>
+    read(p)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith('#') && !line.startsWith('!'))
+
+/** The string literals inside `ignorePatterns: [ … ]`, with `//` comments removed first. */
+const eslintIgnorePatterns = (p) => {
+    const match = /ignorePatterns\s*:\s*\[([\s\S]*?)\]/.exec(read(p))
+    if (!match) return null
+    const body = match[1].replace(/^\s*\/\/.*$/gm, '')
+    return [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2])
 }
 
-for (const [name, body] of Object.entries(lists)) {
-    if (body === null) {
+const lists = {
+    '.gitignore': exists('.gitignore') ? ignoreFilePatterns('.gitignore') : null,
+    '.prettierignore': exists('.prettierignore') ? ignoreFilePatterns('.prettierignore') : null,
+    '.dockerignore': exists('.dockerignore') ? ignoreFilePatterns('.dockerignore') : null,
+    '.eslintrc.js (ignorePatterns)': exists('.eslintrc.js') ? eslintIgnorePatterns('.eslintrc.js') : null
+}
+
+for (const [name, patterns] of Object.entries(lists)) {
+    if (patterns === null) {
         fail(`${name}: missing — secret patterns cannot be enforced for that tool`)
         continue
     }
     for (const marker of SECRET_MARKERS) {
-        if (!body.includes(marker)) {
-            fail(`${name}: no pattern mentioning "${marker}" — see RM-16, all three lists must agree`)
-        }
+        // `.key` must not be satisfied by `.keys`/`.keystore`, nor `.env` by `.environment`:
+        // the marker has to end the pattern or be followed by a glob/separator character.
+        const present = patterns.some((pattern) => {
+            const at = pattern.indexOf(marker)
+            if (at === -1) return false
+            if (!marker.startsWith('.')) return true
+            const next = pattern[at + marker.length]
+            return next === undefined || !/[a-z0-9]/i.test(next)
+        })
+        if (!present) fail(`${name}: no pattern covering "${marker}" — see RM-16, all ${Object.keys(lists).length} lists must agree`)
     }
 }
 
