@@ -86,6 +86,12 @@ first.
 
 ### Fixed
 
+-   **Chatflows using OpenAI embeddings failed with a 500.** Before a flow runs, each node's data is
+    deep-copied, and that copy included the node's already-built client. A copied client has none of
+    its private state, so the OpenAI SDK threw "Cannot read private member from an object whose
+    class did not declare it". The live object is now left out of the copy and the original is
+    re-attached. Fix by **Darien Kindlund**, adopted from upstream pull request #6478 with
+    authorship preserved; regression test added here.
 -   **AWS Bedrock stopped applying inference profiles after one failed lookup.** The list of
     inference profiles for a region was cached even when the lookup failed or came back empty, so a
     single failure — typically credentials not ready at startup — left models that need a
