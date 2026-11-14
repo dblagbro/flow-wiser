@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                                                    |
-| Acted on             | **24** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353, #6373, #6478, #6491 (2026-11-14) |
-| Never reviewed       | **323**                                                                                                                                                                                                                           |
-| Archived open issues | 698                                                                                                                                                                                                                               |
+|                      |                                                                                                                                                                                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                                                           |
+| Acted on             | **25** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353, #6373, #6478, #6491, #6530 (2026-11-14) |
+| Never reviewed       | **322**                                                                                                                                                                                                                                  |
+| Archived open issues | 698                                                                                                                                                                                                                                      |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -144,7 +144,10 @@ which broke the OpenAI SDK's private state) was adopted next, all five commits o
 shipped no test; the one written here fails on the unpatched source with the exact error the patch
 describes. #6491 (the Document Store vector node did not offer the `VectorStoreRetriever`
 type its 22 sibling nodes do) followed, with a test written here. It bumps that canvas node's own
-version from 1.0 to 1.1 — the node's version, not the runtime's (BL-02).
+version from 1.0 to 1.1 — the node's version, not the runtime's (BL-02). #6530 (OpenAI embeddings requested as base64 reached the vector
+store undecoded) was adopted after confirming in the installed OpenAI SDK that it decodes base64
+only when it chose that format itself. Test written here: six of ten cases fail on the unpatched
+nodes.
 
 **Examined and not adopted as they stand** — each applies cleanly, but:
 
