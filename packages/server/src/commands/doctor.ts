@@ -34,9 +34,11 @@ import { RecoveryAuditAction, RecoveryCommand, RecoveryContext, buildRecoveryDat
  * 3. **Orphaned tenant keys.** MIGRATION §3a: "`resource.organizationId` must always equal
  *    `workspace.organizationId` for its workspace. Enforced at write time, and verified by
  *    `flowise doctor` (§7), which reports any row whose tenant key disagrees with its
- *    workspace." A row whose denormalised tenant key has drifted is invisible to the UI and is
- *    served to the WRONG TENANT by any query that filters on organization alone — the exact breach
- *    the denormalisation was introduced to make impossible.
+ *    workspace." No content query filters on organization alone today — each scopes by workspace
+ *    (I-02's severity note) — so a drifted key is not a live breach. It is the loss of the safety
+ *    net: any query that DID filter on organization alone would place that row in the wrong tenant,
+ *    which is the breach the denormalisation was introduced to make impossible. The finding says
+ *    exactly that, and no more (I-13).
  *
  * 4. **Credentials referenced by a flow but missing.** Deleting a credential in the UI does not
  *    check whether any flow uses it and does not warn. One deletion orphaned 37 references across
@@ -660,7 +662,8 @@ const checkTenantKeys = async (queryRunner: QueryRunner, dataSource: DataSource)
             summary: `${orphanCount} row(s) carry a tenant key that disagrees with their workspace (MIGRATION §3a).`,
             details: [
                 ...details,
-                'Each of these is served to the wrong tenant by any query that filters on organization alone. Re-stamp them, transactionally.'
+                'No query in this build filters content on organizationId alone — every content query scopes by workspace — so these rows are not being served to another tenant today.',
+                'They do mean the §3a safety net is not holding: a query that did filter on organization alone would place them in the wrong tenant. Re-stamp them, transactionally.'
             ]
         }
     }
