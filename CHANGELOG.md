@@ -39,6 +39,10 @@ first.
 
 ### Security
 
+-   **Three dependency overrides this line was missing.** `@babel/helpers` 7.24.0 → 7.29.14 and
+    `@babel/runtime` 7.24.0 → 7.26.10, both of which had patched releases this line had not picked
+    up, and a floor under `sha.js` (already at a fixed version). The Apache line had carried these
+    overrides since September; they were never ported here. Each is bounded to its current major.
 -   **Dependency security updates, first sweep.** Eleven packages moved to patched releases within
     their current major version, by override: hono 4.13.18, @hono/node-server 1.19.19, fast-uri
     3.1.9, colord 2.12.0, http-proxy-middleware 3.0.10, protobufjs 8.8.1, micromatch 4.0.8,
