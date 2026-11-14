@@ -92,12 +92,12 @@ that determines whether this is safe. An ADR is warranted.
 2026-08-05 before the 2026-08-10 archive lock, as `git am`-able patches with **original authorship
 intact**. Only **3** have been acted on. The other **344 have never been reviewed.**
 
-|                      |                                                                                                                                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                               |
-| Acted on             | **21** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353 (2026-11-14) |
-| Never reviewed       | **326**                                                                                                                                                                                                      |
-| Archived open issues | 698                                                                                                                                                                                                          |
+|                      |                                                                                                                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archived open PRs    | **347** (`pr-814` … `pr-6711`)                                                                                                                                                                                      |
+| Acted on             | **22** — #6682, #6683, #6706, then #6672, #5371, #5255 (pull request #26), #6416, #6635, #6532, #6644, #6143, #6301, #6561, #6725, #6543, #6517, #6601, #6689, #6482 (2026-11-13), #6615, #6353, #6373 (2026-11-14) |
+| Never reviewed       | **325**                                                                                                                                                                                                             |
+| Archived open issues | 698                                                                                                                                                                                                                 |
 
 `MANIFEST.md` is explicit that the snapshot exists so the backlog stays "reviewable and
 **re-appliable**" — captured, not fulfilled. Nothing was lost, but nothing was gained either.
@@ -136,7 +136,10 @@ request always has one by the time the match runs. #6353 (the Tavily tool passed
 the library ignores) was adopted the same day, **first commit only**: the series' second commit
 retypes the tool's configuration object and does not compile against the installed
 `@langchain/tavily` 1.2.0 (four type errors). The patch shipped no test; one was written here and
-shown failing against the unpatched source.
+shown failing against the unpatched source. #6373 (Bedrock cached a failed inference-profile lookup
+for the life of the process) followed, again with a test written here because the patch had none.
+Its cost is stated: a region whose lookup keeps failing, or that genuinely has no profiles, is now
+asked on every model initialisation instead of once.
 
 **Examined and not adopted as they stand** — each applies cleanly, but:
 
@@ -155,6 +158,8 @@ initialization`), so it cannot be shown failing before and passing after without
 -   **#6594** (free-solo dropdown values) changes the two shared dropdown components used across
     the canvas. It ships tests for its helper functions only; the component behaviour needs a
     browser check before it is adopted, and the UI is meant to stay close to upstream.
+-   **#6414** (newer Azure OpenAI model names) adds entries to the model list. Whether those models
+    are offered on Azure could not be verified from here, so it was left for someone who can check.
 -   **#6521** and **#6630** no longer apply after the fixes above.
 
 **How a patch is adopted** (the method used for everything above): read the diff for behaviour and
