@@ -37,6 +37,9 @@ first.
     disagrees with its workspace was described as being "served to the wrong tenant"; no query
     filters on organization alone, so it is not. The finding now says what is true (I-13).
 -   **Reset-password page hid network errors behind a TypeError** (I-10).
+-   **Password change had no rate limit.** `POST /account/reset-password` checks the current
+    password and could be retried without bound by anyone holding a session. It now has the same
+    per-IP and per-account style limits as sign-in (I-07).
 
 ### Tests
 
