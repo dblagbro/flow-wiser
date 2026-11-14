@@ -75,7 +75,8 @@ Inside `packages/server/src`:
     `mariadb`, plus six declared engine-specific ones.
     **A migration added for one engine must be added for all four** — enforced by
     `test/database/migration-parity.test.ts`.
--   `versioning/` — `VersionStore.ts`, `capture.ts`, `diff.ts`, `normalise.ts` (git-backed history).
+-   `versioning/` — `VersionStore.ts`, `historyIndex.ts`, `capture.ts`, `diff.ts`, `normalise.ts`
+    (git-backed history).
 -   `queue/` — BullMQ/Redis prediction, upsert and schedule queues.
 -   `commands/` — oclif CLI: `admin`, `audit`, `credential`, `mfa`, `session`, `sso`, `doctor`.
 -   `services/`, `controllers/`, `utils/`, `errors/`, `middlewares/`.
