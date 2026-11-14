@@ -216,9 +216,10 @@ exactly like a code change.
 -   **`.gitignore` protects git and nothing else.** Every tool that globs the working tree — ESLint,
     Prettier, bundlers, test runners, doc generators, scanners — needs its own exclusion, and each is
     a separate chance to _read_ a secret. This is not hypothetical: `pnpm lint` opened a credential
-    export and was stopped only by file permissions (RM-16). Three lists must stay in step:
-    `.gitignore`, `ignorePatterns` in `.eslintrc.js`, and `.prettierignore`. Adding a secret pattern
-    to one means adding it to all three.
+    export and was stopped only by file permissions (RM-16). Four lists must stay in step:
+    `.gitignore`, `ignorePatterns` in `.eslintrc.js`, `.prettierignore` and `.dockerignore`. Adding a
+    secret pattern to one means adding it to all four; `scripts/assert-version-parity.js` fails CI
+    when one stops covering a secret marker.
 -   `FLOWISE_SECRETKEY_OVERWRITE` must never be the `.env.example` default. A publicly documented
     encryption key is not encryption.
 -   Report vulnerabilities per `SECURITY.md`.

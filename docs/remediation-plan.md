@@ -55,7 +55,27 @@ See [`decisions/ADR-0004-node-version-conflict.md`](decisions/ADR-0004-node-vers
 
 ### RM-11 · Nothing prevents the Node version drifting apart again
 
-**Status:** OPEN · **Opened:** 2026-08-11
+**Status:** ✅ **CLOSED 2026-11-13** · **Opened:** 2026-08-11
+
+`scripts/assert-version-parity.js` has run as a step of `main.yml` since #22 — this entry was simply
+never updated, which is its own small instance of the drift it describes. Closed only after both
+halves were observed on 2026-11-13, in this checkout:
+
+| Input                                                                               | Result    |
+| ----------------------------------------------------------------------------------- | --------- |
+| Tree as committed                                                                   | exit 0 ✅ |
+| `.nvmrc` set to `v20.20.2` (major skew)                                             | exit 1 ✅ |
+| `.nvmrc` set to `v22.1.0` (pinned-version skew)                                     | exit 1 ✅ |
+| `secrets-sealed`, `.key` or `.env` removed from `.eslintrc.js` `ignorePatterns`     | exit 1 ✅ |
+| `secrets-sealed` removed from `.gitignore`; `.env` or `.pem` from `.prettierignore` | exit 1 ✅ |
+| `credentials-backup`, `secrets-sealed` or `**/*.key` removed from `.dockerignore`   | exit 1 ✅ |
+| Each file restored                                                                  | exit 0 ✅ |
+
+**The ignore-list half was weaker than it looked, and was fixed in the same change.** As first
+written it had four markers matched against each file's whole text. `secrets-sealed` and `.env` were
+not markers, so removing either from a list passed; `key` and `pem` were satisfied by any comment or
+rule containing those letters; and `.dockerignore` — a fourth reader of the tree, via `COPY . .` —
+was not checked at all. It now checks six markers against the patterns only, across four lists.
 
 RM-02 aligned eleven locations by hand. Nothing stops them diverging again — and divergence is
 precisely what produced ADR-0004. Per ADR-0003, aligning values is not a control.
@@ -368,9 +388,9 @@ reached for the same secret; both were stopped by luck. That pattern is the find
 | `npx eslint flowise-credentials-backup-*.json` | `File ignored because of a matching ignore pattern` ✅ |
 | `npx eslint packages/server/src/index.ts`      | lints clean, exit 0 ✅                                 |
 
-**Three ignore lists must now stay in step** — `.gitignore`, `.eslintrc.js` `ignorePatterns`, and
-`.prettierignore`. Nothing enforces that. **Fold this into RM-11's parity check**, which is already
-scoped to catch exactly this class of silent divergence.
+**Four ignore lists must now stay in step** — `.gitignore`, `.eslintrc.js` `ignorePatterns`,
+`.prettierignore` and `.dockerignore`. **Enforced since 2026-11-13** by RM-11's parity check, which
+fails when any of them stops covering a secret marker — see the table under RM-11.
 
 **Standing lesson:** `.gitignore` protects git and nothing else. Every tool that globs the working
 tree — linters, formatters, bundlers, test runners, doc generators, secret scanners — needs its own
