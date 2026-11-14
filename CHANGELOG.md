@@ -39,6 +39,12 @@ first.
 
 ### Security
 
+-   **Two manifests now state what is actually installed.** `nodemailer` was declared as `^7.0.7`
+    and `langsmith` as `0.4.12` while overrides had long since moved them to 10.4.0 and 0.6.3. The
+    installed versions do not change; the declarations do, so the manifests stop reporting
+    vulnerable versions that are not in the tree. Also removes two old copies of a Babel build
+    plugin (`@babel/plugin-transform-modules-systemjs` 7.23.9 and 7.24.1) in favour of the patched
+    7.29.8 already present.
 -   **Three dependency overrides this line was missing.** `@babel/helpers` 7.24.0 → 7.29.14 and
     `@babel/runtime` 7.24.0 → 7.26.10, both of which had patched releases this line had not picked
     up, and a floor under `sha.js` (already at a fixed version). The Apache line had carried these
