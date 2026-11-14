@@ -30,16 +30,40 @@ in that file. `aead.ts` and every stored row are untouched, because each row rec
 
 ## What exists
 
-| Piece                                                      | State                                                                               |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `identity/crypto/keyring.test.ts`                          | 69 tests pinning the keyring's behaviour before a source is added to it             |
-| `identity/vault/requestSigner.ts`                          | RFC 9421 signer for the hub's pinned profile. Pure; reads no key, makes no request  |
-| `identity/vault/requestSigner.test.ts`                     | 20 tests, including four known answers produced by the hub's own reference signer   |
-| `identity/vault/wire.ts`                                   | Wire-state classifier, identity check, strict bundle parser. Pure; makes no request |
-| `identity/vault/wire.test.ts`                              | 90 tests; the cache-clearing rule is tested from both sides                         |
-| A client that fetches the bundle                           | **Not written**                                                                     |
-| A `vault` key source in `keyring.ts`, and the flag         | **Not written**                                                                     |
-| A fixture identity, its key pair, a test run against a hub | **Not done** — the hub side provisions the identity and asks for a public key first |
+| Piece                                                              | State                                                                                    |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `identity/crypto/keyring.test.ts`                                  | 69 tests pinning the keyring's behaviour before a source is added to it                  |
+| `identity/vault/requestSigner.ts`                                  | RFC 9421 signer for the hub's pinned profile. Pure; reads no key, makes no request       |
+| `identity/vault/requestSigner.test.ts`                             | 20 tests, including four known answers produced by the hub's own reference signer        |
+| `identity/vault/wire.ts`                                           | Wire-state classifier, identity check, strict bundle parser. Pure; makes no request      |
+| `identity/vault/wire.test.ts`                                      | 90 tests; the cache-clearing rule is tested from both sides                              |
+| `identity/vault/bundleClient.ts`                                   | One signed read of a namespace bundle. No cache, no retry, no redirect, bounded body     |
+| `identity/vault/bundleClient.test.ts`                              | 44 tests against a real loopback HTTP server that verifies the signature as the hub does |
+| A `vault` key source in `keyring.ts`, and the flag                 | **Not written**                                                                          |
+| A fixture identity and a first run against the hub's test listener | **Done 2026-11-14** — see below                                                          |
+
+## First run against the hub's test listener — 2026-11-14
+
+Identity `fixture-flowwiser-reader`, on the hub's loopback-only test listener, reached through an
+SSH local forward. Synthetic values only; none was printed, stored or fed to any key derivation. The
+identity's private key was generated on the development host, outside the repository, mode `0600`.
+
+| Check                                                                                        | Result         |
+| -------------------------------------------------------------------------------------------- | -------------- |
+| Signed bundle read; strict parse; two entries map to the master-key and session-pepper slots | PASS           |
+| ETag header equals bundle `etag`; `If-None-Match` gives 304; response is `no-store`          | PASS           |
+| Signed audit read with a query string                                                        | PASS           |
+| Namespace outside the grant: 403 `grant_denied`                                              | PASS           |
+| Unsigned, tampered signature, unknown identity, replayed nonce: 401, nothing cleared         | PASS           |
+| The real `fetchBundle`: bundle, 304, out-of-grant denial, unknown identity, unreachable hub  | PASS (6 of 6)  |
+| Identity probe (`GET …/identity`)                                                            | **FAIL — 404** |
+
+The identity probe is not served by that listener, so wrong-service detection is untested end to
+end. That is recorded as open, not waved through.
+
+The run found one defect on this side: the first attempt signed `http://127.0.0.1:8232` and was
+refused on every request. **The hub verifies a bare `host[:port]`.** `bundleClient` now refuses any
+other shape before sending anything.
 
 ## The signing profile, as built to
 
@@ -50,8 +74,9 @@ The hub refuses anything else with a 401, so these are constraints, not preferen
     has a query string; then `content-digest` when it has a body. Nothing else — not `@target-uri`.
 -   Parameters, in order: `created`, `keyid`, `alg="ed25519"`, `nonce`; then `expires` when given.
 -   `keyid` is the identity name the hub enrolled, not a key fingerprint.
--   `@authority` is the value the hub has configured as its canonical authority, lower-cased — not
-    the `Host` header the client happens to send. `@path` is the full path as sent.
+-   `@authority` is the value the hub has configured as its canonical authority: a **bare
+    `host[:port]`, no scheme**, lower-cased — not the `Host` header the client happens to send.
+    `@path` is the full path as sent.
 
 "Matches the hub" is tested rather than asserted: the known-answer vectors in
 `requestSigner.test.ts` are headers produced by the hub's reference signer, and the TypeScript port
