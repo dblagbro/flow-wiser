@@ -9,6 +9,27 @@ Append-only record of refactoring work. Newest first. Written by the `daily-refa
 belongs in [`CHANGELOG.md`](../CHANGELOG.md) as a change, with the tests and review that implies.
 Entries that cannot show verification are recorded as **unverified**, not as done.
 
+## 2026-11-14 — flow history served from an index (I-08)
+
+**Scope:** `packages/server/src/versioning/` — new `historyIndex.ts`; `VersionStore.history()` uses
+it and keeps the log walk as its fallback.
+
+**Motivation:** a history request cost about a millisecond per commit in the shared repository, for
+every flow, on every request.
+
+**Behaviour:** preserved, with one stated exception. The index records commits in which a flow's
+file differs from the parent commit. The walk compared each commit with the last one in which it had
+seen the file, so it dropped the deletion of a flow later re-created with identical content; the
+index keeps it. Tested as an intended difference.
+
+**Verified:** the 70 existing versioning tests unchanged and passing; 28 new tests, including a
+scripted sequence of saves, metadata-only saves and deletions compared against `git.log` at several
+limits, and assertions that no log walk happens once the index is current. Ten mutants, each caught (one only after a test was added for it).
+Measured on 1,500 commits: 0.4–1.7 s per request before; 2–4 ms after a one-time 2 s build.
+
+**Not changed:** nothing is written on the save path; the repository remains the only source of
+truth and the index can be deleted at any time.
+
 ## Entry format
 
 ```

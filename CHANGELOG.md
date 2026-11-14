@@ -70,6 +70,12 @@ first.
     message was newest. The server and the chat window now match the prompt by the step it belongs
     to. Fix and tests by **sanahkapoor**, adopted from upstream pull request #6615 with authorship
     preserved.
+-   **Flow version history slowed down as other flows were saved** (I-08). Every flow shares one
+    version repository, and a history request walked all of it. History is now served from an
+    index that is rebuilt from the repository whenever it is missing or out of date: on a
+    repository with 1,500 commits a request went from about a second to a few milliseconds. A
+    deleted flow that is later re-created with identical content now keeps its deletion in the
+    history.
 -   **`DISABLE_FLOWISE_TELEMETRY=true` was ignored when a PostHog key was configured.** The
     documented opt-out is now honoured. Fix and test by **AkhilTrivediX**, adopted from upstream
     pull request #6635 with authorship preserved.
