@@ -43,6 +43,9 @@ first.
     their current major version, by override: hono, @hono/node-server, fast-uri, colord,
     http-proxy-middleware, protobufjs, micromatch, mdast-util-to-hast, postcss-selector-parser,
     prismjs and moment. Versions are listed under SEC-DEP-01 in `docs/bug-log.md`.
+-   **Dependency security updates, second sweep.** express, qs, postcss, ip-address and ajv moved to
+    patched releases within their current major version. As a side effect the tree now carries one
+    4.x version of express and one 6.x version of qs instead of several.
 -   **Mass assignment on `PUT /executions/:id`** (GHSA-v2cc-6h2j-w847). The endpoint applied the
     whole request body to the execution row, so a user who could update an execution could also
     set its `workspaceId`, `agentflowId`, `state`, `executionData` and other server-managed columns.

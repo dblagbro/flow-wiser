@@ -129,7 +129,12 @@
             "micromatch@4": ">=4.0.8 <5",
             "mdast-util-to-hast@13": ">=13.2.1 <14",
             "postcss-selector-parser@6": ">=6.1.5 <7",
-            "moment": ">=2.31.0 <3"
+            "moment": ">=2.31.0 <3",
+            "postcss@8": ">=8.5.23 <9",
+            "qs": ">=6.16.1 <7",
+            "ip-address@10": ">=10.7.4 <11",
+            "ajv@8": ">=8.18.0 <9",
+            "express@4": ">=4.21.2 <5"
         }
     },
     "engines": {
