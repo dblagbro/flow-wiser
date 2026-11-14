@@ -95,7 +95,13 @@ jobs:
             - name: Assert no test file is silently undiscovered
               run: node scripts/assert-test-discovery.js
 
+            # Bounded, because an unbounded hang is silent. On 2026-11-13 three runs sat 25-35 minutes
+            # in this step (it normally takes about four) and had to be cancelled by hand — and a
+            # cancelled run keeps no logs, so there was nothing to diagnose from. A step that times
+            # out FAILS and keeps its log, which names the suite that was running. This does not
+            # relax the gate: a hang now fails the build instead of occupying a runner for six hours.
             - run: pnpm test:coverage
+              timeout-minutes: 15
             - name: Cypress install
               run: pnpm cypress install
             - name: Install dependencies (Cypress Action)
