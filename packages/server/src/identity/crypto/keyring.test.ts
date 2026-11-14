@@ -12,7 +12,16 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { getKeyring, KeyringError, KeySource, loadKeyring, MIN_KEY_MATERIAL_BYTES, resetKeyring } from './keyring'
+import {
+    buildVaultKeyring,
+    getKeyring,
+    installKeyring,
+    KeyringError,
+    KeySource,
+    loadKeyring,
+    MIN_KEY_MATERIAL_BYTES,
+    resetKeyring
+} from './keyring'
 import { PUBLISHED_EXAMPLE_SECRETS } from './passwords'
 
 const b64Key = (): string => randomBytes(32).toString('base64')
@@ -318,5 +327,91 @@ describe('getKeyring — process-wide cache', () => {
         expect(getKeyring().getActive().material.equals(Buffer.from(first, 'base64'))).toBe(true)
         resetKeyring()
         expect(getKeyring()).not.toBe(ring)
+    })
+})
+
+// ADR-0006 / ruling C45: the vault mirrors the deployment's existing key. It is one more place the
+// active key's bytes can come from, behind the same gate, and it never decides the key version.
+describe('buildVaultKeyring — vault source', () => {
+    it('builds an active key from the vault text, marked as vault-sourced, at version 1 by default', () => {
+        const key = b64Key()
+        const active = buildVaultKeyring(key, env({})).getActive()
+        expect(active).toMatchObject({ version: 1, keyId: 'env', source: KeySource.VAULT })
+        expect(active.material.equals(Buffer.from(key, 'base64'))).toBe(true)
+    })
+
+    it('yields the same fingerprint as the environment source for the same key, so the two can be compared', () => {
+        const key = b64Key()
+        expect(buildVaultKeyring(key, env({})).getActive().fingerprint).toBe(
+            loadKeyring(env({ IDENTITY_ENCRYPTION_KEY: key })).getActive().fingerprint
+        )
+    })
+
+    it('takes id and version from configuration', () => {
+        const ring = buildVaultKeyring(b64Key(), env({ IDENTITY_ENCRYPTION_KEY_VERSION: '3', IDENTITY_ENCRYPTION_KEY_ID: 'main' }))
+        expect(ring.getActive()).toMatchObject({ version: 3, keyId: 'main' })
+    })
+
+    it("ignores the environment active key entirely — agreeing with it is the caller's check", () => {
+        const vaultKey = b64Key()
+        const ring = buildVaultKeyring(vaultKey, env({ IDENTITY_ENCRYPTION_KEY: b64Key() }))
+        expect(ring.listVersions()).toEqual([1])
+        expect(ring.getActive().material.equals(Buffer.from(vaultKey, 'base64'))).toBe(true)
+    })
+
+    it('keeps retired environment keys for reading, marked as environment-sourced', () => {
+        const retired = b64Key()
+        const ring = buildVaultKeyring(b64Key(), env({ IDENTITY_ENCRYPTION_KEY_VERSION: '2', IDENTITY_ENCRYPTION_KEY_V1: retired }))
+        expect(ring.listVersions()).toEqual([1, 2])
+        expect(ring.getByVersion(1)).toMatchObject({ source: KeySource.ENV })
+        expect(ring.getActive()).toMatchObject({ version: 2, source: KeySource.VAULT })
+    })
+
+    it('refuses a retired key that claims the active version with different material', () => {
+        expect(refusal(() => buildVaultKeyring(b64Key(), env({ IDENTITY_ENCRYPTION_KEY_V1: b64Key() })))).toMatch(/version 1/)
+    })
+
+    it.each([
+        ['short material', () => randomBytes(16).toString('base64'), /at least 32 are required/],
+        ['a published example value', () => PUBLISHED_EXAMPLE_SECRETS[0], /published example value/],
+        ['an empty value', () => '   ', /./]
+    ])('refuses %s exactly as any other source would, naming the entry and not the value', (_name, make, pattern) => {
+        const value = make()
+        const message = refusal(() => buildVaultKeyring(value, env({})))
+        expect(message).toMatch(pattern)
+        expect(message).toMatch(/vault master-key entry/)
+        if (value.trim() && !/example/.test(message.replace('a published example value', '')))
+            expect(message.replace('a published example value', '')).not.toContain(value)
+    })
+
+    it.each(['0', 'abc', '2abc'])('refuses key version %j', (version) => {
+        refusal(() => buildVaultKeyring(b64Key(), env({ IDENTITY_ENCRYPTION_KEY_VERSION: version })))
+    })
+
+    it('describe() exposes the source and fingerprint and never the material', () => {
+        const key = b64Key()
+        const text = JSON.stringify(buildVaultKeyring(key, env({})).describe())
+        expect(text).toContain('"source":"vault"')
+        expect(text).not.toContain(key)
+        expect(text).not.toContain(Buffer.from(key, 'base64').toString('hex'))
+    })
+})
+
+describe('installKeyring', () => {
+    afterEach(() => resetKeyring())
+
+    it('makes the given keyring the one getKeyring returns, until reset', () => {
+        const saved = process.env.IDENTITY_ENCRYPTION_KEY
+        process.env.IDENTITY_ENCRYPTION_KEY = b64Key()
+        try {
+            const ring = buildVaultKeyring(b64Key(), env({}))
+            installKeyring(ring)
+            expect(getKeyring()).toBe(ring)
+            resetKeyring()
+            expect(getKeyring().getActive().source).toBe(KeySource.ENV)
+        } finally {
+            if (saved === undefined) delete process.env.IDENTITY_ENCRYPTION_KEY
+            else process.env.IDENTITY_ENCRYPTION_KEY = saved
+        }
     })
 })

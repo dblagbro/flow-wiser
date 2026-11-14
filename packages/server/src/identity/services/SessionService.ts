@@ -143,6 +143,43 @@ export class EnvSessionPepperProvider implements SessionPepperProvider {
     }
 }
 
+/**
+ * A pepper fetched from the Coordinator Hub vault at boot (ADR-0006, ruling C45).
+ *
+ * Like the key, it MIRRORS the pepper the deployment already has: its key id and version come from
+ * the same configuration the environment source uses, and retired generations are still read from
+ * the environment for verification. Only the CURRENT pepper's bytes come from the vault.
+ */
+export class VaultSessionPepperProvider implements SessionPepperProvider {
+    private readonly env = new EnvSessionPepperProvider()
+
+    constructor(private readonly secret: Buffer, private readonly version: number, private readonly keyId: string) {
+        if (secret.length === 0) throw new Error('the vault session-pepper entry is empty')
+    }
+
+    current(): SessionPepper {
+        return { keyId: this.keyId, version: this.version, secret: this.secret }
+    }
+
+    forVersion(version: number | null | undefined): SessionPepper | undefined {
+        const resolved = version ?? this.version
+        return resolved === this.version ? this.current() : this.env.forVersion(resolved)
+    }
+}
+
+let installedPepperProvider: SessionPepperProvider | null = null
+
+/**
+ * Set (or with `null`, clear) the process-wide pepper source. Used only by the boot path; a
+ * `SessionService` constructed without an explicit provider picks this up.
+ */
+export const installSessionPepperProvider = (provider: SessionPepperProvider | null): void => {
+    installedPepperProvider = provider
+}
+
+/** The pepper source in effect: the one the boot path installed, else the environment. */
+export const defaultSessionPepperProvider = (): SessionPepperProvider => installedPepperProvider ?? new EnvSessionPepperProvider()
+
 export interface SessionServiceOptions {
     /** Omit in the running server; it resolves `AppDataSource` lazily, exactly like the other services do. */
     dataSource?: DataSource
@@ -158,7 +195,7 @@ export class SessionService {
 
     constructor(options: SessionServiceOptions = {}) {
         this.injectedDataSource = options.dataSource
-        this.peppers = options.pepperProvider ?? new EnvSessionPepperProvider()
+        this.peppers = options.pepperProvider ?? defaultSessionPepperProvider()
         const fromEnv = Number.parseInt(process.env.FLOWISE_SESSION_TTL_MS ?? '', 10)
         this.refreshTtlMs = options.refreshTtlMs ?? (Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_REFRESH_TTL_MS)
     }

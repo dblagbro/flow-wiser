@@ -55,7 +55,9 @@ import { PUBLISHED_EXAMPLE_SECRETS } from './passwords'
 /** Where a key came from. Recorded for audit and for the operator-facing description — never the material. */
 export enum KeySource {
     ENV = 'env',
-    FILE = 'file'
+    FILE = 'file',
+    /** Fetched from the Coordinator Hub vault at boot (ADR-0006). Never the default. */
+    VAULT = 'vault'
 }
 
 /**
@@ -395,7 +397,48 @@ export const loadKeyring = (env: NodeJS.ProcessEnv = process.env): Keyring => {
     )
 }
 
+/**
+ * Build a keyring whose ACTIVE key is material fetched from the vault (ADR-0006, ruling C45).
+ *
+ * The vault MIRRORS the key the deployment already has: the key id and version recorded on every
+ * stored row come from configuration (`IDENTITY_ENCRYPTION_KEY_ID`, `IDENTITY_ENCRYPTION_KEY_VERSION`
+ * — the same variables the environment source uses), never from the vault's own storage version
+ * counter. The first boot from the vault is therefore not a rotation.
+ *
+ * Retired keys (`IDENTITY_ENCRYPTION_KEY_V<n>`) are still read from the environment, for decryption
+ * only, exactly as with the environment source. The environment's own active key is deliberately
+ * NOT consulted here — whether it agrees with the vault's is the caller's check, made on
+ * fingerprints before this is ever installed.
+ *
+ * The vault's value goes through the same gate as any other key text: published example values and
+ * material under 32 bytes are refused.
+ *
+ * @throws {KeyringError} when the material is unusable or the versions are inconsistent.
+ */
+export const buildVaultKeyring = (materialText: string, env: NodeJS.ProcessEnv = process.env): Keyring => {
+    const version = env.IDENTITY_ENCRYPTION_KEY_VERSION ? parseVersion(env.IDENTITY_ENCRYPTION_KEY_VERSION) : 1
+    const active = buildKey(materialText, env.IDENTITY_ENCRYPTION_KEY_ID ?? 'env', version, KeySource.VAULT, 'the vault master-key entry')
+
+    const retired: KeyMaterial[] = []
+    for (const name of Object.keys(env)) {
+        const match = RETIRED_KEY_VARIABLE.exec(name)
+        if (!match) continue
+        const value = env[name]
+        if (value === undefined || value.trim() === '') continue
+        retired.push(buildKey(value, env[`${name}_ID`] ?? 'env', Number.parseInt(match[1], 10), KeySource.ENV, name))
+    }
+    return new MapKeyring([active, ...retired], version)
+}
+
 let cached: Keyring | null = null
+
+/**
+ * Make `keyring` the process-wide keyring. Used only by the boot path, after it has decided where
+ * key material comes from; everything else calls {@link getKeyring}.
+ */
+export const installKeyring = (keyring: Keyring): void => {
+    cached = keyring
+}
 
 /**
  * The process-wide keyring, loaded once.
